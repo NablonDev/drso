@@ -1,0 +1,255 @@
+"""Engine tests on synthetic corridors (no database, no network). Run: pytest tests/test_engine.py"""
+from __future__ import annotations
+
+import heapq
+import math
+
+import geopandas as gpd
+import numpy as np
+import pytest
+import torch
+from shapely.geometry import LineString, Point, box
+
+from beeline_engine.compile import compile_rules
+from beeline_engine.config import CIRCUITS, VOLTAGES, LineSpec, resolve_costs, resolve_rules
+from beeline_engine.frame import Frame
+from beeline_engine.pipeline import LayerInput, SolveInput, run_solve
+from beeline_engine.solver import (SolverParams, edge_costs, gantry_seeds, make_grid, prepare_strip, site_costs, solve,
+                                   tower_type_cost, transition_matrix, _Rasters)
+
+A = (72.00, 22.30)
+B = (72.20, 22.32)   # ~20.7 km
+
+
+def frame(a=A, b=B, hw=2000, res=20):
+    return Frame(a, b, hw, 500, res)
+
+
+def gdf(geoms, cls, name=None):
+    return gpd.GeoDataFrame({"class": [cls] * len(geoms), "name": [name] * len(geoms), "confidence": [0.9] * len(geoms)},
+                            geometry=geoms, crs=4326)
+
+
+def frame_geom(f: Frame, g):
+    """frame-coordinate shapely geom -> lon/lat"""
+    from shapely import affinity
+    g = affinity.rotate(g, f.bearing_rad, origin=(0, 0), use_radians=True)
+    g = affinity.translate(g, f.A[0], f.A[1])
+    return f.geom_to_lonlat(g)
+
+
+def solve_input(layers: dict, a=A, b=B, band_km=2.0, kv=765, circuit="dc", overrides=None, routes=1):
+    li = {k: LayerInput(k, v, "auto", "test", 0.9, None) for k, v in layers.items()}
+    return SolveInput(a=a, b=b, band_km=band_km, kv=kv, circuit=circuit, layers=li, routes_wanted=routes,
+                      rule_overrides=overrides or {}, dem_dir=None)
+
+
+def towers_frame(f: Frame, route):
+    xs = [t["x_utm"] for t in route["towers"]]
+    ys = [t["y_utm"] for t in route["towers"]]
+    fx, fy = f.utm_to_frame(np.array(xs), np.array(ys))
+    return list(zip(fx, fy))
+
+
+# ---------------------------------------------------------------------------------------
+def test_config_resolves_every_voltage_and_circuit():
+    for kv in VOLTAGES:
+        for c in CIRCUITS:
+            spec = LineSpec(kv, c)
+            r = resolve_rules(spec)
+            k = resolve_costs(spec)
+            assert r["corridor_half_width"].params["half_width_m"] > 0
+            assert r["design_span"].params["plain_m"] > 0
+            assert all(v > 0 for v in k["tonnage"].values())
+            assert k["n_circuits"] == {"sc": 1, "dc": 2, "qc": 4}[c]
+
+
+def test_frame_roundtrip():
+    f = frame()
+    x, y = f.frame_to_utm([0, f.length_m, 1000], [0, 0, 300])
+    fx, fy = f.utm_to_frame(x, y)
+    assert np.allclose(fx, [0, f.length_m, 1000], atol=1e-6)
+    assert np.allclose(fy, [0, 0, 300], atol=1e-6)
+    lon, lat = f.frame_to_lonlat(0, 0)
+    assert abs(lon - A[0]) < 1e-7 and abs(lat - A[1]) < 1e-7
+
+
+def test_open_ground_is_straight():
+    res = run_solve(solve_input({}))
+    assert res["feasible"]
+    r = res["routes"][0]
+    assert r["stats"]["vs_beeline_pct"] < 0.5
+    assert r["stats"]["angle_points"] == 0
+    # tension towers only at the dead ends and the 5 km section points
+    assert r["stats"]["tension_towers"] <= 2 + math.ceil(r["stats"]["length_km"] / 5)
+    spans = [s["length_m"] for s in r["spans"][1:-1]]
+    assert max(spans) <= 450 + 1e-6
+    total = sum(v for k, v in r["cost"].items() if k != "total")
+    assert abs(total - r["cost"]["total"]) < 1.0
+
+
+def test_avoids_village_cluster_with_buffers():
+    f = frame()
+    village = frame_geom(f, Point(f.length_m / 2, 0).buffer(600))
+    res = run_solve(solve_input({"clusters": gdf([village], "builtup_cluster", "Testpur")}))
+    assert res["feasible"]
+    r = res["routes"][0]
+    vf = Point(f.length_m / 2, 0).buffer(600)
+    for x, y in towers_frame(f, r):
+        assert vf.distance(Point(x, y)) >= 120 - 0.5          # tower buffer 120 m
+    line = LineString(towers_frame(f, r))
+    assert line.distance(vf) >= 120 - 0.5                     # conductor buffer 120 m
+    assert any(e["type"] == "BEELINE_BLOCKER" for e in res["events_global"])
+    assert any(e["type"] == "TURN_TO_AVOID" and "Testpur" in e["text"] for e in r["events"])
+
+
+def test_rule_switched_off_lets_route_go_straight():
+    f = frame()
+    village = frame_geom(f, Point(f.length_m / 2, 0).buffer(600))
+    res = run_solve(solve_input({"clusters": gdf([village], "builtup_cluster")},
+                                overrides={"clusters": {"enabled": False}}))
+    assert res["feasible"]
+    assert res["routes"][0]["stats"]["vs_beeline_pct"] < 0.5
+    assert any(e["type"] == "RULE_OFF" for e in res["events_global"])
+
+
+def test_railway_crossing_angle_and_span():
+    f = frame()
+    # railway crossing the band at 30° to the bee-line — the route must turn to cross at >= 70°
+    c = f.length_m / 2
+    rail = frame_geom(f, LineString([(c - 4000 * math.cos(math.radians(30)), -4000 * math.sin(math.radians(30))),
+                                     (c + 4000 * math.cos(math.radians(30)), 4000 * math.sin(math.radians(30)))]))
+    res = run_solve(solve_input({"rail": gdf([rail], "railway", "Test line")}))
+    assert res["feasible"]
+    r = res["routes"][0]
+    xs = [cr for s in r["spans"] for cr in s["crossings"] if cr["rule"] == "railway"]
+    assert len(xs) == 1
+    assert xs[0]["angle_deg"] >= 70 - 1e-6
+    assert xs[0]["span_m"] <= 300 + 1e-6                 # min(300 m, 80 % of 400 m)
+    a, b = next((s["a"], s["b"]) for s in r["spans"] if s["crossings"])
+    types = {t["no"]: t["type"] for t in r["towers"]}
+    assert types[a] in ("D45", "D60") and types[b] in ("D45", "D60")   # crossing tower type D
+
+
+def test_wide_river_needs_long_span():
+    f = frame()
+    c = f.length_m / 2
+    river = frame_geom(f, box(c - 175, -3000, c + 175, 3000))     # 350 m of water + 150 m banks = 650 m
+    line = frame_geom(f, LineString([(c, -3000), (c, 3000)]))
+    res = run_solve(solve_input({"water": gdf([river, line], "river", "Test river")}))
+    assert res["feasible"]
+    r = res["routes"][0]
+    long_spans = [s for s in r["spans"] if s["length_m"] > 450]
+    assert long_spans and all(any(cr["rule"] == "river" for cr in s["crossings"]) for s in long_spans)
+    for x, y in towers_frame(f, r)[1:-1]:
+        assert not (c - 175 - 150 + 0.5 < x < c + 175 + 150 - 0.5)
+
+
+def test_band_fully_blocked_is_reported():
+    f = frame()
+    c = f.length_m / 2
+    wall = frame_geom(f, box(c - 1500, -6000, c + 1500, 6000))
+    res = run_solve(solve_input({"protected": gdf([wall], "sanctuary", "Test WLS")}))
+    assert not res["feasible"]
+    b = res["blocked"]
+    assert b["blockers"] and b["blockers"][0]["rule_id"] == "protected_areas"
+    assert b["blockers"][0]["feature"] == "Test WLS"
+    assert abs(b["reach_km"] - (c - 1500) / 1000) < 1.0
+
+
+def test_terminal_yard_is_carved_out():
+    f = frame()
+    yard = frame_geom(f, box(-350, -350, 350, 350))          # A sits in the middle of a 700 m yard
+    res = run_solve(solve_input({"substations": gdf([yard], "substation", "Start S/S")}))
+    assert res["feasible"]
+    r = res["routes"][0]
+    first = towers_frame(f, r)[1]
+    assert not box(-350, -350, 350, 350).contains(Point(first))
+
+
+def test_four_routes_are_distinct_objectives():
+    f = frame()
+    village = frame_geom(f, Point(f.length_m * 0.4, 300).buffer(500))
+    res = run_solve(solve_input({"clusters": gdf([village], "builtup_cluster")}, routes=4))
+    assert res["feasible"] and len(res["routes"]) == 4
+    keys = [r["key"] for r in res["routes"]]
+    assert keys == ["least_cost", "fewest_angles", "closest_beeline", "least_sensitive"]
+    costs = [r["cost"]["total"] for r in res["routes"]]
+    assert costs[0] <= min(costs) * 1.02    # route 1 is (near) the cheapest true cost
+
+
+@pytest.mark.parametrize("kv,circuit", [(400, "dc"), (220, "sc"), (132, "qc")])
+def test_other_voltages_solve(kv, circuit):
+    res = run_solve(solve_input({}, kv=kv, circuit=circuit))
+    assert res["feasible"]
+    r = res["routes"][0]
+    design = res["line"]["design_span_m"]
+    assert max(s["length_m"] for s in r["spans"][1:-1]) <= design * 1.125 + 1e-6
+
+
+def test_dp_is_optimal_against_dijkstra():
+    """Brute-force Dijkstra over the same (site, heading) graph gives the same optimum."""
+    f = Frame(A, (72.04, 22.302), 400, 500, 20)
+    blob = frame_geom(f, Point(f.length_m / 2, 0).buffer(150))
+    spec = LineSpec(220, "sc")
+    rules = resolve_rules(spec)
+    costs = resolve_costs(spec)
+    comp = compile_rules(f, {"clusters": gdf([blob], "builtup_cluster")}, rules, costs, 220, 17.5, 150, 350)
+    tc = tower_type_cost(costs, 220)
+    bands = {k: rules["tower_type_bands"].params[k] for k in ("A", "B1", "B2", "C1", "C2", "D45", "D60")}
+    p = SolverParams(50, 100, 393.75, 60, bands, tc)
+    out = solve(comp, p)
+    assert out.feasible
+    g = make_grid(comp, p)
+    S, angle_only = site_costs(comp, g, p)
+    T, TA = transition_matrix(g, p)
+    strip = prepare_strip(comp, p)
+    seedA = gantry_seeds(comp, g, p, S, strip, False, tc["D60"])
+    seedB = gantry_seeds(comp, g, p, S, strip, True, tc["D60"])
+    ras = _Rasters(comp, p, torch.device("cuda" if torch.cuda.is_available() else "cpu"), strip)
+    ras.set_river_cols(comp, g, p)
+    n_s = int(math.ceil(p.span_max_m / 10)) + 1
+    E = edge_costs(comp, g, p, ras, 0, g.nc, n_s).cpu().numpy()
+    K = len(g.offsets)
+    # Dijkstra over states (c, r, k_in); start states come from gantry seeds
+    INF = float("inf")
+    dist = {}
+    pq = []
+    for c in range(g.nc + 1):
+        for r in range(g.nr):
+            if np.isfinite(seedA[c, r]):
+                # tower placed as first dead-end; leaving with any heading k
+                for k in range(K):
+                    dc, dr = g.offsets[k]
+                    c2, r2 = c + dc, r + dr
+                    if c >= g.nc or c2 > g.nc or not (0 <= r2 < g.nr) or not np.isfinite(E[c, r, k]):
+                        continue
+                    d = seedA[c, r] + E[c, r, k]
+                    if d < dist.get((c2, r2, k), INF):
+                        dist[(c2, r2, k)] = d
+                        heapq.heappush(pq, (d, c2, r2, k))
+    best = INF
+    done = set()
+    while pq:
+        d, c, r, k = heapq.heappop(pq)
+        if (c, r, k) in done:
+            continue
+        done.add((c, r, k))
+        if np.isfinite(seedB[c, r]):
+            best = min(best, d + seedB[c, r])
+        if c >= g.nc or not np.isfinite(S[c, r]):
+            continue
+        Trow = TA[k] if angle_only[c, r] else T[k]
+        for k2 in range(K):
+            if not np.isfinite(Trow[k2]):
+                continue
+            dc, dr = g.offsets[k2]
+            c2, r2 = c + dc, r + dr
+            if c2 > g.nc or not (0 <= r2 < g.nr) or not np.isfinite(E[c, r, k2]):
+                continue
+            nd = d + Trow[k2] + S[c, r] + E[c, r, k2]
+            if nd < dist.get((c2, r2, k2), INF):
+                dist[(c2, r2, k2)] = nd
+                heapq.heappush(pq, (nd, c2, r2, k2))
+    assert math.isfinite(best)
+    assert abs(best - out.cost_rs) / best < 1e-4, (best, out.cost_rs)

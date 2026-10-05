@@ -1,0 +1,1633 @@
+{
+ "version": "AESL-2026.10-default",
+ "groups": [
+  {
+   "key": "lock",
+   "title": "Statutory minimums",
+   "desc": "Legal floors. Editable, but a change is flagged on every export.",
+   "statutory": true,
+   "rules": [
+    {
+     "id": "building_clearance",
+     "name": "Clearance from buildings",
+     "note": "CEA 2023 Reg. 63 \u2014 measured at maximum sag and maximum wind deflection",
+     "layer": "buildings",
+     "params": [
+      {
+       "key": "vertical_m",
+       "label": "Vertical",
+       "type": "num",
+       "unit": "m",
+       "options": null,
+       "default": 10.6,
+       "value": 10.6,
+       "changed": false,
+       "best_guess": true
+      },
+      {
+       "key": "horizontal_m",
+       "label": "Horizontal",
+       "type": "num",
+       "unit": "m",
+       "options": null,
+       "default": 8.9,
+       "value": 8.9,
+       "changed": false,
+       "best_guess": true
+      },
+      {
+       "key": "increment_per_33kv_m",
+       "label": "Increment per 33 kV",
+       "type": "num",
+       "unit": "m",
+       "options": null,
+       "default": 0.3,
+       "value": 0.3,
+       "changed": false,
+       "best_guess": false
+      }
+     ],
+     "enabled": true,
+     "reason": null,
+     "rev": null,
+     "n_changed": 0
+    },
+    {
+     "id": "airport_prohibition",
+     "name": "Airport \u2014 EHT line prohibition",
+     "note": "MoCA Height Restriction Rules 2015, Schedule I \u00b61.2",
+     "layer": "aviation",
+     "params": [
+      {
+       "key": "distance_m",
+       "label": "From approach surface inner edge",
+       "type": "num",
+       "unit": "m",
+       "options": null,
+       "default": 1500,
+       "value": 1500,
+       "changed": false,
+       "best_guess": false
+      },
+      {
+       "key": "applies_to",
+       "label": "Applies to",
+       "type": "sel",
+       "unit": null,
+       "options": [
+        "EHT and HT",
+        "EHT only",
+        "All lines"
+       ],
+       "default": "EHT and HT",
+       "value": "EHT and HT",
+       "changed": false,
+       "best_guess": false
+      }
+     ],
+     "enabled": true,
+     "reason": null,
+     "rev": null,
+     "n_changed": 0
+    },
+    {
+     "id": "airport_noc",
+     "name": "Airport \u2014 NOC radius",
+     "note": "Rule 4(1) \u2014 height governed by the AAI colour-coded zoning map",
+     "layer": "aviation",
+     "params": [
+      {
+       "key": "radius_km",
+       "label": "Radius from ARP",
+       "type": "num",
+       "unit": "km",
+       "options": null,
+       "default": 20,
+       "value": 20,
+       "changed": false,
+       "best_guess": false
+      },
+      {
+       "key": "height_source",
+       "label": "Height source",
+       "type": "sel",
+       "unit": null,
+       "options": [
+        "CCZM",
+        "Fixed cap",
+        "Obstacle surfaces"
+       ],
+       "default": "CCZM",
+       "value": "CCZM",
+       "changed": false,
+       "best_guess": false
+      }
+     ],
+     "enabled": true,
+     "reason": null,
+     "rev": null,
+     "n_changed": 0
+    },
+    {
+     "id": "pipeline_footing",
+     "name": "Pipeline \u2014 tower footing",
+     "note": "CEA 2023 Reg. 60(4), measured from the pipeline right-of-way edge",
+     "layer": "pipelines",
+     "params": [
+      {
+       "key": "setback_m",
+       "label": "Setback",
+       "type": "num",
+       "unit": "m",
+       "options": null,
+       "default": 25,
+       "value": 25,
+       "changed": false,
+       "best_guess": false
+      },
+      {
+       "key": "mitigation",
+       "label": "Mitigation allowed below",
+       "type": "sel",
+       "unit": null,
+       "options": [
+        "No",
+        "Yes, with grounding"
+       ],
+       "default": "No",
+       "value": "No",
+       "changed": false,
+       "best_guess": false
+      }
+     ],
+     "enabled": true,
+     "reason": null,
+     "rev": null,
+     "n_changed": 0
+    },
+    {
+     "id": "pipeline_crossing",
+     "name": "Pipeline \u2014 crossing angle",
+     "note": "CEA 2023 Reg. 60(5) \u2014 right angles preferred, never below the minimum",
+     "layer": "pipelines",
+     "params": [
+      {
+       "key": "min_angle_deg",
+       "label": "Minimum angle",
+       "type": "num",
+       "unit": "\u00b0",
+       "options": null,
+       "default": 75,
+       "value": 75,
+       "changed": false,
+       "best_guess": false
+      },
+      {
+       "key": "preferred_angle_deg",
+       "label": "Preferred angle",
+       "type": "num",
+       "unit": "\u00b0",
+       "options": null,
+       "default": 90,
+       "value": 90,
+       "changed": false,
+       "best_guess": false
+      }
+     ],
+     "enabled": true,
+     "reason": null,
+     "rev": null,
+     "n_changed": 0
+    },
+    {
+     "id": "wetland",
+     "name": "Notified wetland \u2014 foundation",
+     "note": "Wetlands Rules 2017 r.4(2) \u2014 permanent construction",
+     "layer": "wetlands",
+     "params": [
+      {
+       "key": "tower_placement",
+       "label": "Tower placement",
+       "type": "sel",
+       "unit": null,
+       "options": [
+        "Prohibited",
+        "Allowed"
+       ],
+       "default": "Prohibited",
+       "value": "Prohibited",
+       "changed": false,
+       "best_guess": false
+      },
+      {
+       "key": "band_m",
+       "label": "Band from 10-year MHFL",
+       "type": "num",
+       "unit": "m",
+       "options": null,
+       "default": 50,
+       "value": 50,
+       "changed": false,
+       "best_guess": false
+      },
+      {
+       "key": "conductor_may_span",
+       "label": "Conductor may span",
+       "type": "sel",
+       "unit": null,
+       "options": [
+        "Yes",
+        "No"
+       ],
+       "default": "Yes",
+       "value": "Yes",
+       "changed": false,
+       "best_guess": false
+      }
+     ],
+     "enabled": true,
+     "reason": null,
+     "rev": null,
+     "n_changed": 0
+    }
+   ]
+  },
+  {
+   "key": "nogo",
+   "title": "No-Go zones",
+   "desc": "The route may not enter.",
+   "statutory": false,
+   "rules": [
+    {
+     "id": "buildings",
+     "name": "Buildings / manmade structure",
+     "note": "Includes any compound wall built around the structure",
+     "layer": "buildings",
+     "params": [
+      {
+       "key": "tower_setback_m",
+       "label": "Tower setback",
+       "type": "num",
+       "unit": "m",
+       "options": null,
+       "default": 100,
+       "value": 100,
+       "changed": false,
+       "best_guess": false
+      },
+      {
+       "key": "conductor_buffer",
+       "label": "Conductor buffer",
+       "type": "sel",
+       "unit": null,
+       "options": [
+        "Corridor half-width",
+        "Fixed",
+        "None"
+       ],
+       "default": "Corridor half-width",
+       "value": "Corridor half-width",
+       "changed": false,
+       "best_guess": false
+      },
+      {
+       "key": "conductor_buffer_m",
+       "label": "Fixed conductor buffer",
+       "type": "num",
+       "unit": "m",
+       "options": null,
+       "default": 30,
+       "value": 30,
+       "changed": false,
+       "best_guess": true
+      },
+      {
+       "key": "applies_to",
+       "label": "Applies to",
+       "type": "sel",
+       "unit": null,
+       "options": [
+        "Angular towers",
+        "All towers"
+       ],
+       "default": "Angular towers",
+       "value": "Angular towers",
+       "changed": false,
+       "best_guess": false
+      }
+     ],
+     "enabled": true,
+     "reason": null,
+     "rev": null,
+     "n_changed": 0
+    },
+    {
+     "id": "clusters",
+     "name": "Built-up cluster (village)",
+     "note": "Cluster detection threshold is an AESL assumption, not a regulation",
+     "layer": "clusters",
+     "params": [
+      {
+       "key": "tower_setback_m",
+       "label": "Tower buffer",
+       "type": "num",
+       "unit": "m",
+       "options": null,
+       "default": 120,
+       "value": 60,
+       "changed": true,
+       "best_guess": false
+      },
+      {
+       "key": "conductor_buffer_m",
+       "label": "Conductor buffer",
+       "type": "num",
+       "unit": "m",
+       "options": null,
+       "default": 120,
+       "value": 60,
+       "changed": true,
+       "best_guess": false
+      },
+      {
+       "key": "max_spacing_m",
+       "label": "Max spacing between buildings",
+       "type": "num",
+       "unit": "m",
+       "options": null,
+       "default": 50,
+       "value": 50,
+       "changed": false,
+       "best_guess": false
+      },
+      {
+       "key": "min_area_m2",
+       "label": "Minimum cluster area",
+       "type": "num",
+       "unit": "m\u00b2",
+       "options": null,
+       "default": 9000,
+       "value": 9000,
+       "changed": false,
+       "best_guess": false
+      }
+     ],
+     "enabled": true,
+     "reason": "e2e test",
+     "rev": 2,
+     "n_changed": 2
+    },
+    {
+     "id": "substations",
+     "name": "Sub-station",
+     "note": "The gantry is carved out and carries its own buffers",
+     "layer": "substations",
+     "params": [
+      {
+       "key": "tower_setback_m",
+       "label": "Tower buffer",
+       "type": "num",
+       "unit": "m",
+       "options": null,
+       "default": 100,
+       "value": 100,
+       "changed": false,
+       "best_guess": false
+      },
+      {
+       "key": "conductor_buffer_m",
+       "label": "Conductor buffer",
+       "type": "num",
+       "unit": "m",
+       "options": null,
+       "default": 100,
+       "value": 100,
+       "changed": false,
+       "best_guess": false
+      },
+      {
+       "key": "gantry_buffer_m",
+       "label": "Gantry substation buffer",
+       "type": "num",
+       "unit": "m",
+       "options": null,
+       "default": 10,
+       "value": 10,
+       "changed": false,
+       "best_guess": false
+      },
+      {
+       "key": "gantry_go_radius_m",
+       "label": "Gantry go-zone radius",
+       "type": "num",
+       "unit": "m",
+       "options": null,
+       "default": 150,
+       "value": 150,
+       "changed": false,
+       "best_guess": false
+      }
+     ],
+     "enabled": true,
+     "reason": null,
+     "rev": null,
+     "n_changed": 0
+    },
+    {
+     "id": "dams",
+     "name": "Dams",
+     "note": "Placement, crossing and passing alike",
+     "layer": "water",
+     "params": [
+      {
+       "key": "tower_setback_m",
+       "label": "Buffer",
+       "type": "num",
+       "unit": "m",
+       "options": null,
+       "default": 400,
+       "value": 400,
+       "changed": false,
+       "best_guess": false
+      },
+      {
+       "key": "crossing",
+       "label": "Crossing",
+       "type": "sel",
+       "unit": null,
+       "options": [
+        "Prohibited",
+        "Allowed"
+       ],
+       "default": "Prohibited",
+       "value": "Prohibited",
+       "changed": false,
+       "best_guess": false
+      }
+     ],
+     "enabled": true,
+     "reason": null,
+     "rev": null,
+     "n_changed": 0
+    },
+    {
+     "id": "solar",
+     "name": "Solar park",
+     "note": "Reduced from 300 m by the change of 17 May 2024",
+     "layer": "solar",
+     "params": [
+      {
+       "key": "tower_setback_m",
+       "label": "Tower buffer",
+       "type": "num",
+       "unit": "m",
+       "options": null,
+       "default": 150,
+       "value": 150,
+       "changed": false,
+       "best_guess": false
+      },
+      {
+       "key": "conductor_buffer_m",
+       "label": "Conductor buffer",
+       "type": "num",
+       "unit": "m",
+       "options": null,
+       "default": 150,
+       "value": 150,
+       "changed": false,
+       "best_guess": false
+      }
+     ],
+     "enabled": true,
+     "reason": null,
+     "rev": null,
+     "n_changed": 0
+    },
+    {
+     "id": "creek",
+     "name": "Creek area",
+     "note": "Sandy coastal strip \u2014 largest ground-level buffer in the set",
+     "layer": "water",
+     "params": [
+      {
+       "key": "tower_setback_m",
+       "label": "Buffer",
+       "type": "num",
+       "unit": "m",
+       "options": null,
+       "default": 2000,
+       "value": 2000,
+       "changed": false,
+       "best_guess": false
+      },
+      {
+       "key": "treatment",
+       "label": "Treatment",
+       "type": "sel",
+       "unit": null,
+       "options": [
+        "No-Go",
+        "Allowed"
+       ],
+       "default": "No-Go",
+       "value": "No-Go",
+       "changed": false,
+       "best_guess": false
+      }
+     ],
+     "enabled": true,
+     "reason": null,
+     "rev": null,
+     "n_changed": 0
+    },
+    {
+     "id": "protected_areas",
+     "name": "Protected areas and ESZ",
+     "note": "Wildlife sanctuary, national park and eco-sensitive zone \u2014 avoid entry",
+     "layer": "protected",
+     "params": [
+      {
+       "key": "tower_setback_m",
+       "label": "Tower buffer",
+       "type": "num",
+       "unit": "m",
+       "options": null,
+       "default": 0,
+       "value": 0,
+       "changed": false,
+       "best_guess": false
+      },
+      {
+       "key": "conductor_buffer_m",
+       "label": "Conductor buffer",
+       "type": "num",
+       "unit": "m",
+       "options": null,
+       "default": 0,
+       "value": 0,
+       "changed": false,
+       "best_guess": false
+      },
+      {
+       "key": "treatment",
+       "label": "Treatment",
+       "type": "sel",
+       "unit": null,
+       "options": [
+        "No-Go",
+        "Allowed"
+       ],
+       "default": "No-Go",
+       "value": "No-Go",
+       "changed": false,
+       "best_guess": false
+      }
+     ],
+     "enabled": true,
+     "reason": null,
+     "rev": null,
+     "n_changed": 0
+    }
+   ]
+  },
+  {
+   "key": "cross",
+   "title": "Crossings",
+   "desc": "Crossable, with the angle, span and tower type all set here.",
+   "statutory": false,
+   "rules": [
+    {
+     "id": "railway",
+     "name": "Railway line",
+     "note": "Setback follows structure height plus the railway allowance",
+     "layer": "rail",
+     "params": [
+      {
+       "key": "tower_setback_m",
+       "label": "Tower setback",
+       "type": "num",
+       "unit": "m",
+       "options": null,
+       "default": 86,
+       "value": 86,
+       "changed": false,
+       "best_guess": false
+      },
+      {
+       "key": "height_allowance_m",
+       "label": "Structure height allowance",
+       "type": "num",
+       "unit": "m",
+       "options": null,
+       "default": 6,
+       "value": 6,
+       "changed": false,
+       "best_guess": false
+      },
+      {
+       "key": "angle_deg",
+       "label": "Crossing angle",
+       "type": "rng",
+       "unit": "\u00b0",
+       "options": null,
+       "default": [
+        70,
+        110
+       ],
+       "value": [
+        70,
+        110
+       ],
+       "changed": false,
+       "best_guess": false
+      },
+      {
+       "key": "max_span_m",
+       "label": "Max crossing span",
+       "type": "num",
+       "unit": "m",
+       "options": null,
+       "default": 300,
+       "value": 300,
+       "changed": false,
+       "best_guess": false
+      },
+      {
+       "key": "tower_type",
+       "label": "Crossing tower type",
+       "type": "sel",
+       "unit": null,
+       "options": [
+        "A",
+        "B",
+        "C",
+        "D",
+        "A/B/C",
+        "B/C/D"
+       ],
+       "default": "D",
+       "value": "D",
+       "changed": false,
+       "best_guess": false
+      },
+      {
+       "key": "pct_design_span",
+       "label": "Or % of design span",
+       "type": "num",
+       "unit": "%",
+       "options": null,
+       "default": 80,
+       "value": 80,
+       "changed": false,
+       "best_guess": false
+      }
+     ],
+     "enabled": true,
+     "reason": null,
+     "rev": null,
+     "n_changed": 0
+    },
+    {
+     "id": "national_highway",
+     "name": "National highway",
+     "note": "Tension-type towers required at all national highways",
+     "layer": "roads",
+     "params": [
+      {
+       "key": "tower_setback_m",
+       "label": "Tower setback",
+       "type": "num",
+       "unit": "m",
+       "options": null,
+       "default": 80,
+       "value": 80,
+       "changed": false,
+       "best_guess": false
+      },
+      {
+       "key": "parallel_setback_m",
+       "label": "Parallel-run setback",
+       "type": "num",
+       "unit": "m",
+       "options": null,
+       "default": 300,
+       "value": 300,
+       "changed": false,
+       "best_guess": false
+      },
+      {
+       "key": "angle_deg",
+       "label": "Crossing angle",
+       "type": "rng",
+       "unit": "\u00b0",
+       "options": null,
+       "default": [
+        80,
+        100
+       ],
+       "value": [
+        80,
+        100
+       ],
+       "changed": false,
+       "best_guess": false
+      },
+      {
+       "key": "max_span_m",
+       "label": "Max crossing span",
+       "type": "num",
+       "unit": "m",
+       "options": null,
+       "default": 250,
+       "value": 250,
+       "changed": false,
+       "best_guess": false
+      },
+      {
+       "key": "tower_type",
+       "label": "Crossing tower type",
+       "type": "sel",
+       "unit": null,
+       "options": [
+        "A",
+        "B",
+        "C",
+        "D",
+        "A/B/C",
+        "B/C/D"
+       ],
+       "default": "B/C/D",
+       "value": "B/C/D",
+       "changed": false,
+       "best_guess": false
+      }
+     ],
+     "enabled": true,
+     "reason": null,
+     "rev": null,
+     "n_changed": 0
+    },
+    {
+     "id": "river",
+     "name": "River",
+     "note": "Major and minor crossings take different tower types",
+     "layer": "water",
+     "params": [
+      {
+       "key": "tower_setback_m",
+       "label": "Bank buffer, each side",
+       "type": "num",
+       "unit": "m",
+       "options": null,
+       "default": 150,
+       "value": 150,
+       "changed": false,
+       "best_guess": false
+      },
+      {
+       "key": "angle_deg",
+       "label": "Crossing angle",
+       "type": "num",
+       "unit": "\u00b0",
+       "options": null,
+       "default": 90,
+       "value": 90,
+       "changed": false,
+       "best_guess": false
+      },
+      {
+       "key": "major_threshold_m",
+       "label": "Major crossing threshold",
+       "type": "num",
+       "unit": "m",
+       "options": null,
+       "default": 600,
+       "value": 600,
+       "changed": false,
+       "best_guess": false
+      },
+      {
+       "key": "major_tower_type",
+       "label": "Major tower type",
+       "type": "sel",
+       "unit": null,
+       "options": [
+        "A",
+        "B",
+        "C",
+        "D",
+        "A/B/C"
+       ],
+       "default": "D",
+       "value": "D",
+       "changed": false,
+       "best_guess": false
+      },
+      {
+       "key": "tower_type",
+       "label": "Minor tower type",
+       "type": "sel",
+       "unit": null,
+       "options": [
+        "A",
+        "B",
+        "C",
+        "D",
+        "A/B/C"
+       ],
+       "default": "A/B/C",
+       "value": "A/B/C",
+       "changed": false,
+       "best_guess": false
+      }
+     ],
+     "enabled": true,
+     "reason": null,
+     "rev": null,
+     "n_changed": 0
+    },
+    {
+     "id": "canal",
+     "name": "Canal",
+     "note": "Raised from 30 m pending AESL confirmation",
+     "layer": "water",
+     "params": [
+      {
+       "key": "tower_setback_m",
+       "label": "Tower buffer",
+       "type": "num",
+       "unit": "m",
+       "options": null,
+       "default": 150,
+       "value": 150,
+       "changed": false,
+       "best_guess": false
+      },
+      {
+       "key": "parallel_setback_m",
+       "label": "Conductor buffer",
+       "type": "num",
+       "unit": "m",
+       "options": null,
+       "default": 150,
+       "value": 150,
+       "changed": false,
+       "best_guess": false
+      },
+      {
+       "key": "angle_deg",
+       "label": "Crossing angle",
+       "type": "sel",
+       "unit": null,
+       "options": [
+        "Any",
+        "90\u00b0",
+        "75\u201390\u00b0",
+        "80\u2013100\u00b0"
+       ],
+       "default": "Any",
+       "value": "Any",
+       "changed": false,
+       "best_guess": false
+      },
+      {
+       "key": "tower_type",
+       "label": "Tower type",
+       "type": "sel",
+       "unit": null,
+       "options": [
+        "A",
+        "B",
+        "C",
+        "D",
+        "A/B/C"
+       ],
+       "default": "A/B/C",
+       "value": "A/B/C",
+       "changed": false,
+       "best_guess": false
+      }
+     ],
+     "enabled": true,
+     "reason": null,
+     "rev": null,
+     "n_changed": 0
+    },
+    {
+     "id": "power_line",
+     "name": "Power line",
+     "note": "Crossed at the null point, clear of the existing towers",
+     "layer": "power",
+     "params": [
+      {
+       "key": "tower_setback_m",
+       "label": "Tower to existing tower",
+       "type": "num",
+       "unit": "m",
+       "options": null,
+       "default": 100,
+       "value": 100,
+       "changed": false,
+       "best_guess": false
+      },
+      {
+       "key": "null_point_radius_m",
+       "label": "Null-point clear radius",
+       "type": "num",
+       "unit": "m",
+       "options": null,
+       "default": 100,
+       "value": 100,
+       "changed": false,
+       "best_guess": false
+      },
+      {
+       "key": "angle_deg",
+       "label": "Crossing angle",
+       "type": "rng",
+       "unit": "\u00b0",
+       "options": null,
+       "default": [
+        60,
+        120
+       ],
+       "value": [
+        60,
+        120
+       ],
+       "changed": false,
+       "best_guess": false
+      },
+      {
+       "key": "max_span_m",
+       "label": "Max crossing span",
+       "type": "num",
+       "unit": "m",
+       "options": null,
+       "default": 250,
+       "value": 250,
+       "changed": false,
+       "best_guess": false
+      },
+      {
+       "key": "tower_type",
+       "label": "Tower type",
+       "type": "sel",
+       "unit": null,
+       "options": [
+        "B",
+        "C",
+        "D",
+        "B/C/D"
+       ],
+       "default": "B/C/D",
+       "value": "B/C/D",
+       "changed": false,
+       "best_guess": false
+      },
+      {
+       "key": "max_dev_adjacent_deg",
+       "label": "Max deviation at n\u00b11",
+       "type": "num",
+       "unit": "\u00b0",
+       "options": null,
+       "default": 45,
+       "value": 45,
+       "changed": false,
+       "best_guess": false
+      }
+     ],
+     "enabled": true,
+     "reason": null,
+     "rev": null,
+     "n_changed": 0
+    }
+   ]
+  },
+  {
+   "key": "gng",
+   "title": "Land classes \u2014 go or no-go",
+   "desc": "Each class is either routable or not. No weights: how strongly the engine prefers one class is internal, not a business input.",
+   "statutory": false,
+   "rules": [
+    {
+     "id": "forest",
+     "name": "Reserve and protected forest",
+     "note": "Routable by default \u2014 diversion approval is required in every case. Set to No-Go to keep the route out entirely.",
+     "layer": "forest",
+     "params": [
+      {
+       "key": "treatment",
+       "label": "Treatment",
+       "type": "sel",
+       "unit": null,
+       "options": [
+        "Allowed",
+        "No-Go"
+       ],
+       "default": "Allowed",
+       "value": "Allowed",
+       "changed": false,
+       "best_guess": false
+      },
+      {
+       "key": "buffer",
+       "label": "Buffer",
+       "type": "sel",
+       "unit": null,
+       "options": [
+        "Corridor half-width",
+        "Fixed",
+        "None"
+       ],
+       "default": "Corridor half-width",
+       "value": "Corridor half-width",
+       "changed": false,
+       "best_guess": false
+      },
+      {
+       "key": "buffer_m",
+       "label": "Fixed buffer",
+       "type": "num",
+       "unit": "m",
+       "options": null,
+       "default": 0,
+       "value": 0,
+       "changed": false,
+       "best_guess": false
+      },
+      {
+       "key": "ro_threshold_ha",
+       "label": "Regional Office threshold",
+       "type": "num",
+       "unit": "ha",
+       "options": null,
+       "default": 5,
+       "value": 5,
+       "changed": false,
+       "best_guess": false
+      },
+      {
+       "key": "conservator_threshold_ha",
+       "label": "Conservator inspection threshold",
+       "type": "num",
+       "unit": "ha",
+       "options": null,
+       "default": 40,
+       "value": 40,
+       "changed": false,
+       "best_guess": false
+      }
+     ],
+     "enabled": true,
+     "reason": null,
+     "rev": null,
+     "n_changed": 0
+    },
+    {
+     "id": "agriculture",
+     "name": "Agricultural land",
+     "note": "Compensation cost applies across the corridor and is set on the Costs screen",
+     "layer": "lulc",
+     "params": [
+      {
+       "key": "treatment",
+       "label": "Treatment",
+       "type": "sel",
+       "unit": null,
+       "options": [
+        "Allowed",
+        "No-Go"
+       ],
+       "default": "Allowed",
+       "value": "Allowed",
+       "changed": false,
+       "best_guess": false
+      },
+      {
+       "key": "buffer",
+       "label": "Buffer",
+       "type": "sel",
+       "unit": null,
+       "options": [
+        "Corridor half-width",
+        "Fixed",
+        "None"
+       ],
+       "default": "Corridor half-width",
+       "value": "Corridor half-width",
+       "changed": false,
+       "best_guess": false
+      },
+      {
+       "key": "buffer_m",
+       "label": "Fixed buffer",
+       "type": "num",
+       "unit": "m",
+       "options": null,
+       "default": 0,
+       "value": 0,
+       "changed": false,
+       "best_guess": false
+      }
+     ],
+     "enabled": true,
+     "reason": null,
+     "rev": null,
+     "n_changed": 0
+    },
+    {
+     "id": "orchard",
+     "name": "Orchard and plantation",
+     "note": "Compensated per tree, so the cost rate carries the difference \u2014 not a weight here",
+     "layer": "lulc",
+     "params": [
+      {
+       "key": "treatment",
+       "label": "Treatment",
+       "type": "sel",
+       "unit": null,
+       "options": [
+        "Allowed",
+        "No-Go"
+       ],
+       "default": "Allowed",
+       "value": "Allowed",
+       "changed": false,
+       "best_guess": false
+      },
+      {
+       "key": "buffer",
+       "label": "Buffer",
+       "type": "sel",
+       "unit": null,
+       "options": [
+        "Corridor half-width",
+        "Fixed",
+        "None"
+       ],
+       "default": "Corridor half-width",
+       "value": "Corridor half-width",
+       "changed": false,
+       "best_guess": false
+      },
+      {
+       "key": "buffer_m",
+       "label": "Fixed buffer",
+       "type": "num",
+       "unit": "m",
+       "options": null,
+       "default": 0,
+       "value": 0,
+       "changed": false,
+       "best_guess": false
+      }
+     ],
+     "enabled": true,
+     "reason": null,
+     "rev": null,
+     "n_changed": 0
+    },
+    {
+     "id": "marsh",
+     "name": "Marshy land",
+     "note": "Construction cost and long-term settlement risk",
+     "layer": "lulc",
+     "params": [
+      {
+       "key": "treatment",
+       "label": "Treatment",
+       "type": "sel",
+       "unit": null,
+       "options": [
+        "Allowed",
+        "No-Go"
+       ],
+       "default": "Allowed",
+       "value": "Allowed",
+       "changed": false,
+       "best_guess": false
+      },
+      {
+       "key": "buffer",
+       "label": "Buffer",
+       "type": "sel",
+       "unit": null,
+       "options": [
+        "Corridor half-width",
+        "Fixed",
+        "None"
+       ],
+       "default": "Fixed",
+       "value": "Fixed",
+       "changed": false,
+       "best_guess": false
+      },
+      {
+       "key": "buffer_m",
+       "label": "Buffer",
+       "type": "num",
+       "unit": "m",
+       "options": null,
+       "default": 50,
+       "value": 50,
+       "changed": false,
+       "best_guess": false
+      }
+     ],
+     "enabled": true,
+     "reason": null,
+     "rev": null,
+     "n_changed": 0
+    },
+    {
+     "id": "social_forest",
+     "name": "Social forest",
+     "note": "Planted strip alongside road, canal or railway",
+     "layer": "lulc",
+     "params": [
+      {
+       "key": "treatment",
+       "label": "Treatment",
+       "type": "sel",
+       "unit": null,
+       "options": [
+        "Allowed",
+        "No-Go"
+       ],
+       "default": "Allowed",
+       "value": "Allowed",
+       "changed": false,
+       "best_guess": false
+      },
+      {
+       "key": "buffer",
+       "label": "Buffer",
+       "type": "sel",
+       "unit": null,
+       "options": [
+        "Corridor half-width",
+        "Fixed",
+        "None"
+       ],
+       "default": "Fixed",
+       "value": "Fixed",
+       "changed": false,
+       "best_guess": false
+      },
+      {
+       "key": "buffer_m",
+       "label": "Buffer",
+       "type": "num",
+       "unit": "m",
+       "options": null,
+       "default": 0,
+       "value": 0,
+       "changed": false,
+       "best_guess": false
+      },
+      {
+       "key": "strip_width_m",
+       "label": "Strip width from infrastructure",
+       "type": "num",
+       "unit": "m",
+       "options": null,
+       "default": 100,
+       "value": 100,
+       "changed": false,
+       "best_guess": false
+      }
+     ],
+     "enabled": true,
+     "reason": null,
+     "rev": null,
+     "n_changed": 0
+    },
+    {
+     "id": "barren",
+     "name": "Shrubs, barren and hard rock",
+     "note": "Cheapest ground on any corridor; hard rock is dearer to excavate, which the foundation rate handles",
+     "layer": "lulc",
+     "params": [
+      {
+       "key": "treatment",
+       "label": "Treatment",
+       "type": "sel",
+       "unit": null,
+       "options": [
+        "Allowed",
+        "No-Go"
+       ],
+       "default": "Allowed",
+       "value": "Allowed",
+       "changed": false,
+       "best_guess": false
+      },
+      {
+       "key": "buffer",
+       "label": "Buffer",
+       "type": "sel",
+       "unit": null,
+       "options": [
+        "Corridor half-width",
+        "Fixed",
+        "None"
+       ],
+       "default": "Fixed",
+       "value": "Fixed",
+       "changed": false,
+       "best_guess": false
+      },
+      {
+       "key": "buffer_m",
+       "label": "Buffer",
+       "type": "num",
+       "unit": "m",
+       "options": null,
+       "default": 0,
+       "value": 0,
+       "changed": false,
+       "best_guess": false
+      }
+     ],
+     "enabled": true,
+     "reason": null,
+     "rev": null,
+     "n_changed": 0
+    }
+   ]
+  },
+  {
+   "key": "geo",
+   "title": "Geometry and towers",
+   "desc": "Span, deviation and tower selection. No layer needed.",
+   "statutory": false,
+   "rules": [
+    {
+     "id": "max_deviation",
+     "name": "Maximum angular deviation",
+     "note": "Top of the largest tower class available",
+     "layer": null,
+     "params": [
+      {
+       "key": "limit_deg",
+       "label": "Limit",
+       "type": "num",
+       "unit": "\u00b0",
+       "options": null,
+       "default": 60,
+       "value": 60,
+       "changed": false,
+       "best_guess": false
+      }
+     ],
+     "enabled": true,
+     "reason": null,
+     "rev": null,
+     "n_changed": 0
+    },
+    {
+     "id": "design_span",
+     "name": "Design span",
+     "note": "Per voltage, plain terrain governs the solve; hilly applies where the DEM slope class says so",
+     "layer": null,
+     "params": [
+      {
+       "key": "plain_m",
+       "label": "Plain terrain",
+       "type": "num",
+       "unit": "m",
+       "options": null,
+       "default": 400,
+       "value": 400,
+       "changed": false,
+       "best_guess": true
+      },
+      {
+       "key": "hilly_m",
+       "label": "Hilly terrain",
+       "type": "num",
+       "unit": "m",
+       "options": null,
+       "default": 300,
+       "value": 300,
+       "changed": false,
+       "best_guess": true
+      },
+      {
+       "key": "urban_m",
+       "label": "Urban / populated",
+       "type": "num",
+       "unit": "m",
+       "options": null,
+       "default": 250,
+       "value": 250,
+       "changed": false,
+       "best_guess": true
+      }
+     ],
+     "enabled": true,
+     "reason": null,
+     "rev": null,
+     "n_changed": 0
+    },
+    {
+     "id": "section_interval",
+     "name": "Section point interval",
+     "note": "Tension point using a B/DB, C/DC or D/DD tower",
+     "layer": null,
+     "params": [
+      {
+       "key": "plain_km",
+       "label": "Plain terrain",
+       "type": "num",
+       "unit": "km",
+       "options": null,
+       "default": 5,
+       "value": 5,
+       "changed": false,
+       "best_guess": false
+      },
+      {
+       "key": "hilly_km",
+       "label": "Hilly terrain",
+       "type": "num",
+       "unit": "km",
+       "options": null,
+       "default": 3,
+       "value": 3,
+       "changed": false,
+       "best_guess": false
+      }
+     ],
+     "enabled": true,
+     "reason": null,
+     "rev": null,
+     "n_changed": 0
+    },
+    {
+     "id": "corridor_half_width",
+     "name": "Corridor half-width",
+     "note": "Half the notified right of way for the line voltage (MoP RoW guidelines 2015)",
+     "layer": null,
+     "params": [
+      {
+       "key": "half_width_m",
+       "label": "Half-width for this line",
+       "type": "num",
+       "unit": "m",
+       "options": null,
+       "default": 33.5,
+       "value": 33.5,
+       "changed": false,
+       "best_guess": true
+      },
+      {
+       "key": "urban_half_width_m",
+       "label": "Urban half-width",
+       "type": "num",
+       "unit": "m",
+       "options": null,
+       "default": 27,
+       "value": 27,
+       "changed": false,
+       "best_guess": true
+      }
+     ],
+     "enabled": true,
+     "reason": null,
+     "rev": null,
+     "n_changed": 0
+    },
+    {
+     "id": "tower_type_bands",
+     "name": "Tower type by deviation",
+     "note": "Band boundaries in degrees \u2014 the band a deviation falls in picks the tower",
+     "layer": null,
+     "params": [
+      {
+       "key": "A",
+       "label": "A up to",
+       "type": "num",
+       "unit": "\u00b0",
+       "options": null,
+       "default": 1,
+       "value": 1,
+       "changed": false,
+       "best_guess": false
+      },
+      {
+       "key": "B1",
+       "label": "B1 up to",
+       "type": "num",
+       "unit": "\u00b0",
+       "options": null,
+       "default": 7,
+       "value": 7,
+       "changed": false,
+       "best_guess": false
+      },
+      {
+       "key": "B2",
+       "label": "B2 up to",
+       "type": "num",
+       "unit": "\u00b0",
+       "options": null,
+       "default": 15,
+       "value": 15,
+       "changed": false,
+       "best_guess": false
+      },
+      {
+       "key": "C1",
+       "label": "C1 up to",
+       "type": "num",
+       "unit": "\u00b0",
+       "options": null,
+       "default": 22,
+       "value": 22,
+       "changed": false,
+       "best_guess": false
+      },
+      {
+       "key": "C2",
+       "label": "C2 up to",
+       "type": "num",
+       "unit": "\u00b0",
+       "options": null,
+       "default": 30,
+       "value": 30,
+       "changed": false,
+       "best_guess": false
+      },
+      {
+       "key": "D45",
+       "label": "D45 up to",
+       "type": "num",
+       "unit": "\u00b0",
+       "options": null,
+       "default": 45,
+       "value": 45,
+       "changed": false,
+       "best_guess": false
+      },
+      {
+       "key": "D60",
+       "label": "D60 up to",
+       "type": "num",
+       "unit": "\u00b0",
+       "options": null,
+       "default": 60,
+       "value": 60,
+       "changed": false,
+       "best_guess": false
+      }
+     ],
+     "enabled": true,
+     "reason": null,
+     "rev": null,
+     "n_changed": 0
+    },
+    {
+     "id": "crossing_span_limits",
+     "name": "Span limits at a crossing",
+     "note": "Minimum stands in for the falling-tower distance",
+     "layer": null,
+     "params": [
+      {
+       "key": "min_span_m",
+       "label": "Minimum span",
+       "type": "num",
+       "unit": "m",
+       "options": null,
+       "default": 100,
+       "value": 100,
+       "changed": false,
+       "best_guess": false
+      },
+      {
+       "key": "angle_point_shift_m",
+       "label": "Angle point shift allowance",
+       "type": "num",
+       "unit": "m",
+       "options": null,
+       "default": 100,
+       "value": 100,
+       "changed": false,
+       "best_guess": false
+      }
+     ],
+     "enabled": true,
+     "reason": null,
+     "rev": null,
+     "n_changed": 0
+    }
+   ]
+  }
+ ],
+ "n_rules": 30,
+ "n_params": 99,
+ "n_changed": 2,
+ "n_off": 0
+}

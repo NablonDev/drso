@@ -240,7 +240,8 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
         spot_s = time.time() - t
         line = LineString([(tw.x, tw.y) for tw in sr.towers])
         prev_lines.append(line)
-        evs = _route_events(sr, frame, comp, findex, rules, sp, layer_names, inp, dem)
+        evs = _route_events(sr, frame, comp, findex, rules, sp, layer_names, inp, dem,
+                            [e for e in global_events if e["type"] == "BEELINE_BLOCKER"])
         if diversity_ev:
             evs.insert(0, diversity_ev)
         routes.append(_route_json(var, sr, frame, evs, solve_s, spot_s, out))
@@ -360,9 +361,41 @@ def _area_km2(frame, geom_lonlat):
     return frame.geom_to_utm(geom_lonlat).area / 1e6
 
 
-def _route_events(sr, frame, comp, findex, rules, sp, layer_names, inp, dem):
+def _detours(T, blockers, findex, frame):
+    """Stretches where the route leaves the bee-line around a blocker: (from_x, to_x, blocker, side, max_off)."""
+    out = []
+    xs = np.array([t.x for t in T])
+    ys = np.array([t.y for t in T])
+    for b in blockers:
+        mid = (b["data"]["from_km"] + b["data"]["to_km"]) / 2 * 1000
+        y_mid = float(np.interp(mid, xs, ys))
+        if abs(y_mid) < 25:
+            continue
+        side = np.sign(y_mid)
+        i = int(np.searchsorted(xs, mid))
+        lo = i - 1
+        while lo > 0 and np.sign(ys[lo]) == side and abs(ys[lo]) >= 25:
+            lo -= 1
+        hi = min(i, len(T) - 1)
+        while hi < len(T) - 1 and np.sign(ys[hi]) == side and abs(ys[hi]) >= 25:
+            hi += 1
+        seg = slice(lo, hi + 1)
+        out.append((float(xs[lo]), float(xs[hi]), b, "left" if side > 0 else "right", float(np.abs(ys[seg]).max())))
+    return out
+
+
+def _route_events(sr, frame, comp, findex, rules, sp, layer_names, inp, dem, blockers=()):
     evs = []
     T = sr.towers
+    detours = _detours(T, blockers, findex, frame)
+    route_line = LineString([(t.x, t.y) for t in T])
+    for x0, x1, b, side, max_off in detours:
+        it, _ = findex.nearest(Point((b["data"]["from_km"] + b["data"]["to_km"]) * 500, 0), max_dist=50)
+        clr = route_line.distance(findex.geoms[it["_idx"]]) if it else None
+        evs.append(event("DETOUR", {"from_km": x0 / 1000, "to_km": x1 / 1000, "side": side, "max_offset_m": max_off,
+                                    "feature": b["data"]["feature"], "rule": b["data"]["rule"],
+                                    "clearance_m": clr if clr is not None else 0.0},
+                         chainage_km=round(x0 / 1000, 2), source=b.get("source")))
     vec_rules = comp.tower_nogo + comp.angle_nogo + comp.conductor_nogo
     search = load_engine()["events"]["turn_feature_search_m"]
     low = load_engine()["events"]["low_confidence"]
@@ -374,7 +407,11 @@ def _route_events(sr, frame, comp, findex, rules, sp, layer_names, inp, dem):
         p0, p1 = T[i - 1], t
         dx, dy = p1.x - p0.x, p1.y - p0.y
         n = math.hypot(dx, dy) or 1
-        ray = LineString([(p1.x, p1.y), (p1.x + dx / n * search, p1.y + dy / n * search)])
+        # look along the incoming heading up to the next angle point (+ the search distance):
+        # the feature that straight-on would have hit is the one this turn avoids
+        nxt = next((T[j] for j in range(i + 1, len(T)) if T[j].angle_point or T[j].type == "G"), T[-1])
+        reach = max(search, (nxt.x - p1.x) / max(dx / n, 0.2) + search) if dx > 0 else search
+        ray = LineString([(p1.x, p1.y), (p1.x + dx / n * reach, p1.y + dy / n * reach)])
         hit = None
         P = Point(p1.x, p1.y)
         for vr in vec_rules:
@@ -398,8 +435,17 @@ def _route_events(sr, frame, comp, findex, rules, sp, layer_names, inp, dem):
                         clearance_m=clearance, rule_id=rid)
             kind = "TURN_TO_CROSS" if clearance < 1.0 and rid in CROSSING_RULES else "TURN_TO_AVOID"
             evs.append(event(kind, data, chainage_km=data["chainage_km"], source=_source(it, inp.layers)))
+        elif (d := next((d for d in detours if d[0] - 1 <= t.x <= d[1] + 1), None)) is not None:
+            x0, x1, b, side, _ = d
+            it, _ = findex.nearest(Point((b["data"]["from_km"] + b["data"]["to_km"]) * 500, 0), max_dist=50)
+            clr = LineString([(T[i - 1].x, T[i - 1].y), (t.x, t.y), (T[i + 1].x, T[i + 1].y)])
+            data.update(feature=b["data"]["feature"], rule_id=b["data"].get("rule_id"),
+                        clearance_m=route_line.distance(findex.geoms[it["_idx"]]) if it else 0.0)
+            evs.append(event("TURN_TO_AVOID", data, chainage_km=data["chainage_km"], source=b.get("source")))
         else:
-            evs.append(event("TURN", data, chainage_km=data["chainage_km"]))
+            o_dx, o_dy = T[i + 1].x - t.x, T[i + 1].y - t.y
+            heading_back = abs(t.y) > 1.0 and (o_dy * t.y) < 0 and abs(o_dy / (math.hypot(o_dx, o_dy) or 1)) > abs(dy / n)
+            evs.append(event("TURN_BACK" if heading_back else "TURN", data, chainage_km=data["chainage_km"]))
     for s in sr.spans:
         for c in s.crossings:
             a, b = T[s.a], T[s.b]
@@ -495,7 +541,7 @@ def _route_json(var, sr, frame, evs, solve_s, spot_s, out) -> dict:
             "warnings": t.warnings,
             "span_ahead_m": round(sr.spans[i].length_m, 1) if i < len(sr.spans) else None,
         })
-    spans = [{"a": s.a + 1, "b": s.b + 1, "length_m": round(s.length_m, 1), "crossings": s.crossings,
+    spans = [{"a": T[s.a].no, "b": T[s.b].no, "length_m": round(s.length_m, 1), "crossings": s.crossings,
               "min_clearance_m": s.min_clearance_m} for s in sr.spans]
     return {
         "id": var["id"], "key": var["key"], "name": var["name"], "feasible": True,
