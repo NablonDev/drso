@@ -1,0 +1,80 @@
+# Which statewide file feeds which reference layer. Copy to reference_manifest.yaml, check every
+# entry against the delivered files, then run:  python scripts/ingest_all.py config/reference_manifest.yaml
+#
+# Paths are relative to `root`. Entries below follow the file names seen in "LULC output" on
+# 5 Oct 2026 (the upload was incomplete at the time) — VERIFY layer names, class fields and the
+# class map before ingesting. Unmapped source classes fall back to the layer's first class and
+# are listed by the script.
+root: "/srv/beeline/incoming/LULC output"
+version: "2026-10-gujarat-v1"
+
+layers:
+  forest:
+    path: "Forest Areas/gj_forest_delivery.gpkg"
+    const_class: reserve_forest
+    name_field: null
+    source: "Forest boundaries delivery"
+    source_date: null
+  roads:
+    - path: "Highways/India_National_Highways_GatiShakti.gpkg"
+      const_class: nh
+      source: "PM GatiShakti national highways"
+    - path: "Highways/India_State_Highways_OSM.gpkg"
+      const_class: sh
+      source: "OSM state highways"
+  rail:
+    path: "Railway Stations and Lines/gujarat_railway_stations.gpkg"
+    layer: null            # pick the lines layer, not the stations layer
+    const_class: railway
+    source: "Railway lines"
+  pipelines:
+    path: "Oil and Gas pipelines/India_Oil_Gas_Pipelines_v3.gpkg"
+    class_field: null      # e.g. a product/type column -> gas_pipeline / oil_pipeline
+    const_class: gas_pipeline
+    source: "Oil & gas pipelines v3"
+  aviation:
+    path: "airports/airport_boundary_merged.gpkg"
+    const_class: airport
+    name_field: source_name
+    source: "Airport boundaries (OSM + Esri merged)"
+  substations:
+    path: "substation/AESL_SUBSTATIONS_FINAL.gpkg"
+    const_class: substation
+    source: "AESL substations"
+  solar:
+    path: "Solar Park/Bhuj_Lakadia_Solar_Parks_v2.gpkg"
+    const_class: solar_park
+    source: "Solar parks v2"
+  water:
+    - path: "waterbodies/gujarat_rivers_canals_final.gpkg"
+      class_field: null    # map river / canal / nalla
+      source: "Rivers and canals"
+    - path: "waterbodies/gujarat_water_bodies_by_type.gpkg"
+      class_field: null    # map pond / dam / creek
+      source: "Water bodies by type"
+  soil:
+    path: "Soil_type/gujarat_soil_types_5_layers"
+    class_field: null      # map to normal_dry / wet_submerged / black_cotton / hard_rock / sandy_fissured
+    source: "Gujarat soil types"
+  power:
+    - path: "transmission_towers/high_voltage/lines_high_voltage.gpkg"
+      const_class: power_line
+      source: "HV lines"
+    - path: "transmission_towers/high_voltage/towers_high_voltage.gpkg"
+      const_class: power_tower
+      source: "HV towers"
+    - path: "transmission_towers/low_voltage/lines_low_voltage.gpkg"
+      const_class: power_line
+      source: "LV lines"
+    - path: "transmission_towers/low_voltage/towers_low_voltage.gpkg"
+      const_class: power_tower
+      source: "LV towers"
+  buildings:
+    path: "Buildup area/corridor_footprints_finetuned.gpkg"
+    const_class: building
+    source: "Building footprints (fine-tuned model)"
+    model: "footprints-finetuned"
+  plotted:
+    path: "plotted_land/Bhuj_Lakadia_Plotted_Land_FINAL.gpkg"
+    const_class: plotted_land
+    source: "Plotted land FINAL"

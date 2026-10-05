@@ -404,6 +404,8 @@ def _route_events(sr, frame, comp, findex, rules, sp, layer_names, inp, dem, blo
         t = T[i]
         if not t.angle_point:
             continue
+        if "dead_end" in t.reasons and t.deflection_deg < 30:
+            continue      # leaving / entering the gantry, not a routing decision
         p0, p1 = T[i - 1], t
         dx, dy = p1.x - p0.x, p1.y - p0.y
         n = math.hypot(dx, dy) or 1
