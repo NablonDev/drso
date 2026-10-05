@@ -27,3 +27,21 @@ OVERPASS_URLS = [u.strip() for u in os.environ.get(
 
 for d in (DATA, REFERENCE_DIR, IMAGERY_DIR, DEM_DIR, RUNS_DIR, UPLOADS_DIR, TILE_CACHE_DIR):
     d.mkdir(parents=True, exist_ok=True)
+
+# ---- licensed imagery acquisition (credentials come from the environment / deploy/.env) ----
+ESRI_TOKEN = os.environ.get("BEELINE_ESRI_TOKEN", "")
+WAYBACK_URL = os.environ.get(
+    "BEELINE_WAYBACK_URL",
+    "https://wayback.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/WMTS/1.0.0/default028mm/MapServer/tile/{release}/{z}/{y}/{x}")
+WAYBACK_RELEASE = os.environ.get("BEELINE_WAYBACK_RELEASE", "26334")
+WAYBACK_RELEASE_DATE = os.environ.get("BEELINE_WAYBACK_RELEASE_DATE", "2026-08-05")
+LICENCE_ESRI = os.environ.get("BEELINE_LICENCE_ESRI", "Esri World Imagery Wayback — operator licence")
+STAC_URL = os.environ.get("BEELINE_STAC_URL", "https://earth-search.aws.element84.com/v1/search")
+PC_SUBSCRIPTION_KEY = os.environ.get("BEELINE_PC_SUBSCRIPTION_KEY", "")
+# ---- LULC model plugins ----
+MODEL_ENV_ROOT = os.environ.get("BEELINE_MODEL_ENV_ROOT", "/home/vivek_jain/miniforge3/envs")
+ROADDET_VENV = os.environ.get("BEELINE_ROADDET_VENV", "/mnt/cog-data/roaddet/venv")
+MODELS_DIR = DATA / "models"
+MODEL_GPU_DEVICE = int(os.environ.get("BEELINE_MODEL_GPU", "0"))
+# Kill switch: 0 = never start a model plugin on this machine (stored outputs still served)
+RUN_MODELS = os.environ.get("BEELINE_RUN_MODELS", "1") == "1"

@@ -25,10 +25,12 @@ with psycopg.connect(ADMIN, autocommit=True) as _c:
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-from beeline_api import app as appmod, cell_towers, db, imagery, jobs, osm_highways, osm_power, solvejob, worker  # noqa: E402
+from beeline_api import app as appmod, aviation, cell_towers, db, imagery, jobs, osm_highways, osm_power, solvejob, worker  # noqa: E402
 
 FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "overpass_power_bhuj.json")
 HW_FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "overpass_highways_bhuj.json")   # 5 Oct 2026
+LA_FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "livingatlas_airports_kutch.json")  # 4 airports
+AP_GPKG = os.path.join(os.path.dirname(__file__), "fixtures", "airports_kutch.gpkg")          # OSM aerodromes + runways
 TS_FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "ts_towers_bhuj.parquet")   # 871 sites, Bhuj–Bhachau
 
 A = {"lat": 23.4525, "lon": 69.5924, "name": "Bhujpool"}
@@ -48,6 +50,9 @@ def client():
         osm_power.refresh_aoi((69.50, 23.25, 70.10, 23.60))                  # seed the OSM power store
         osm_highways.refresh_aoi((69.45, 23.15, 70.70, 23.70))               # seed the OSM highway store
         cell_towers.load_india(TS_FIXTURE)                                   # seed the cell tower store
+        aviation._get = lambda params: json.load(open(LA_FIXTURE))            # recorded Living Atlas answer
+        aviation.load_airports(AP_GPKG)                                      # seed the airport store
+        aviation.load_runways(AP_GPKG)                                       # seed the runway store
         yield c
 
 
@@ -167,7 +172,7 @@ def test_rules_and_costs_validation(client):
     assert r.json()["n_off"] == 1
     assert client.delete(f"/api/runs/{rid}/rules").json()["n_off"] == 0
     rules = client.get(f"/api/runs/{rid}/rules").json()
-    assert rules["n_rules"] == 31
+    assert rules["n_rules"] == 33          # 29 prototype + protected areas, cell towers, wind turbines, village roads
     r = client.put(f"/api/runs/{rid}/costs", json={"tower": {"rate_per_tonne_rs": "abc"}})
     assert r.status_code == 400
     r = client.put(f"/api/runs/{rid}/costs", json={"land": {"agri_land_cr_ha": -1}})
@@ -394,3 +399,69 @@ def test_overpass_retries_busy_mirror_before_moving_on(monkeypatch):
     monkeypatch.setattr(osm_power.time, "sleep", lambda s: None)
     assert osm_power.overpass_query("[out:json];") == {"elements": []}
     assert calls == [osm_power.OVERPASS_URLS[0]] * 3          # stayed on the first mirror
+
+
+def test_runway_polygons_and_airport_filter():
+    import geopandas as gpd
+    from shapely.geometry import LineString, box as sbox
+    g = gpd.GeoDataFrame({
+        "osm_type": ["way"] * 4, "osm_id": [1, 2, 3, 4], "name": [None] * 4,
+        "all_tags": ['{"aeroway": "runway", "width": "30", "ref": "05/23"}', '{"aeroway": "runway"}',
+                     '{"aeroway": "runway", "disused": "yes"}', '{"aeroway": "runway"}']},
+        geometry=[LineString([(69.60, 23.30), (69.62, 23.30)])] * 3 + [sbox(69.60, 23.30, 69.61, 23.3004)], crs=4326)
+    rw = aviation.runway_polygons(g).set_index("src_id")
+    assert list(rw.index) == ["way/1", "way/2", "way/4"]                      # disused dropped
+    assert rw.loc["way/1", "width_source"] == "width tag" and rw.loc["way/2", "width_source"] == "default 45 m"
+    assert rw.loc["way/4", "width_source"] == "polygon"
+    a = rw.to_crs(32642).area
+    length = 0.02 * 111320 * 0.9164                                          # 0.02° of longitude at 23.3° N
+    assert abs(a["way/1"] / length - 30) < 1 and abs(a["way/2"] / length - 45) < 1.5
+    assert aviation.parse_width("50m") == 50 and aviation.parse_width("1000") is None
+    assert not aviation._is_airport("Khavda Abandoned Airstrip", '{"disused": "yes"}')
+    assert not aviation._is_airport("Naharlagun Heliport", "{}") and aviation._is_airport("Bhuj Rudra Mata Air Force Base", "{}")
+
+
+def test_aviation_layers_and_refresh_from_ui(client):
+    st = client.get("/api/aviation").json()
+    srcs = {r["source"]: r["n"] for r in st["airports"]}
+    assert srcs["esri"] == 4 and srcs["osm"] >= 1                            # OSM air force stations not in Esri
+    rid = make_run(client)
+    client.post(f"/api/runs/{rid}/extract", json={})
+    assert run_next_job()["status"] == "done"
+    L = {l["key"]: l for l in client.get(f"/api/runs/{rid}/layers").json()["layers"]}
+    ap, rw = L["aviation"], L["approach"]
+    assert ap["name"] == "Airports" and ap["refresh_label"] == "Esri Living Atlas" and ap["refresh_available"]
+    assert ap["status"] == "done" and ap["image_source"] == "Esri Living Atlas"
+    # Bhuj airport is ~18 km south of A: outside the band, inside the NOC radius, so it is read whole
+    assert ap["feature_count"] >= 1 and ap["stats"]["reach_m"] >= 20000
+    assert "Airport — NOC radius" in ap["rules"]
+    assert rw["name"] == "Airport approach path" and not rw["refreshable"] and rw["status"] == "done"
+    assert "Airport — EHT line prohibition" in rw["rules"] and rw["stats"]["reach_m"] >= 1500
+    names = [r["name"] for r in db.all_("""select f.name from features f join run_layers rl on rl.layer_version_id=f.layer_version_id
+                                           where rl.run_id=%s and rl.layer_key='aviation'""", (rid,))]
+    assert "Bhuj Airport" in names
+    # refresh: Living Atlas for the band grown by the NOC reach, one job, refused while busy
+    j = client.post(f"/api/runs/{rid}/layers/aviation/refresh")
+    assert j.status_code == 202, j.text
+    assert client.post(f"/api/runs/{rid}/layers/aviation/refresh").status_code == 409
+    assert client.post(f"/api/runs/{rid}/solve").status_code == 409
+    done = run_next_job()
+    assert done["status"] == "done" and list(done["detail"]["result"]) == ["aviation"]
+    ap2 = {l["key"]: l for l in client.get(f"/api/runs/{rid}/layers").json()["layers"]}["aviation"]
+    assert ap2["layer_version_id"] != ap["layer_version_id"] and "refreshed for this area" in ap2["source"]
+    assert ap2["stats"]["refresh"]["esri"] == 4
+    assert client.get("/api/aviation").json()["loads"][0]["run_id"] == rid
+    assert client.post(f"/api/runs/{rid}/layers/approach/refresh").status_code == 400
+    fid = db.one("""select f.id from features f join run_layers rl on rl.layer_version_id=f.layer_version_id
+                    where rl.run_id=%s and rl.layer_key='aviation' and f.name='Bhuj Airport'""", (rid,))["id"]
+    ft = client.get(f"/api/runs/{rid}/features/{fid}").json()
+    assert ft["attrs"]["rundes"] == "05/23" and ft["attrs"]["source"] == "Esri Living Atlas"
+
+
+def test_runways_read_beyond_the_band():
+    from shapely.geometry import box as sbox
+    near_bhuj = sbox(69.60, 23.31, 69.70, 23.33)                              # ~2 km north of the Bhuj runway
+    assert len(aviation.read_runways(near_bhuj, 0)[0]) == 0
+    g, m = aviation.read_runways(near_bhuj, 3000)
+    assert len(g) >= 1 and m["india_loaded"]
+    assert not g.geometry.iloc[0].within(near_bhuj)                         # whole runway, not clipped to the band

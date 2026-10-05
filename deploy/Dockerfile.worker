@@ -1,0 +1,23 @@
+# Beeline GPU worker = the API image + the two LULC model environments.
+#   /opt/envs/terratorch  PyTorch/TerraTorch (solar, substations, wind turbines, plotted land)
+#   /opt/envs/roaddet     TensorFlow (village roads)
+# Model weights are NOT baked in: they live in the bucket (<bucket>/models, installed with
+# scripts/install_models.py --from <copy of the dev models/ tree>) with a sha256 manifest.
+ARG BASE_IMAGE=beeline:latest
+FROM ${BASE_IMAGE}
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends gdal-bin && rm -rf /var/lib/apt/lists/*
+COPY deploy/envs/terratorch-requirements.txt /tmp/terratorch-requirements.txt
+COPY deploy/envs/roaddet-requirements.txt /tmp/roaddet-requirements.txt
+RUN micromamba create -y -p /opt/envs/terratorch -c conda-forge python=3.12 pip && \
+    /opt/envs/terratorch/bin/pip install --no-cache-dir -r /tmp/terratorch-requirements.txt \
+        --extra-index-url https://download.pytorch.org/whl/cu124 && \
+    micromamba create -y -p /opt/envs/roaddet -c conda-forge python=3.13 pip && \
+    /opt/envs/roaddet/bin/pip install --no-cache-dir -r /tmp/roaddet-requirements.txt && \
+    micromamba clean -a -y
+ENV BEELINE_MODEL_ENV_ROOT=/opt/envs \
+    BEELINE_ROADDET_VENV=/opt/envs/roaddet \
+    BEELINE_RUN_MODELS=1
+RUN /opt/envs/terratorch/bin/python -c "import torch, terratorch, rasterio; print('terratorch env ok', torch.__version__)" && \
+    /opt/envs/roaddet/bin/python -c "import os; os.environ['TF_USE_LEGACY_KERAS']='1'; import tensorflow as tf; print('roaddet env ok', tf.__version__)"
+CMD ["python", "-m", "beeline_api.worker"]

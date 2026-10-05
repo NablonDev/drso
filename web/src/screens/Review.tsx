@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { useRunCtx } from "../App";
@@ -21,8 +22,9 @@ export default function Review() {
     errorTitle: "Routes wanted not changed",
     onSuccess: (r) => qc.setQueryData(qk.run(r.id), r),
   });
+  const [forceModels, setForceModels] = useState(false);
   const extract = useApiMutation<Job, void>({
-    mutationFn: () => apiCalls.extract(run.id),
+    mutationFn: () => apiCalls.extract(run.id, undefined, forceModels),
     errorTitle: "Extraction not started",
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.active });
@@ -227,9 +229,16 @@ export default function Review() {
             {nothingToDo ? (
               <button className="btn" onClick={() => nav(`/runs/${run.id}/layers`)}>Review the layers →</button>
             ) : (
-              <Btn pending={extract.isPending} disabled={Boolean(run.job)} onClick={() => extract.mutate()} data-testid="start-extract">
-                Start extraction · layers ready about {clock(finish)}
-              </Btn>
+              <>
+                <label className="hint" style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                  <input type="checkbox" checked={forceModels} onChange={(e) => setForceModels(e.target.checked)}
+                    data-testid="force-models" />
+                  Re-run the LULC models even where a stored output covers the band
+                </label>
+                <Btn pending={extract.isPending} disabled={Boolean(run.job)} onClick={() => extract.mutate()} data-testid="start-extract">
+                  Fetch LULCs · layers ready about {clock(finish)}
+                </Btn>
+              </>
             )}
           </div>
         </div>

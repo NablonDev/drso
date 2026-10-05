@@ -58,6 +58,18 @@ const FLAG_PILL: Record<LayerFlag["kind"], [string, string]> = {
   stale: ["p-cross", "source changed"],
 };
 
+const SERVED: Record<string, [string, string]> = {
+  stored: ["p-go", "stored output"],
+  stored_partial: ["p-cross", "stored output · partial"],
+  model: ["p-acc", "model run"],
+  none: ["p-nogo", "not run — no imagery"],
+};
+
+function ServedPill({ served }: { served: string }) {
+  const [cls, txt] = SERVED[served] ?? ["p-lock", served];
+  return <span className={`pill ${cls}`} style={{ marginRight: 6 }} data-testid="served-pill">{txt}</span>;
+}
+
 function VoltageLegend({ counts }: { counts: Record<string, number> }) {
   return (
     <span style={{ display: "flex", flexWrap: "wrap", gap: "2px 8px", marginTop: 3 }} data-testid="voltage-legend">
@@ -228,6 +240,15 @@ function Body({ L }: { L: LayersResponse }) {
   const refresh = useApiMutation<Job, string>({
     mutationFn: (key) => apiCalls.refreshLayer(run.id, key),
     errorTitle: "Refresh not started",
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: qk.active });
+      void qc.invalidateQueries({ queryKey: qk.run(run.id) });
+      nav(`/runs/${run.id}/extracting`);
+    },
+  });
+  const rerun = useApiMutation<Job, string>({
+    mutationFn: (key) => apiCalls.extract(run.id, [key], true),
+    errorTitle: "Model run not started",
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.active });
       void qc.invalidateQueries({ queryKey: qk.run(run.id) });
@@ -569,7 +590,14 @@ function Body({ L }: { L: LayersResponse }) {
                     <td className="mono" style={{ fontSize: 12 }}>
                       {!l.extracted ? "—" : l.status === "failed" ? <span style={{ color: "var(--nogo)" }}>failed</span> : int(l.feature_count ?? 0)}
                     </td>
-                    <td style={{ fontSize: 12, maxWidth: 260 }}>{l.source ?? l.desc ?? "—"}{l.file_name ? <div className="hint mono">{l.file_name}</div> : null}</td>
+                    <td style={{ fontSize: 12, maxWidth: 260 }}>
+                      {l.stats?.lulc ? <ServedPill served={l.stats.lulc.served_from} /> : null}
+                      {l.source ?? l.desc ?? "—"}
+                      {l.file_name ? <div className="hint mono">{l.file_name}</div> : null}
+                      {(l.stats?.lulc?.warnings ?? []).map((w, i) => (
+                        <div key={i} className="hint" style={{ color: "var(--cross)" }}>{w}</div>
+                      ))}
+                    </td>
                     <td><SourcePill mode={l.mode ?? l.source_setting.mode} producer={l.producer} /></td>
                     <td>{l.extracted ? <ConfPill value={l.confidence} /> : <span className="hint">—</span>}</td>
                     <td className="mono" style={{ fontSize: 11.5 }}>{l.model ? `${l.model}${l.model_version ? ` · ${l.model_version}` : ""}` : l.model_version ?? "—"}</td>
@@ -582,6 +610,18 @@ function Body({ L }: { L: LayersResponse }) {
                       ) : (
                         <button className="mini" onClick={() => nav(`/runs/${run.id}/sources`)}>Add or correct</button>
                       )}
+                      {l.configured_producer === "lulc_model" && l.source_setting.mode !== "replace" ? (
+                        <button
+                          className="mini"
+                          style={{ marginLeft: 6 }}
+                          data-testid={`rerun-${l.key}`}
+                          disabled={Boolean(run.job) || rerun.isPending}
+                          title="Run the model on the imagery stored on this machine, even where a stored output exists"
+                          onClick={() => rerun.mutate(l.key)}
+                        >
+                          {rerun.isPending ? "Starting…" : "Re-run model"}
+                        </button>
+                      ) : null}
                       {l.refreshable && l.source_setting.mode !== "replace" ? (
                         <button
                           className="mini"

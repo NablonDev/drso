@@ -36,17 +36,19 @@ groups:
 
       - id: airport_prohibition
         name: "Airport — EHT line prohibition"
-        note: "MoCA Height Restriction Rules 2015, Schedule I ¶1.2"
-        layer: aviation
+        note: "MoCA Height Restriction Rules 2015, Schedule I ¶1.2 — measured from the runway polygon (approach path layer), which stands in for the approach surface inner edge"
+        layer: approach
+        classes: [runway]
         mechanism: airport_prohibition
         params:
-          - {key: distance_m, label: "From approach surface inner edge", type: num, unit: m, value: 1500}
+          - {key: distance_m, label: "From the runway", type: num, unit: m, value: 1500}
           - {key: applies_to, label: "Applies to", type: sel, value: "EHT and HT", options: ["EHT and HT", "EHT only", "All lines"]}
 
       - id: airport_noc
         name: "Airport — NOC radius"
         note: "Rule 4(1) — height governed by the AAI colour-coded zoning map"
         layer: aviation
+        classes: [airport]
         mechanism: flag_radius
         params:
           - {key: radius_km, label: "Radius from ARP", type: num, unit: km, value: 20}
@@ -169,6 +171,25 @@ groups:
         mechanism: tower_setback
         params:
           - {key: setback_m, label: "Tower setback", type: num, unit: m, value: 50, best_guess: true}
+
+      # Rules 32-33, added 5 Oct 2026 with the LULC model layers. Values are placeholders
+      # pending AESL (falling-structure / blade-throw distance; road edge clearance).
+      - id: wind_turbines
+        name: "Wind turbine"
+        note: "Tower and conductor kept clear of turbines (blade-throw / fall distance) — AESL to confirm"
+        layer: wind_turbines
+        mechanism: nogo
+        params:
+          - {key: tower_setback_m, label: "Tower buffer", type: num, unit: m, value: 300, best_guess: true}
+          - {key: conductor_buffer_m, label: "Conductor buffer", type: num, unit: m, value: 200, best_guess: true}
+
+      - id: village_roads
+        name: "Village road"
+        note: "Towers kept off village road carriageways; the conductor may cross at any angle"
+        layer: village_roads
+        mechanism: tower_setback
+        params:
+          - {key: setback_m, label: "Tower setback", type: num, unit: m, value: 15, best_guess: true}
 
   - key: cross
     title: "Crossings"

@@ -6,7 +6,7 @@ import {
   type UseMutationOptions,
 } from "@tanstack/react-query";
 import { ApiError, api, errorText } from "./client";
-import type {
+import type { ImageryCatalog, ModelStatus,
   AppConfig,
   BandInfo,
   CompareResponse,
@@ -263,11 +263,15 @@ export const apiCalls = {
   resetRules: (id: string) => api<RulesResponse>(`/api/runs/${encodeURIComponent(id)}/rules`, { method: "DELETE" }),
   setCosts: (id: string, body: Record<string, Record<string, number>>) =>
     api<CostsResponse>(`/api/runs/${encodeURIComponent(id)}/costs`, { method: "PUT", json: body }),
-  extract: (id: string, layers?: string[]) =>
+  extract: (id: string, layers?: string[], forceModels = false) =>
     api<Job>(`/api/runs/${encodeURIComponent(id)}/extract`, {
       method: "POST",
-      json: layers && layers.length ? { layers } : {},
+      json: { ...(layers && layers.length ? { layers } : {}), ...(forceModels ? { force_models: true } : {}) },
     }),
+  imageryCatalog: (id: string) => api<ImageryCatalog>(`/api/runs/${encodeURIComponent(id)}/imagery/catalog`),
+  fetchImagery: (id: string, products: string[]) =>
+    api<Job>(`/api/runs/${encodeURIComponent(id)}/imagery/fetch`, { method: "POST", json: { products } }),
+  models: () => api<{ models: ModelStatus[] }>("/api/models"),
   solve: (id: string) => api<Job>(`/api/runs/${encodeURIComponent(id)}/solve`, { method: "POST" }),
   /** Re-pull a layer's online source (OSM power, Tarang Sanchar towers) for the run's area, update the store, re-extract it. */
   refreshLayer: (id: string, key: string) =>
@@ -277,4 +281,18 @@ export const apiCalls = {
 
 export function fileUrl(solveId: number, name: string) {
   return `/api/solves/${solveId}/files/${encodeURIComponent(name)}`;
+}
+
+export function useImageryCatalog(id: string | undefined, poll = false) {
+  return useQuery({
+    queryKey: ["imagery-catalog", id],
+    queryFn: () => apiCalls.imageryCatalog(id as string),
+    enabled: Boolean(id),
+    staleTime: 10_000,
+    refetchInterval: poll ? 5_000 : false,
+  });
+}
+
+export function useModels() {
+  return useQuery({ queryKey: ["models"], queryFn: () => apiCalls.models(), staleTime: 60_000 });
 }

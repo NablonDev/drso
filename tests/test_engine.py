@@ -253,3 +253,20 @@ def test_dp_is_optimal_against_dijkstra():
                 heapq.heappush(pq, (nd, c2, r2, k2))
     assert math.isfinite(best)
     assert abs(best - out.cost_rs) / best < 1e-4, (best, out.cost_rs)
+
+
+def test_airport_prohibition_reaches_from_outside_the_frame():
+    """A runway beyond the raster still forbids towers within the prohibition distance."""
+    f = frame()
+    x = f.length_m / 2
+    out_top = f.half_width_m + f.margin_m + 500                       # 500 m beyond the raster edge
+    rw = frame_geom(f, box(x - 1000, out_top, x + 1000, out_top + 45))
+    rules = resolve_rules(LineSpec(765, "dc"))
+    costs = resolve_costs(LineSpec(765, "dc"))
+    comp = compile_rules(f, {"approach": gdf([rw], "runway")}, rules, costs, 765, 30, 150, 400)
+    d = float(rules["airport_prohibition"].params["distance_m"])
+    col, row = f.frame_to_pixel(x, out_top - d + 300)                # inside the frame, inside the distance
+    assert comp.tower_forbidden[int(row), int(col)] and comp.conductor_forbidden[int(row), int(col)]
+    col, row = f.frame_to_pixel(x, out_top - d - 300)                # inside the frame, beyond the distance
+    assert not comp.tower_forbidden[int(row), int(col)]
+    assert comp.rules_fired.get("airport_prohibition")

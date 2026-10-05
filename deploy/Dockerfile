@@ -28,6 +28,7 @@ ENV PATH=/opt/conda/bin:$PATH \
 WORKDIR /app
 COPY beeline_engine/ beeline_engine/
 COPY beeline_api/ beeline_api/
+COPY lulc_models/ lulc_models/
 COPY config/ config/
 COPY scripts/ scripts/
 COPY tests/ tests/

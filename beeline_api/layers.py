@@ -32,6 +32,8 @@ def create_version(run_id: str, layer_key: str, mode: str, producer: str, meta: 
     stats = {}
     if gdf is not None and len(gdf):
         stats["classes"] = {str(k): int(v) for k, v in gdf["class"].value_counts().items()}
+    if meta.get("lulc_stats"):
+        stats["lulc"] = meta["lulc_stats"]
     if meta.get("stats_extra"):
         stats.update(meta["stats_extra"])     # e.g. {"by_voltage": {...}}, {"by_structure": {...}}
     if meta.get("refresh"):

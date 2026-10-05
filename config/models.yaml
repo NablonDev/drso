@@ -1,0 +1,76 @@
+# LULC model plugins (lulc_models/<name>/run_aoi.py, contract in lulc_models/CONTRACT.md).
+#
+# Code is copied into lulc_models/<name>/; weights into <bucket>/models/ by
+# scripts/install_models.py (sha256 manifest). Nothing is read from the original research
+# folders at run time.
+#
+# env: interpreter of the model environment. ${ENV_ROOT} = BEELINE_MODEL_ENV_ROOT
+# (dev /home/vivek_jain/miniforge3/envs, prod image /opt/envs); ${ROADDET_VENV} =
+# BEELINE_ROADDET_VENV (TensorFlow venv for the roads model).
+#
+# Stored outputs: before running a model, extraction serves the layer from the reference store
+# when a stored output covers the band (current Bhuj–Lakadia / statewide outputs). "Fetch LULCs"
+# with force=true runs the models regardless.
+
+shared:
+  hf_home: models/hf_home          # Hugging Face cache holding facebook/dinov3-vitl16 (gated)
+
+models:
+  village_roads:
+    layer: village_roads
+    code: lulc_models/village_roads
+    env: "${ROADDET_VENV}/bin/python"
+    imagery: [esri_wayback_z18]
+    weights: {checkpoint: models/village_roads/HF_GG08_60.pkl}
+    gpu: true
+    vram_mb: 14000
+    timeout_h: 6
+    params: {scales: [1.0, 1.5, 2.01, 3.0], threshold: 0.2, width_threshold: 0.5, buffer_m: 2400}
+
+  plotted_land:
+    layer: plotted
+    code: lulc_models/plotted_land
+    env: "${ENV_ROOT}/terratorch/bin/python"     # has every plotted-land dependency
+    imagery: [worldcover]
+    needs_layers: [village_roads, buildings]
+    gpu: false
+    timeout_h: 4
+    params: {ideal: 1, salt_threshold: 0.60, prob_accept: 0.20, roads_overlap_m: 3000}
+
+  solar:
+    layer: solar
+    code: lulc_models/solar
+    env: "${ENV_ROOT}/terratorch/bin/python"
+    imagery: [esri_wayback_z18, sentinel2_l2a]
+    weights: {checkpoint: models/solar/epoch07.ckpt}
+    gpu: true
+    vram_mb: 14000
+    timeout_h: 4
+    # frozen from the Bhuj–Lakadia calibration (solar_lora logs/final_v2.log) so a new area does
+    # not need OSM solar inside it
+    params: {threshold: 0.60, min_area_m2: 5000, nir_band: [1159, 2351], min_obs: 4, min_pure_px: 4,
+             erode_m: 20}
+
+  substations:
+    layer: substations
+    code: lulc_models/substations
+    env: "${ENV_ROOT}/terratorch/bin/python"
+    imagery: [esri_wayback_z18, sentinel1_rtc_vv, nisar_coh]
+    weights: {checkpoint: models/substations/stageB_epoch22.ckpt}
+    gpu: true
+    vram_mb: 14000
+    timeout_h: 4
+    # S1 gate everywhere; NISAR gate only where a coherence raster is registered; the manual
+    # reject step is replaced by drafter review (low-confidence flag on ungated detections)
+    params: {threshold: 0.50, min_area_ha: 0.05, vv_db_min: -10.10, coh_min: 0.337, s1_scenes: 8}
+
+  wind_turbines:
+    layer: wind_turbines
+    code: lulc_models/wind_turbines
+    env: "${ENV_ROOT}/terratorch/bin/python"
+    imagery: [cartosat3_pan]
+    weights: {checkpoint: models/wind_turbines/round4_epoch25.ckpt}
+    gpu: true
+    vram_mb: 24000
+    timeout_h: 8
+    params: {thresh: 160, min_px: 15, nms_m: 95, osm_match_m: 60, gsd_m: 0.45}

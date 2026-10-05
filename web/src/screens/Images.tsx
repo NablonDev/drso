@@ -4,6 +4,7 @@ import { useMutationState, useQueryClient } from "@tanstack/react-query";
 import { useRunCtx } from "../App";
 import { apiCalls, qk, useApiMutation, useConfig, useLayers } from "../api/hooks";
 import type { Imagery, ProcurementResponse, RunDetail } from "../api/types";
+import ImageryCatalogPanel from "../components/ImageryCatalog";
 import { Btn, ErrorNote, Head, Note, Spinner } from "../components/ui";
 import { date, int, num, when } from "../lib/format";
 import { useTicker } from "../lib/useDebounced";
@@ -169,8 +170,8 @@ export default function Images() {
           </Btn>
         }
       >
-        Every vision model reads imagery. Before anything is queued, the system checks that the band is covered — and if it is
-        not, procurement starts here.
+        Every vision model reads imagery. Below: what exists online over the band, and what is already stored on this machine —
+        the models use only the stored imagery, so fetch (under our licences) or register what they need before Fetch LULCs.
       </Head>
 
       {running ? (
@@ -188,6 +189,8 @@ export default function Images() {
       ) : null}
 
       <ErrorNote error={check.error} retry={() => check.mutate()} />
+
+      <ImageryCatalogPanel runId={run.id} busy={Boolean(run.job)} />
       {img?.error ? <Note kind="stop" style={{ marginBottom: 14 }}>The last check failed: {img.error}</Note> : null}
 
       {!img && !running && !check.error ? <p className="hint">Not checked yet.</p> : null}

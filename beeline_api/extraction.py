@@ -16,12 +16,15 @@ import time
 import traceback
 from datetime import datetime, timezone
 
+from pathlib import Path
+
 import geopandas as gpd
+import pyogrio
 import pandas as pd
 
 from beeline_engine.config import LineSpec, load_layers, resolve_rules
 
-from . import cell_towers, db, imagery, layers, models, osm_highways, osm_power, reference, settings, uploads
+from . import aviation, cell_towers, db, imagery, imagery_store, layers, lulc_runner, models, osm_highways, osm_power, reference, settings, uploads
 from .derive import derive_clusters
 from .geo import band_polygon
 from .jobs import Cancelled, Reporter
@@ -44,7 +47,22 @@ def layers_to_extract(run: dict, requested: list[str] | None = None) -> list[str
     return [k for k in reg if k in todo]
 
 
+def run_imagery_fetch(job: dict, rep: Reporter):
+    """Licensed online acquisition into the imagery catalog (the only place imagery is fetched)."""
+    run = db.one("select * from runs where id=%s", (job["run_id"],))
+    band, _ = band_polygon((run["a_lon"], run["a_lat"]), (run["b_lon"], run["b_lat"]), run["band_km"], margin_m=500)
+    products = (job.get("detail") or {}).get("imagery_fetch") or []
+    rep(0.01, "Fetching imagery under the operator licences", force=True)
+    out = imagery_store.acquire(products, band, run["id"], progress=lambda f, msg: rep(0.02 + 0.96 * f, msg),
+                                cancel=rep.cancelled)
+    rep.check()
+    rep(1.0, "Imagery stored on this machine", detail={"imagery": out}, force=True)
+    return {"imagery": out}
+
+
 def run_extraction(job: dict, rep: Reporter):
+    if (job.get("detail") or {}).get("imagery_fetch"):
+        return run_imagery_fetch(job, rep)
     run = db.one("select * from runs where id=%s", (job["run_id"],))
     db.exec_("update runs set status='extracting', updated_at=now() where id=%s", (run["id"],))
     band, frame = band_polygon((run["a_lon"], run["a_lat"]), (run["b_lon"], run["b_lat"]), run["band_km"], margin_m=500)
@@ -65,11 +83,6 @@ def run_extraction(job: dict, rep: Reporter):
             db.exec_("update runs set imagery=%s where id=%s", (db.J(img), run["id"]))
         except Exception as e:
             img = {"error": str(e)}
-    if settings.FETCH_IMAGERY_ON_EXTRACT:
-        rep(0.02, "Fetching imagery into the bucket", force=True)
-        imagery.prefetch_esri(band, progress=lambda f: rep(0.02 + 0.1 * f, "Fetching Esri tiles"), cancel=rep.cancelled)
-        s2 = (img or {}).get("sentinel2", {}).get("scenes", [])
-        imagery.fetch_sentinel2_visual(s2, band, settings.IMAGERY_DIR / "sentinel2" / run["id"])
 
     spec = LineSpec(run["kv"], run["circuit"])
     rules = resolve_rules(spec, run["rule_overrides"])
@@ -158,6 +171,23 @@ def _extract_one(run, k, lay, mode, src, band, img, rules, progress, rep):
             meta.update(source=hm["source"], image_source="OpenStreetMap", image_date=hm["osm_timestamp"],
                         model=None, model_version=None, confidence=lay.get("default_confidence"))
             meta["stats_extra"] = {"by_class": hm["counts"]}
+        elif lay["producer"] in ("esri_airports", "osm_runways"):
+            is_ap = lay["producer"] == "esri_airports"
+            rid, pk, scale = ("airport_noc", "radius_km", 1000.0) if is_ap else ("airport_prohibition", "distance_m", 1.0)
+            reach = max(float(lay.get("reach_m", 0)), float((rules[rid].params if rid in rules else {}).get(pk, 0)) * scale)
+            if is_ap and _refresh_requested(rep):
+                res = aviation.refresh_airports(tuple(aviation._reach(band, reach).bounds), run_id=run["id"],
+                                                progress=lambda f, st: progress(0.8 * f))
+                meta["refresh"] = res
+            auto_gdf, am = (aviation.read_airports if is_ap else aviation.read_runways)(band, reach)
+            auto_cov = None
+            if not am["india_loaded"] and not am.get("last_refresh"):
+                raise FileNotFoundError(f"{lay['name']} store is empty — load India (python -m beeline_api.aviation "
+                                        f"{'load-airports' if is_ap else 'load-runways --gpkg airports.gpkg'})")
+            meta.update(source=am["source"], image_source="Esri Living Atlas" if is_ap else "OpenStreetMap",
+                        image_date=am["data_date"], model=None, model_version=None,
+                        confidence=lay.get("default_confidence"))
+            meta["stats_extra"] = {"by_source" if is_ap else "by_width": am["counts"], "reach_m": reach}
         elif lay["producer"] == "tarangsanchar":
             if _refresh_requested(rep):
                 minx, miny, maxx, maxy = band.bounds
@@ -172,6 +202,9 @@ def _extract_one(run, k, lay, mode, src, band, img, rules, progress, rep):
             meta.update(source=tm["source"], image_source="Tarang Sanchar", image_date=tm["data_date"],
                         model=None, model_version=None, confidence=lay.get("default_confidence"))
             meta["stats_extra"] = {"by_structure": tm["counts"]}
+        elif lay["producer"] == "lulc_model":
+            auto_gdf, auto_cov, m2 = _lulc_model_layer(run, k, lay, band, progress, rep)
+            meta.update(m2)
         elif lay["producer"] == "model":
             plugin = models.get(lay["model"])
             ctx = models.ModelContext(layer_key=k, band=band, imagery=img or {}, progress=progress, cancelled=rep.cancelled)
@@ -216,6 +249,87 @@ def _extract_one(run, k, lay, mode, src, band, img, rules, progress, rep):
     meta["source"] = f"{meta.get('source')} + your file {upr['filename']} (yours wins)"
     meta["file_name"] = upr["filename"]
     return merged, meta, auto_cov.union(band) if auto_cov is not None else band
+
+
+def _lulc_model_layer(run, k, lay, band, progress, rep):
+    """Stored output when it covers the band (unless forced); otherwise run the model plugin on
+    the imagery held on this machine. No imagery -> empty layer with no coverage (reported)."""
+    force = bool((rep.job.get("detail") or {}).get("force_models"))
+    stored, sm = reference.read_clip(k, band)
+    scov = reference.coverage_of(sm)
+    s_frac = 0.0 if scov is None else scov.intersection(band).area / band.area
+    if stored is not None and s_frac >= 0.995 and not force:
+        return stored, scov, {"source": f"Stored output — {(sm or {}).get('source')}",
+                              "image_source": (sm or {}).get("image_source"),
+                              "image_date": (sm or {}).get("source_date"), "model": (sm or {}).get("model"),
+                              "model_version": (sm or {}).get("model_version") or (sm or {}).get("version"),
+                              "confidence": (sm or {}).get("confidence"),
+                              "lulc_stats": {"served_from": "stored", "stored_version": (sm or {}).get("version")}}
+    name = lay["pipeline"]
+    m = lulc_runner.model_cfg(name)
+    primary = (m.get("imagery") or [None])[0]
+    have = imagery_store.coverage(band)
+    pc = next((c for c in have if c["product"] == primary), {"covered_pct": 0})
+    if primary and pc["covered_pct"] < 0.5:
+        warn = (f"no {primary} imagery on this machine for this band — fetch it on the Images screen; "
+                f"the model was not run")
+        if stored is not None and len(stored):
+            return stored, scov, {"source": f"Stored output (partial, {100 * s_frac:.0f}% of band) — {(sm or {}).get('source')}",
+                                  "model": (sm or {}).get("model"), "image_date": (sm or {}).get("source_date"),
+                                  "lulc_stats": {"served_from": "stored_partial", "warnings": [warn]}}
+        return _empty_gdf(), None, {"source": f"{lay['name']}: not run — {warn}", "model": m.get("name"),
+                                    "lulc_stats": {"served_from": "none", "warnings": [warn]}}
+    if not settings.RUN_MODELS:
+        warn = "model runs are switched off on this machine (BEELINE_RUN_MODELS=0); stored output only"
+        if stored is not None and len(stored):
+            return stored, scov, {"source": f"Stored output (partial, {100 * s_frac:.0f}% of band) — {(sm or {}).get('source')}",
+                                  "model": (sm or {}).get("model"), "image_date": (sm or {}).get("source_date"),
+                                  "lulc_stats": {"served_from": "stored_partial", "warnings": [warn]}}
+        return _empty_gdf(), None, {"source": f"{lay['name']}: not run — {warn}", "model": m.get("name"),
+                                    "lulc_stats": {"served_from": "none", "warnings": [warn]}}
+    inputs = _plugin_inputs(run, name, m, band)
+    res = lulc_runner.run(name, band, run["id"], rep.job["id"], inputs,
+                          progress=lambda f, msg: progress(f), cancelled=rep.cancelled)
+    return res.gdf, res.coverage, {
+        "source": f"{lay.get('desc')} — model run {res.meta.get('model')} {res.meta.get('model_version') or ''}".strip(),
+        "model": res.meta.get("model"), "model_version": res.meta.get("model_version"),
+        "image_source": res.meta.get("image_source"), "image_date": res.meta.get("image_date"),
+        "confidence": lay.get("default_confidence"),
+        "lulc_stats": {"served_from": "model", "warnings": res.meta.get("warnings"), "counts": res.meta.get("counts"),
+                        "artifacts": res.artifacts, "work_dir": str(res.work_dir)}}
+
+
+def _empty_gdf():
+    return gpd.GeoDataFrame({"class": [], "name": [], "confidence": [], "src_id": []}, geometry=[], crs=4326)
+
+
+def _layer_to_gpkg(run_id: str, key: str, dst: Path) -> str | None:
+    g = _current_layer(run_id, key)
+    if g is None or not len(g):
+        return None
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    g = g.drop(columns=[c for c in ("attrs",) if c in g])
+    pyogrio.write_dataframe(g, dst, layer="features", driver="GPKG")
+    return str(dst)
+
+
+def _plugin_inputs(run: dict, name: str, m: dict, band) -> dict:
+    """Upstream layers of this run + local reference inputs the plugin may use."""
+    d = settings.RUNS_DIR / run["id"] / "lulc" / "_inputs"
+    ins: dict = {}
+    if name == "plotted_land":
+        ins["village_roads_gpkg"] = _layer_to_gpkg(run["id"], "village_roads", d / "village_roads.gpkg")
+        ins["buildings_gpkg"] = _layer_to_gpkg(run["id"], "buildings", d / "buildings.gpkg")
+        r = db.one("""select lv.stats from run_layers rl join layer_versions lv on lv.id=rl.layer_version_id
+                      where rl.run_id=%s and rl.layer_key='village_roads'""", (run["id"],))
+        lulc = ((r or {}).get("stats") or {}).get("lulc") or {}
+        ins["village_roads_prob"] = (lulc.get("artifacts") or {}).get("prob_raster") or []
+    ref = settings.DATA / "reference_inputs"
+    for key, fname in (("osm_solar_gpkg", "osm_solar_india.gpkg"), ("osm_wind_gpkg", "osm_wind.gpkg"),
+                       ("osm_substations_gpkg", "osm_substations.gpkg")):
+        if (ref / fname).exists():
+            ins[key] = str(ref / fname)
+    return ins
 
 
 def _refresh_requested(rep) -> bool:

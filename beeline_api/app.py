@@ -106,6 +106,11 @@ class ProcureReq(BaseModel):
 
 class ExtractReq(BaseModel):
     layers: list[str] | None = None
+    force_models: bool = False      # run the LULC models even where a stored output covers the band
+
+
+class ImageryFetchReq(BaseModel):
+    products: list[str]
 
 
 # ---- helpers --------------------------------------------------------------------------
@@ -615,8 +620,58 @@ def start_extract(run_id: str, req: ExtractReq | None = None):
     for k, s in src.items():
         if s.get("mode") in ("replace", "add") and not s.get("upload_id"):
             raise HTTPException(400, f"layer {k} is set to {s['mode']} but has no file attached")
-    j = jobs.start(run_id, "extract", {"requested": req.layers if req else None})
+    layers_req = req.layers if req else None
+    force = bool(req and req.force_models)
+    if force and not layers_req:
+        layers_req = [l["key"] for l in load_layers()["layers"] if l["producer"] == "lulc_model"]
+    j = jobs.start(run_id, "extract", {"requested": layers_req, "force_models": force})
     return _job_json(j)
+
+
+@app.get("/api/runs/{run_id}/imagery/catalog")
+def imagery_catalog(run_id: str):
+    """What imagery this machine holds for the run's band, per product (the models use only this)."""
+    from . import imagery_store
+    r = _run(run_id)
+    band, _ = geo.band_polygon((r["a_lon"], r["a_lat"]), (r["b_lon"], r["b_lat"]), r["band_km"], margin_m=500)
+    cov = imagery_store.coverage(band)
+    items = imagery_store.for_aoi(band)
+    needs: dict[str, list[str]] = {}
+    from . import lulc_runner
+    for name, m in lulc_runner.load_models()["models"].items():
+        for p in m.get("imagery") or []:
+            needs.setdefault(p, []).append(m["layer"])
+    for c in cov:
+        c["fetchable"] = c["product"] in imagery_store.FETCHABLE
+        c["used_by"] = needs.get(c["product"], [])
+        c["sample"] = [{k: v for k, v in it.items() if k != "footprint"} for it in items.get(c["product"], [])[:5]]
+    return {"products": cov, "credentials": {"esri_token": bool(settings.ESRI_TOKEN),
+                                            "planetary_computer_key": bool(settings.PC_SUBSCRIPTION_KEY)}}
+
+
+@app.post("/api/runs/{run_id}/imagery/fetch", status_code=202)
+def imagery_fetch(run_id: str, req: ImageryFetchReq):
+    from . import imagery_store
+    _run(run_id)
+    bad = [p for p in req.products if p not in imagery_store.FETCHABLE]
+    if bad or not req.products:
+        raise HTTPException(400, f"cannot be fetched online: {bad or 'nothing selected'} — Cartosat PAN and NISAR are "
+                                 "registered from files on this machine")
+    j = jobs.start(run_id, "extract", {"imagery_fetch": req.products})
+    return _job_json(j)
+
+
+@app.get("/api/models")
+def models_status():
+    """LULC model plugins: environment, code and weights present (no model is loaded)."""
+    from . import lulc_runner
+    out = []
+    for name in lulc_runner.load_models()["models"]:
+        m = lulc_runner.model_cfg(name)
+        out.append({"name": name, "layer": m["layer"], "imagery": m.get("imagery") or [], "gpu": bool(m.get("gpu")),
+                    "needs_layers": m.get("needs_layers") or [], "problems": lulc_runner.preflight(m),
+                    "params": m.get("params") or {}})
+    return {"models": out}
 
 
 @app.post("/api/runs/{run_id}/solve", status_code=202)
@@ -758,6 +813,17 @@ def osm_highways_status():
     st = osm_highways.status()
     for l in st["loads"]:
         for k in ("osm_timestamp", "started_at", "finished_at"):
+            if l.get(k) is not None:
+                l[k] = l[k].isoformat()
+    return st
+
+
+@app.get("/api/aviation")
+def aviation_status():
+    from . import aviation
+    st = aviation.status()
+    for l in st["loads"]:
+        for k in ("data_date", "started_at", "finished_at"):
             if l.get(k) is not None:
                 l[k] = l[k].isoformat()
     return st

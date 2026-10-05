@@ -125,6 +125,14 @@ def read_clip(key: str, band_lonlat, version: str | None = None, region: str | N
         if poly.any():
             gdf.loc[poly, "geometry"] = gdf.loc[poly].geometry.intersection(band_lonlat)
         gdf = gdf[~gdf.geometry.is_empty]
+    # columns beyond the standard ones (e.g. road width, turbine scene) travel as attrs
+    std = {"class", "name", "confidence", "src_id", "geometry", "attrs"}
+    extra = [c for c in gdf.columns if c not in std]
+    if extra:
+        gdf = gdf.copy()
+        gdf["attrs"] = [{c: (None if (v is None or v != v) else (v.item() if hasattr(v, "item") else v))
+                         for c, v in zip(extra, row)} for row in gdf[extra].itertuples(index=False, name=None)]
+        gdf = gdf.drop(columns=extra)
     return gdf.reset_index(drop=True), m
 
 

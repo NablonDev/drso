@@ -75,7 +75,29 @@ tests/            test_engine.py (synthetic, incl. brute-force optimality), test
    no rule). "Refresh from OSM" on the Highways layer re-pulls the run's area from Overpass,
    replaces it in the store in one transaction and re-extracts the layer — same job, lock and
    provenance as the power layer.
-8. **Open** `http://<vm>:8080/` over the VPN.
+8. **Airports and approach paths (all India)** — two layers, PostGIS tables `aviation_airports`
+   and `aviation_runways` (`beeline_api/aviation.py`):
+   ```
+   docker compose run --rm worker python -m beeline_api.aviation load-airports --osm-gpkg airports.gpkg
+   docker compose run --rm worker python -m beeline_api.aviation load-runways --gpkg airports.gpkg
+   docker compose run --rm worker python -m beeline_api.aviation status
+   ```
+   `airports.gpkg` is the delivered `transfers/airports/airports.gpkg` (OSM aeroway layers).
+   - **Airports** (`aviation`): the 269 Esri India Living Atlas airport boundaries (AAI attributes:
+     runway designators, operator, schedule) plus the OSM aerodromes no Esri polygon overlaps
+     (102 on 5 Oct 2026). Disused / abandoned aerodromes, heliports and seaplane ports are not kept.
+     The delivered `airport_boundary_merged.gpkg` is not used: it stacks Esri and OSM without
+     de-duplication (255 of its 370 OSM polygons sit on an Esri one). "Refresh from Esri Living
+     Atlas" re-queries the MapServer for the run's band grown by the NOC radius and replaces those
+     airports in one transaction. Read up to 25 km (or the NOC radius) beyond the band, unclipped.
+   - **Airport approach path** (`approach`): OSM runways as polygons — 57 mapped as areas, the rest
+     centrelines widened by their width tag (76) or 45 m (393), flat ends; 21 disused dropped.
+     The airport-prohibition rule measures from these polygons (standing in for the approach
+     surface inner edge) and reaches runways outside the frame. Read up to 3 km beyond the band.
+     The Esri `dim` field is not used for widths: it is wrong for some airports (Ahmedabad lists
+     1000 × 45; its runway is 3.5 km). 14 Esri airports have no OSM runway (in Gujarat: Dholera,
+     under construction), so the prohibition cannot fire there until a runway is added.
+9. **Open** `http://<vm>:8080/` over the VPN.
 
 Upgrades: `git pull && docker compose up -d --build`. The worker marks any job it was running as
 failed on restart, so restart only when `GET /api/jobs/active` is `{"job": null}`.

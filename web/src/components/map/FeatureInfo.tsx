@@ -36,6 +36,33 @@ export default function FeatureInfo({ runId, fid, layerName }: { runId: string; 
                 </td>
               </tr>
             ) : null}
+            {f.layer_key === "aviation" && f.attrs ? (
+              <tr>
+                <td>Airport</td>
+                <td className="mono">
+                  {f.attrs.rundes ? `Runway ${String(f.attrs.rundes)}` : "Runway not listed"}
+                  {f.attrs.opeown ? ` · ${String(f.attrs.opeown)}` : ""}
+                  {f.attrs.amsl ? ` · ${f.attrs.amsl} m AMSL` : ""}
+                  <div className="hint">
+                    {String(f.attrs.source ?? "")}
+                    {f.attrs.iata || f.attrs.icao ? ` · ${[f.attrs.iata, f.attrs.icao].filter(Boolean).join(" / ")}` : ""}
+                    {f.attrs.scdul ? ` · ${String(f.attrs.scdul)}` : ""}
+                    {f.attrs.boundary_source ? ` · boundary: ${String(f.attrs.boundary_source)}` : ""}
+                  </div>
+                </td>
+              </tr>
+            ) : null}
+            {f.layer_key === "approach" && f.attrs ? (
+              <tr>
+                <td>Runway</td>
+                <td className="mono">
+                  {f.attrs.ref ? String(f.attrs.ref) : "No designator"}
+                  {f.attrs.width_m ? ` · ${f.attrs.width_m} m wide` : ""}
+                  {f.attrs.surface ? ` · ${String(f.attrs.surface)}` : ""}
+                  <div className="hint">Width from {String(f.attrs.width_source ?? "source")}</div>
+                </td>
+              </tr>
+            ) : null}
             {f.attrs?.road_class ? (
               <tr>
                 <td>Highway</td>

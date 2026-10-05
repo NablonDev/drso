@@ -158,6 +158,20 @@ class _Rasterizer:
                 self._mask[key] = None if m is None or not m.any() else m.astype(bool)
         return self._mask[key]
 
+    def buffer_mask(self, layer, classes, d: float) -> np.ndarray | None:
+        """Cells within d of the features, from the buffered vectors: unlike dist(), features
+        outside the frame (an airport beyond the band) still reach into it."""
+        g = self.subset(layer, classes)
+        if g is None:
+            return None
+        utm = g.geometry.to_crs(self.frame.epsg)
+        shapes = [(geom.buffer(max(d, 0.0) + RASTER_MARGIN_M), 1) for geom in utm if geom is not None and not geom.is_empty]
+        if not shapes:
+            return None
+        m = rfeatures.rasterize(shapes, out_shape=self.shape, transform=self.frame.transform,
+                                fill=0, all_touched=True, dtype="uint8")
+        return m.astype(bool) if m.any() else None
+
     def dist(self, layer, classes) -> np.ndarray | None:
         """Distance (m) from each cell to the nearest feature cell."""
         key = (layer, tuple(classes or ()))
@@ -332,11 +346,11 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
             if applies == "EHT only" and spec_kv < 220:
                 continue
             d = float(p["distance_m"])
-            mk = _within(R.dist(r.layer, ["airport", "approach_surface"]), d)
+            mk = R.buffer_mask(r.layer, r.classes, d)
             add(mk, tower_forbidden, r.id)
             add(mk, conductor_forbidden, r.id)
-            vec(tower_geoms, r.id, r.layer, ["airport", "approach_surface"], d)
-            vec(cond_geoms, r.id, r.layer, ["airport", "approach_surface"], d)
+            vec(tower_geoms, r.id, r.layer, r.classes, d)
+            vec(cond_geoms, r.id, r.layer, r.classes, d)
         elif m == "flag_radius":
             pass  # events only
         elif m == "tower_setback":

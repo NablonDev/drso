@@ -27,7 +27,11 @@ services:
       BEELINE_DATA: /data/bucket
       BEELINE_REFERENCE_DIR: /data/bucket/reference
       BEELINE_REGION: ${BEELINE_REGION:-gujarat}
-      BEELINE_FETCH_IMAGERY: ${BEELINE_FETCH_IMAGERY:-0}
+      BEELINE_RUN_MODELS: ${BEELINE_RUN_MODELS:-1}
+      BEELINE_ESRI_TOKEN: ${BEELINE_ESRI_TOKEN:-}
+      BEELINE_WAYBACK_RELEASE: ${BEELINE_WAYBACK_RELEASE:-26334}
+      BEELINE_WAYBACK_RELEASE_DATE: ${BEELINE_WAYBACK_RELEASE_DATE:-2026-08-05}
+      BEELINE_PC_SUBSCRIPTION_KEY: ${BEELINE_PC_SUBSCRIPTION_KEY:-}
     volumes:
       - ${BEELINE_BUCKET:-/srv/beeline/bucket}:/data/bucket
     ports:
@@ -39,7 +43,11 @@ services:
       retries: 10
 
   worker:
-    image: beeline:${BEELINE_TAG:-latest}
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.worker
+      args: {BASE_IMAGE: "beeline:${BEELINE_TAG:-latest}"}
+    image: beeline-worker:${BEELINE_TAG:-latest}
     restart: unless-stopped
     depends_on: { db: { condition: service_healthy }, api: { condition: service_started } }
     command: ["python", "-m", "beeline_api.worker"]

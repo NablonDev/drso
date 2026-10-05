@@ -265,6 +265,13 @@ export interface RunLayer {
     /** OSM highways: counts keyed "nh", "sh", "nh_inferred" */
     by_class?: Record<string, number>;
     refresh?: { load_id: number; osm_timestamp?: string; data_date?: string; replaced?: number } & Record<string, number | string>;
+    /** LULC model layers: where the features came from */
+    lulc?: {
+      served_from: "stored" | "stored_partial" | "model" | "none";
+      stored_version?: string;
+      warnings?: string[] | null;
+      counts?: Record<string, number>;
+    };
   } | null;
   created_at?: string;
   extracted_in?: string;
@@ -605,4 +612,30 @@ export interface ProcurementResponse {
   id: string;
   status: string;
   message: string;
+}
+
+export interface ImageryProduct {
+  product: string;
+  items: number;
+  covered_pct: number;
+  newest: string | null;
+  oldest: string | null;
+  fetchable: boolean;
+  used_by: string[];
+  sample: Record<string, unknown>[];
+}
+
+export interface ImageryCatalog {
+  products: ImageryProduct[];
+  credentials: { esri_token: boolean; planetary_computer_key: boolean };
+}
+
+export interface ModelStatus {
+  name: string;
+  layer: string;
+  imagery: string[];
+  gpu: boolean;
+  needs_layers: string[];
+  problems: string[];
+  params: Record<string, unknown>;
 }

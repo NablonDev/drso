@@ -1,0 +1,47 @@
+model_args:
+  backbone: dinov3_hf_vitl16
+  backbone_pretrained: true
+  backbone_freeze: false
+  necks:
+  - name: SelectIndices
+    indices:
+    - 24
+  - name: ReshapeTokensToImage
+  decoder: LinearDecoder
+  decoder_upsampling_size: 16
+  decoder_num_classes: 2
+  num_classes: 2
+  peft_config:
+    method: LORA
+    peft_config_kwargs:
+      r: 8
+      lora_alpha: 16
+      target_modules:
+      - q_proj
+      - v_proj
+model_factory: EncoderDecoderFactory
+model: null
+loss: ce
+aux_heads: null
+aux_loss: null
+class_weights: null
+ignore_index: 255
+lr: 0.001
+optimizer: null
+optimizer_hparams: null
+scheduler: null
+scheduler_hparams: null
+freeze_backbone: false
+freeze_decoder: false
+freeze_head: false
+plot_on_val: 10
+class_names: null
+tiled_inference_parameters: null
+test_dataloaders_names: null
+lr_overrides: null
+output_on_inference: prediction
+output_most_probable: true
+path_to_record_metrics: null
+tiled_inference_on_testing: false
+tiled_inference_on_validation: false
+_instantiator: lightning.pytorch.cli.instantiate_module

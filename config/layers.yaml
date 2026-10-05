@@ -99,14 +99,25 @@ layers:
     refresh_label: Tarang Sanchar
     classes: [cell_tower]
 
+  - key: village_roads
+    name: "Village roads"
+    kind: line
+    producer: lulc_model
+    pipeline: village_roads
+    imagery: esri
+    desc: "Road model (Microsoft RoadDetections res-unet-6) · Esri Wayback z18"
+    minutes_per_km2: 0.03
+    default_confidence: 0.80
+    classes: [village_road]
+
   - key: plotted
     name: "Plotted land"
     kind: polygon
-    producer: model
-    model: plotted_stub
+    producer: lulc_model
+    pipeline: plotted_land
     imagery: esri
-    desc: "Layout-pattern detector · 50 cm imagery"
-    minutes_per_km2: 0.036
+    desc: "Plot-layout geometry over village roads + buildings · WorldCover salt filter"
+    minutes_per_km2: 0.01
     default_confidence: 0.61
     classes: [plotted_land]
 
@@ -158,14 +169,30 @@ layers:
     default_confidence: 0.99
     classes: [notified_wetland]
 
+  # Airports and their runways (beeline_api/aviation). Both are read beyond the band by reach_m
+  # (or the rule distance, whichever is larger) and not clipped: the NOC radius and the
+  # prohibition distance reach airports that sit outside the corridor.
   - key: aviation
-    name: "Aviation surfaces"
+    name: "Airports"
     kind: polygon
-    producer: reference
-    desc: "Cached — airport boundaries + AAI colour-coded zoning maps"
+    producer: esri_airports
+    desc: "Esri India Living Atlas airport boundaries (AAI) + OSM aerodromes not in it"
     minutes_per_km2: 0.002
-    default_confidence: 1.0
-    classes: [airport, approach_surface]
+    default_confidence: 0.95
+    refreshable: true
+    refresh_label: Esri Living Atlas
+    reach_m: 25000
+    classes: [airport]
+
+  - key: approach
+    name: "Airport approach path"
+    kind: polygon
+    producer: osm_runways
+    desc: "OSM runways as polygons · width tag, else 45 m"
+    minutes_per_km2: 0.002
+    default_confidence: 0.90
+    reach_m: 3000
+    classes: [runway]
 
   - key: monuments
     name: "Monuments"
@@ -199,17 +226,29 @@ layers:
   - key: substations
     name: "Sub-stations"
     kind: polygon
-    producer: reference
-    desc: "Cached — AESL substation register"
-    minutes_per_km2: 0.002
-    default_confidence: 0.95
+    producer: lulc_model
+    pipeline: substations
+    desc: "Substation model (DINOv3 LoRA, stage B) · Esri Wayback z18 + Sentinel-1 gate"
+    minutes_per_km2: 0.006
+    default_confidence: 0.85
     classes: [substation]
 
   - key: solar
     name: "Solar parks"
     kind: polygon
-    producer: reference
-    desc: "Cached — solar park clustering"
-    minutes_per_km2: 0.002
-    default_confidence: 0.90
+    producer: lulc_model
+    pipeline: solar
+    desc: "Solar model (DINOv3 LoRA) · Esri Wayback z18 + Sentinel-2 NIR filter"
+    minutes_per_km2: 0.012
+    default_confidence: 0.85
     classes: [solar_park]
+
+  - key: wind_turbines
+    name: "Wind turbines"
+    kind: point
+    producer: lulc_model
+    pipeline: wind_turbines
+    desc: "Turbine model (DINOv3 LoRA round 4 + Exp-G) · Cartosat-3 PAN 0.45 m"
+    minutes_per_km2: 0.05
+    default_confidence: 0.90
+    classes: [wind_turbine]

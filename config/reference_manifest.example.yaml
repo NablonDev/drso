@@ -34,11 +34,8 @@ layers:
     class_field: null      # e.g. a product/type column -> gas_pipeline / oil_pipeline
     const_class: gas_pipeline
     source: "Oil & gas pipelines v3"
-  aviation:
-    path: "airports/airport_boundary_merged.gpkg"
-    const_class: airport
-    name_field: source_name
-    source: "Airport boundaries (OSM + Esri merged)"
+  # aviation / approach: now sourced from the aviation store (beeline_api/aviation; README step 8).
+  # airport_boundary_merged.gpkg stacks Esri and OSM without de-duplication — do not ingest it.
   substations:
     path: "substation/AESL_SUBSTATIONS_FINAL.gpkg"
     const_class: substation
