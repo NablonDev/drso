@@ -87,13 +87,17 @@ tests/            test_engine.py (synthetic, incl. brute-force optimality), test
      runway designators, operator, schedule) plus the OSM aerodromes no Esri polygon overlaps
      (102 on 5 Oct 2026). Disused / abandoned aerodromes, heliports and seaplane ports are not kept.
      The delivered `airport_boundary_merged.gpkg` is not used: it stacks Esri and OSM without
-     de-duplication (255 of its 370 OSM polygons sit on an Esri one). "Refresh from Esri Living
-     Atlas" re-queries the MapServer for the run's band grown by the NOC radius and replaces those
-     airports in one transaction. Read up to 25 km (or the NOC radius) beyond the band, unclipped.
+     de-duplication (255 of its 370 OSM polygons sit on an Esri one). "Refresh from Living Atlas +
+     OSM" re-queries both for the run's band grown by the NOC radius — the MapServer and Overpass
+     aeroway=aerodrome, same filters and de-duplication as the India load — and replaces those
+     airports in one transaction; a failure on either source leaves the store as it was. Read up to
+     25 km (or the NOC radius) beyond the band, unclipped.
    - **Airport approach path** (`approach`): OSM runways as polygons — 57 mapped as areas, the rest
      centrelines widened by their width tag (76) or 45 m (393), flat ends; 21 disused dropped.
      The airport-prohibition rule measures from these polygons (standing in for the approach
      surface inner edge) and reaches runways outside the frame. Read up to 3 km beyond the band.
+     "Refresh from OSM" re-pulls aeroway=runway from Overpass for the band grown by that reach
+     (closed ways become polygons, as in the delivered file) and replaces those runways.
      The Esri `dim` field is not used for widths: it is wrong for some airports (Ahmedabad lists
      1000 × 45; its runway is 3.5 km). 14 Esri airports have no OSM runway (in Gujarat: Dholera,
      under construction), so the prohibition cannot fire there until a runway is added.

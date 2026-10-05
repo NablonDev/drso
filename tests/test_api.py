@@ -30,6 +30,7 @@ from beeline_api import app as appmod, aviation, cell_towers, db, imagery, jobs,
 FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "overpass_power_bhuj.json")
 HW_FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "overpass_highways_bhuj.json")   # 5 Oct 2026
 LA_FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "livingatlas_airports_kutch.json")  # 4 airports
+OV_AERO = os.path.join(os.path.dirname(__file__), "fixtures", "overpass_aero_kutch.json")      # aerodromes + runways
 AP_GPKG = os.path.join(os.path.dirname(__file__), "fixtures", "airports_kutch.gpkg")          # OSM aerodromes + runways
 TS_FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "ts_towers_bhuj.parquet")   # 871 sites, Bhuj–Bhachau
 
@@ -51,6 +52,7 @@ def client():
         osm_highways.refresh_aoi((69.45, 23.15, 70.70, 23.70))               # seed the OSM highway store
         cell_towers.load_india(TS_FIXTURE)                                   # seed the cell tower store
         aviation._get = lambda params: json.load(open(LA_FIXTURE))            # recorded Living Atlas answer
+        aviation._overpass = lambda q, timeout=180: json.load(open(OV_AERO))["runway" if '"runway"' in q else "aerodrome"]
         aviation.load_airports(AP_GPKG)                                      # seed the airport store
         aviation.load_runways(AP_GPKG)                                       # seed the runway store
         yield c
@@ -430,17 +432,18 @@ def test_aviation_layers_and_refresh_from_ui(client):
     assert run_next_job()["status"] == "done"
     L = {l["key"]: l for l in client.get(f"/api/runs/{rid}/layers").json()["layers"]}
     ap, rw = L["aviation"], L["approach"]
-    assert ap["name"] == "Airports" and ap["refresh_label"] == "Esri Living Atlas" and ap["refresh_available"]
+    assert ap["name"] == "Airports" and ap["refresh_label"] == "Living Atlas + OSM" and ap["refresh_available"]
     assert ap["status"] == "done" and ap["image_source"] == "Esri Living Atlas"
     # Bhuj airport is ~18 km south of A: outside the band, inside the NOC radius, so it is read whole
     assert ap["feature_count"] >= 1 and ap["stats"]["reach_m"] >= 20000
     assert "Airport — NOC radius" in ap["rules"]
-    assert rw["name"] == "Airport approach path" and not rw["refreshable"] and rw["status"] == "done"
+    assert rw["name"] == "Airport approach path" and rw["refreshable"] and rw["refresh_label"] == "OSM"
+    assert rw["status"] == "done"
     assert "Airport — EHT line prohibition" in rw["rules"] and rw["stats"]["reach_m"] >= 1500
     names = [r["name"] for r in db.all_("""select f.name from features f join run_layers rl on rl.layer_version_id=f.layer_version_id
                                            where rl.run_id=%s and rl.layer_key='aviation'""", (rid,))]
     assert "Bhuj Airport" in names
-    # refresh: Living Atlas for the band grown by the NOC reach, one job, refused while busy
+    # refresh: Living Atlas + OSM for the band grown by the NOC reach, one job, refused while busy
     j = client.post(f"/api/runs/{rid}/layers/aviation/refresh")
     assert j.status_code == 202, j.text
     assert client.post(f"/api/runs/{rid}/layers/aviation/refresh").status_code == 409
@@ -449,9 +452,22 @@ def test_aviation_layers_and_refresh_from_ui(client):
     assert done["status"] == "done" and list(done["detail"]["result"]) == ["aviation"]
     ap2 = {l["key"]: l for l in client.get(f"/api/runs/{rid}/layers").json()["layers"]}["aviation"]
     assert ap2["layer_version_id"] != ap["layer_version_id"] and "refreshed for this area" in ap2["source"]
-    assert ap2["stats"]["refresh"]["esri"] == 4
+    ref = ap2["stats"]["refresh"]
+    # Kutch: 4 Esri; OSM has 6 aerodromes — Khavda (disused) filtered, 4 overlap Esri, Naliya AFS kept
+    assert ref["esri"] == 4 and ref["osm_fetched"] == 5 and ref["osm_not_in_esri"] == 1
     assert client.get("/api/aviation").json()["loads"][0]["run_id"] == rid
-    assert client.post(f"/api/runs/{rid}/layers/approach/refresh").status_code == 400
+    osm_names = [r["name"] for r in db.all_("select name from aviation_airports where source='osm'")]
+    assert "Naliya Air Force Station" in osm_names and "Khavda Abandoned Airstrip" not in osm_names
+    # runways: their own refresh, from OSM
+    j = client.post(f"/api/runs/{rid}/layers/approach/refresh")
+    assert j.status_code == 202, j.text
+    done = run_next_job()
+    assert done["status"] == "done" and list(done["detail"]["result"]) == ["approach"]
+    rw2 = {l["key"]: l for l in client.get(f"/api/runs/{rid}/layers").json()["layers"]}["approach"]
+    assert rw2["layer_version_id"] != rw["layer_version_id"] and "refreshed for this area" in rw2["source"]
+    assert rw2["stats"]["refresh"]["read"] == 11 and rw2["stats"]["refresh"]["kept"] == 10   # one disused
+    assert client.get("/api/aviation").json()["loads"][0]["layer"] == "runways"
+    assert db.one("select count(*) as n from aviation_runways")["n"] == 10                # replaced, not duplicated
     fid = db.one("""select f.id from features f join run_layers rl on rl.layer_version_id=f.layer_version_id
                     where rl.run_id=%s and rl.layer_key='aviation' and f.name='Bhuj Airport'""", (rid,))["id"]
     ft = client.get(f"/api/runs/{rid}/features/{fid}").json()

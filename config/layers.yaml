@@ -176,11 +176,11 @@ layers:
     name: "Airports"
     kind: polygon
     producer: esri_airports
-    desc: "Esri India Living Atlas airport boundaries (AAI) + OSM aerodromes not in it"
+    desc: "Esri India Living Atlas airport boundaries (AAI) + OSM airports not in it"
     minutes_per_km2: 0.002
     default_confidence: 0.95
     refreshable: true
-    refresh_label: Esri Living Atlas
+    refresh_label: Living Atlas + OSM
     reach_m: 25000
     classes: [airport]
 
@@ -191,6 +191,8 @@ layers:
     desc: "OSM runways as polygons · width tag, else 45 m"
     minutes_per_km2: 0.002
     default_confidence: 0.90
+    refreshable: true
+    refresh_label: OSM
     reach_m: 3000
     classes: [runway]
 

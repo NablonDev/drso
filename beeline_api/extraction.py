@@ -175,9 +175,9 @@ def _extract_one(run, k, lay, mode, src, band, img, rules, progress, rep):
             is_ap = lay["producer"] == "esri_airports"
             rid, pk, scale = ("airport_noc", "radius_km", 1000.0) if is_ap else ("airport_prohibition", "distance_m", 1.0)
             reach = max(float(lay.get("reach_m", 0)), float((rules[rid].params if rid in rules else {}).get(pk, 0)) * scale)
-            if is_ap and _refresh_requested(rep):
-                res = aviation.refresh_airports(tuple(aviation._reach(band, reach).bounds), run_id=run["id"],
-                                                progress=lambda f, st: progress(0.8 * f))
+            if _refresh_requested(rep):
+                res = (aviation.refresh_airports if is_ap else aviation.refresh_runways)(
+                    tuple(aviation._reach(band, reach).bounds), run_id=run["id"], progress=lambda f, st: progress(0.8 * f))
                 meta["refresh"] = res
             auto_gdf, am = (aviation.read_airports if is_ap else aviation.read_runways)(band, reach)
             auto_cov = None
