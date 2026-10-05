@@ -380,9 +380,18 @@ def _clearance(comp, dem, towers, s: Span, sp: SpotParams):
         return float(np.nanmin(line - ground))
 
     c = min_clear()
+    if c < sp.ground_clearance_m and s.length_m > sp.span_max_m + 1e-3:
+        # long crossing span: both crossing towers are raised by what the sag needs (6 m steps)
+        need = sp.ground_clearance_m - c
+        ext = math.ceil(need / 6.0) * 6.0
+        for tw in (ta, tb):
+            tw.extension_m = max(tw.extension_m, ext)
+            if "crossing_tower" not in tw.reasons:
+                tw.reasons.append("crossing_tower")
+        c = min_clear()
     if c < sp.ground_clearance_m:
         low = ta if (ta.ground_z + ta.extension_m) <= (tb.ground_z + tb.extension_m) else tb
-        if low.extension_m == 0:
+        if low.extension_m < EXTENSION_M:
             low.extension_m = EXTENSION_M
             c = min_clear()
         if c < sp.ground_clearance_m:
@@ -407,7 +416,8 @@ def route_cost(comp: Compiled, towers: list[Tower], spans: list[Span], sp: SpotP
         py = int(np.clip((f.y_top - t.y) / f.res_m, 0, f.height - 1))
         steel_ins = sp.tower_cost_rs[t.type]
         steel = costs["tonnage"][t.type] * rate
-        c_tower += steel_ins + earthing + (steel * ext_pct if t.extension_m > 0 else 0.0)
+        # the extension rate is quoted per +18 m; taller crossing towers are priced pro rata
+        c_tower += steel_ins + earthing + steel * ext_pct * (t.extension_m / EXTENSION_M)
         c_found += fnd_base * float(comp.soil_mult[py, px])
         c_land += base_area * float(comp.land_rate_m2[py, px]) * base_pct
     length = sum(s.length_m for s in spans)

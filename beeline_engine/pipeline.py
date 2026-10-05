@@ -298,10 +298,12 @@ def _global_events(inp, frame, rules, comp, findex, layer_names, rule_layer, dem
     # beeline blockers
     bee = LineString([(0, 0), (frame.length_m, 0)])
     seen = set()
+    skip = CROSSING_RULES | {"open_water", "terminal_yard", "pipeline_footing"}
+    found = []
     for vr in comp.tower_nogo + comp.conductor_nogo:
         rid = vr.rule_id
-        if rid == "open_water":
-            continue
+        if rid in skip:
+            continue      # crossable features and the terminal yards are not reasons to leave the bee-line
         idx = vr.near_idx(bee, limit=3000)
         if not len(idx):
             continue
@@ -315,11 +317,34 @@ def _global_events(inp, frame, rules, comp, findex, layer_names, rule_layer, dem
                 continue
             seen.add(key)
             it, _ = findex.nearest(part.centroid, layers={vr.layer} if vr.layer else None)
-            evs.append(event("BEELINE_BLOCKER", {
-                "feature": it["label"] if it else rules[rid].name if rid in rules else rid,
-                "rule": rules[rid].name if rid in rules else rid, "length_km": part.length / 1000,
-                "rule_id": rid, "from_km": part.bounds[0] / 1000, "to_km": part.bounds[2] / 1000},
-                chainage_km=round(part.bounds[0] / 1000, 2), source=_source(it, inp.layers)))
+            found.append((vr.layer, part, rid, it))
+    # one entry per stretch of the bee-line and layer: the statutory clearance and the no-go buffer
+    # on the same buildings are one obstacle, reported under the wider buffer
+    found.sort(key=lambda f: -f[1].length)
+    kept = []
+    for lyr, part, rid, it in found:
+        if any(k[0] == lyr and k[1].intersects(part.buffer(1)) for k in kept):
+            continue
+        kept.append((lyr, part, rid, it))
+    # aggregate per feature (named features) or per layer (unnamed, e.g. individual buildings)
+    agg: dict[tuple, dict] = {}
+    for lyr, part, rid, it in kept:
+        label = it["label"] if it else (rules[rid].name if rid in rules else rid)
+        key = (lyr, label)
+        a = agg.setdefault(key, {"parts": [], "rid": rid, "it": it, "by_rule": {}})
+        a["parts"].append(part)
+        a["by_rule"][rid] = a["by_rule"].get(rid, 0.0) + part.length
+    for (lyr, label), a in sorted(agg.items(), key=lambda kv: min(p.bounds[0] for p in kv[1]["parts"])):
+        rid = max(a["by_rule"], key=a["by_rule"].get)
+        it = a["it"]
+        length = sum(p.length for p in a["parts"])
+        x0 = min(p.bounds[0] for p in a["parts"])
+        x1 = max(p.bounds[2] for p in a["parts"])
+        evs.append(event("BEELINE_BLOCKER", {
+            "feature": label, "rule": rules[rid].name if rid in rules else rid, "length_km": length / 1000,
+            "stretches": len(a["parts"]), "rule_id": rid, "from_km": x0 / 1000, "to_km": x1 / 1000,
+            "feature_idx": it["_idx"] if it else None, "layer": lyr},
+            chainage_km=round(x0 / 1000, 2), source=_source(it, inp.layers)))
     # layers
     rules_by_layer: dict[str, list[str]] = {}
     for r in rules.values():
@@ -389,13 +414,34 @@ def _route_events(sr, frame, comp, findex, rules, sp, layer_names, inp, dem, blo
     T = sr.towers
     detours = _detours(T, blockers, findex, frame)
     route_line = LineString([(t.x, t.y) for t in T])
+    groups: dict[tuple, list] = {}
     for x0, x1, b, side, max_off in detours:
-        it, _ = findex.nearest(Point((b["data"]["from_km"] + b["data"]["to_km"]) * 500, 0), max_dist=50)
-        clr = route_line.distance(findex.geoms[it["_idx"]]) if it else None
+        groups.setdefault((round(x0), round(x1), side, round(max_off)), []).append(b)
+    detour_info = []
+    for (x0, x1, side, max_off), bs in groups.items():
+        cleared = []
+        for b in bs:
+            fi = b["data"].get("feature_idx")
+            if fi is None:
+                continue
+            d = route_line.distance(findex.geoms[fi])
+            if d > 5:
+                cleared.append((d, b))
+        if not cleared:
+            continue
+        cleared.sort(key=lambda c: -c[1]["data"]["length_km"])
+        names = []
+        for _, b in cleared:
+            n = f"{b['data']['feature']} ({b['data']['rule']})"
+            if n not in names:
+                names.append(n)
+        label = ", ".join(names[:3]) + (f" and {len(names) - 3} more" if len(names) > 3 else "")
+        main = cleared[0][1]
+        detour_info.append((x0, x1, main, label))
         evs.append(event("DETOUR", {"from_km": x0 / 1000, "to_km": x1 / 1000, "side": side, "max_offset_m": max_off,
-                                    "feature": b["data"]["feature"], "rule": b["data"]["rule"],
-                                    "clearance_m": clr if clr is not None else 0.0},
-                         chainage_km=round(x0 / 1000, 2), source=b.get("source")))
+                                    "feature": label, "rule": main["data"]["rule"],
+                                    "clearance_m": min(c[0] for c in cleared)},
+                         chainage_km=round(x0 / 1000, 2), source=main.get("source")))
     vec_rules = comp.tower_nogo + comp.angle_nogo + comp.conductor_nogo
     search = load_engine()["events"]["turn_feature_search_m"]
     low = load_engine()["events"]["low_confidence"]
@@ -432,17 +478,22 @@ def _route_events(sr, frame, comp, findex, rules, sp, layer_names, inp, dem, blo
             rid, d, ip, lyr = hit
             it, dist = findex.nearest(ip, layers={lyr} if lyr else None)
             line_here = LineString([(T[i - 1].x, T[i - 1].y), (t.x, t.y), (T[i + 1].x, T[i + 1].y)])
-            clearance = line_here.distance(findex.geoms[it["_idx"]]) if it else d
+            clearance = route_line.distance(findex.geoms[it["_idx"]]) if it else d
+            local = line_here.distance(findex.geoms[it["_idx"]]) if it else d
             data.update(feature=(it["label"] if it else rid.replace("_", " ")) + (f" ({it['class'].replace('_', ' ')})" if it and it["label"] != it["class"].replace("_", " ") else ""),
                         clearance_m=clearance, rule_id=rid)
-            kind = "TURN_TO_CROSS" if clearance < 1.0 and rid in CROSSING_RULES else "TURN_TO_AVOID"
+            if rid in CROSSING_RULES and min(local, clearance) < 1.0:
+                kind = "TURN_TO_CROSS"
+            elif clearance > 300:
+                kind = "TURN_TO_KEEP_CLEAR"
+            else:
+                kind = "TURN_TO_AVOID"
             evs.append(event(kind, data, chainage_km=data["chainage_km"], source=_source(it, inp.layers)))
-        elif (d := next((d for d in detours if d[0] - 1 <= t.x <= d[1] + 1), None)) is not None:
-            x0, x1, b, side, _ = d
-            it, _ = findex.nearest(Point((b["data"]["from_km"] + b["data"]["to_km"]) * 500, 0), max_dist=50)
-            clr = LineString([(T[i - 1].x, T[i - 1].y), (t.x, t.y), (T[i + 1].x, T[i + 1].y)])
-            data.update(feature=b["data"]["feature"], rule_id=b["data"].get("rule_id"),
-                        clearance_m=route_line.distance(findex.geoms[it["_idx"]]) if it else 0.0)
+        elif (d := next((d for d in detour_info if d[0] - 1 <= t.x <= d[1] + 1), None)) is not None:
+            x0, x1, b, label = d
+            fi = b["data"].get("feature_idx")
+            data.update(feature=b["data"]["feature"] + f" ({b['data']['rule']})", rule_id=b["data"].get("rule_id"),
+                        clearance_m=route_line.distance(findex.geoms[fi]) if fi is not None else 0.0)
             evs.append(event("TURN_TO_AVOID", data, chainage_km=data["chainage_km"], source=b.get("source")))
         else:
             o_dx, o_dy = T[i + 1].x - t.x, T[i + 1].y - t.y
@@ -465,7 +516,13 @@ def _route_events(sr, frame, comp, findex, rules, sp, layer_names, inp, dem, blo
         if "section" in t.reasons:
             evs.append(event("SECTION_POINT", {"tower": t.no, "type": t.type, "section_km": sp.section_km},
                              chainage_km=round(t.x / 1000, 2)))
-        if t.extension_m > 0:
+        if t.extension_m > 0 and "crossing_tower" in t.reasons:
+            s_long = next((s for s in sr.spans if s.a == t.no and s.length_m > sp.span_max_m), None)
+            if s_long:
+                evs.append(event("CROSSING_TOWERS", {"span_m": s_long.length_m, "tower_a": t.no, "tower_b": T[s_long.b].no,
+                                                     "extension_m": t.extension_m, "clearance_req": sp.ground_clearance_m,
+                                                     "dem": demmod.SOURCE}, chainage_km=round(t.x / 1000, 2)))
+        elif t.extension_m > 0:
             evs.append(event("EXTENSION", {"tower": t.no, "extension_m": t.extension_m,
                                            "clearance_req": sp.ground_clearance_m, "dem": demmod.SOURCE},
                              chainage_km=round(t.x / 1000, 2)))
@@ -515,9 +572,11 @@ def _route_events(sr, frame, comp, findex, rules, sp, layer_names, inp, dem, blo
     for e in list(evs):
         s = e.get("source")
         if s and s.get("confidence") is not None and s["confidence"] < low and e["type"] in (
-                "TURN_TO_AVOID", "TURN_TO_CROSS", "CROSSING", "FOREST_ENTRY"):
+                "TURN_TO_AVOID", "TURN_TO_CROSS", "TURN_TO_KEEP_CLEAR", "DETOUR", "CROSSING", "FOREST_ENTRY"):
             decision = {"TURN_TO_AVOID": f"The turn at km {e['chainage_km']:.1f}",
                         "TURN_TO_CROSS": f"The turn at km {e['chainage_km']:.1f}",
+                        "TURN_TO_KEEP_CLEAR": f"The turn at km {e['chainage_km']:.1f}",
+                        "DETOUR": f"The detour from km {e['chainage_km']:.1f}",
                         "CROSSING": f"The crossing at km {e['chainage_km']:.1f}",
                         "FOREST_ENTRY": "The forest area taken"}[e["type"]]
             evs.append(event("LOW_CONF", {"decision": decision, "layer": s["layer_name"], "confidence": s["confidence"]},

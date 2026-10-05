@@ -99,9 +99,16 @@ def test_full_flow(client):
     # corridor locked once layers exist
     r = client.patch(f"/api/runs/{rid}", json={"band_km": 3})
     assert r.status_code == 409
-    # vector tile with features
-    t = client.get(f"/api/tiles/{rid}/12/2840/1757.pbf")
-    assert t.status_code == 200
+    # vector tile with features, decodable, one source-layer per layer key
+    import mapbox_vector_tile, mercantile
+    tl = mercantile.tile(69.70, 23.43, 13)
+    t = client.get(f"/api/tiles/{rid}/{tl.z}/{tl.x}/{tl.y}.pbf")
+    assert t.status_code == 200 and len(t.content) > 100
+    dec = mapbox_vector_tile.decode(t.content)
+    assert "buildings" in dec and dec["buildings"]["features"][0]["properties"]["class"] == "building"
+    fid = dec["buildings"]["features"][0]["properties"]["id"]
+    ft = client.get(f"/api/runs/{rid}/features/{fid}").json()
+    assert ft["layer_key"] == "buildings" and ft["model"] == "buildings_stub" and ft["chainage_km"]
     # solve
     assert client.post(f"/api/runs/{rid}/solve").status_code == 202
     j = run_next_job()

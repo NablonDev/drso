@@ -169,8 +169,12 @@ def conn():
 
 
 def init_schema():
+    # API processes and the worker start together on a fresh database; "if not exists" is not
+    # race-free in Postgres, so schema creation is serialised with a transaction-level lock.
     with conn() as c:
-        c.execute(SCHEMA)
+        with c.transaction():
+            c.execute("select pg_advisory_xact_lock(724001)")
+            c.execute(SCHEMA)
 
 
 def J(v):

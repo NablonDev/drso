@@ -42,6 +42,10 @@ failed on restart, so restart only when `GET /api/jobs/active` is `{"job": null}
 Logs: `docker compose logs -f api worker`. Data: Postgres in `BEELINE_PGDATA`; imagery tiles,
 DEM, run exports and uploads in `BEELINE_BUCKET`. No backups are configured (by decision).
 
+Verified on the dev VM (5 Oct 2026): fresh-database boot of db + api (4 processes) + GPU worker,
+`tests/e2e_api.py` end to end against the containers (imagery checks, DEM fetch, extraction, 4-route
+solve on GPU, exports, copy, re-solve, compare), native PostGIS vector tiles, SPA deep links.
+
 ## Behaviour worth knowing
 
 - **One GPU, one job.** Extraction and solve never queue behind each other: a second job of either
@@ -79,6 +83,13 @@ DEM, run exports and uploads in `BEELINE_BUCKET`. No backups are configured (by 
 
 Benchmark (`scripts/benchmark.py`, 150 km × ±7.5 km, 4 routes, GPU capped at 24 GB): 43 s on the dev
 A100, 1.9 GB peak GPU memory. Expect ~2–3 min on an L4 (memory-bandwidth bound).
+
+Interpretations to confirm with AESL (all configurable): A/B are gantries and the terminal yard is
+carved out of the substation rule; new towers keep the corridor half-width from existing conductors
+(the 100 m rule applies to existing towers); minimum span = the rule's 100 m crossing minimum;
+river-only long spans up to 1 km, with crossing towers raised by the height the sag needs;
+"Protected areas and ESZ = No-Go" added as rule 30. Plotted land, monuments, defence land and
+SH/MDR roads have no rule among the 29 yet, so they do not move the route.
 
 Not in v1 (by decision — add when run time allows): pass-2 refinement, corridor-guided detours
 around blocks larger than the band, backwards (non-monotone) detours, joint routing + tower height,
