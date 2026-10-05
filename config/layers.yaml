@@ -209,7 +209,7 @@ layers:
     name: "Pipelines"
     kind: line
     producer: reference
-    desc: "Cached — published alignments + operator records"
+    desc: "Cached — VEDAS/PPAC survey-grade alignments (2020) + OSM infill · existing network only"
     minutes_per_km2: 0.004
     default_confidence: 0.90
     classes: [gas_pipeline, oil_pipeline]

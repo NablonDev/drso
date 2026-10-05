@@ -481,3 +481,18 @@ def test_runways_read_beyond_the_band():
     g, m = aviation.read_runways(near_bhuj, 3000)
     assert len(g) >= 1 and m["india_loaded"]
     assert not g.geometry.iloc[0].within(near_bhuj)                         # whole runway, not clipped to the band
+
+
+def test_normalise_flattens_z_and_keeps_fields():
+    import geopandas as gpd
+    import pandas as pd
+    from beeline_api import reference
+    from shapely.geometry import LineString
+    g = gpd.GeoDataFrame({"name": ["MDPL", None], "uid": ["V-1", "V-2"], "owner": ["HPCL", "GAIL"], "junk": [1, 2]},
+                         geometry=[LineString([(70.0, 23.4, 5.0), (70.1, 23.4, 6.0)]),
+                                   LineString([(70.0, 23.5, 0.0), (70.1, 23.5, 0.0)])], crs=4326)
+    n = reference.normalise(g, "pipelines", const_class="oil_pipeline", name_field="name", id_field="uid",
+                            keep_fields=["owner"])
+    assert not n.has_z.any() and list(n["class"]) == ["oil_pipeline"] * 2
+    assert n["name"].iloc[0] == "MDPL" and pd.isna(n["name"].iloc[1])         # missing, not the string "nan"
+    assert list(n["owner"]) == ["HPCL", "GAIL"] and "junk" not in n.columns

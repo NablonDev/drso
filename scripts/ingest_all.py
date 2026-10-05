@@ -43,7 +43,8 @@ def main():
             gdf = pyogrio.read_dataframe(p, layer=e.get("layer"))
             norm = reference.normalise(gdf, key, class_field=e.get("class_field"), class_map=e.get("class_map") or {},
                                        const_class=e.get("const_class"), name_field=e.get("name_field"),
-                                       conf_field=e.get("conf_field"), id_field=e.get("id_field"))
+                                       conf_field=e.get("conf_field"), id_field=e.get("id_field"),
+                                       keep_fields=e.get("keep_fields"))
             unknown |= set(norm.attrs.get("unknown_classes", []))
             parts.append(norm)
             covs.append(box(*norm.total_bounds) if len(norm) else None)

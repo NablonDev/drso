@@ -29,11 +29,31 @@ layers:
     layer: null            # pick the lines layer, not the stations layer
     const_class: railway
     source: "Railway lines"
+  # Existing network only (Vivek, 5 Oct 2026): VEDAS/PPAC survey-grade alignments (1:50,000 @2020)
+  # + 56 OSM infills. Not ingested: the schematic GEM routes (10-24 km vertex spacing), the 2026
+  # PARIVESH / forest-clearance proposal routes, facility points, CGD areas and QA layers.
   pipelines:
-    path: "Oil and Gas pipelines/India_Oil_Gas_Pipelines_v3.gpkg"
-    class_field: null      # e.g. a product/type column -> gas_pipeline / oil_pipeline
-    const_class: gas_pipeline
-    source: "Oil & gas pipelines v3"
+    - path: "transfers/pipelines/India_Oil_Gas_Pipelines_v3.gpkg"
+      layer: Pipelines_Gas
+      const_class: gas_pipeline
+      name_field: name
+      id_field: uid
+      keep_fields: [owner, fuel_class, status_raw, source, source_vintage, positional_class]
+      source: "Oil & gas pipelines v3 — gas (VEDAS/PPAC 2020 + OSM)"
+    - path: "transfers/pipelines/India_Oil_Gas_Pipelines_v3.gpkg"
+      layer: Pipelines_Oil_and_Products
+      const_class: oil_pipeline
+      name_field: name
+      id_field: uid
+      keep_fields: [owner, fuel_class, status_raw, source, source_vintage, positional_class]
+      source: "oil and products (VEDAS/PPAC 2020 + OSM)"
+    - path: "transfers/pipelines/India_Oil_Gas_Pipelines_v3.gpkg"
+      layer: Pipelines_Unclassified       # 1 ONGC line in Assam, fuel unknown — kept as gas
+      const_class: gas_pipeline
+      name_field: name
+      id_field: uid
+      keep_fields: [owner, fuel_class, status_raw, source, source_vintage, positional_class]
+      source: "unclassified (OSM)"
   # aviation / approach: now sourced from the aviation store (beeline_api/aviation; README step 8).
   # airport_boundary_merged.gpkg stacks Esri and OSM without de-duplication — do not ingest it.
   substations:

@@ -33,6 +33,12 @@ tests/            test_engine.py (synthetic, incl. brute-force optimality), test
        python scripts/ingest_all.py config/reference_manifest.yaml
    ```
    Layers land in `<bucket>/reference/gujarat/<layer>/<version>/` with provenance and coverage.
+   Pipelines come from `transfers/pipelines/India_Oil_Gas_Pipelines_v3.gpkg`, existing network
+   only: `Pipelines_Gas` (gas), `Pipelines_Oil_and_Products` (oil) and `Pipelines_Unclassified`
+   (1 line, kept as gas) — VEDAS/PPAC survey-grade alignments (2020) plus OSM infill, 1,697 lines
+   India-wide. Owner, fuel, source and positional class travel to the popup (`keep_fields`). The
+   schematic GEM routes, the 2026 PARIVESH / forest-clearance proposals, facility points and CGD
+   areas in the same file are not ingested. No refresh from the UI.
    Fetch hooks for AOIs that are not covered go in `config/reference_sources.yaml`.
 5. **OSM power lines and towers (all India)** — 765 / 400 / 220 / 132 kV only, stored by voltage
    (PostGIS table `osm_power`, one partition per voltage). Load once (downloads the ~1.7 GB Geofabrik

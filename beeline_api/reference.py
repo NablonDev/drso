@@ -23,6 +23,7 @@ from pathlib import Path
 import geopandas as gpd
 import pandas as pd
 import pyogrio
+import shapely
 import yaml
 from shapely import make_valid
 from shapely.geometry import box, mapping, shape
@@ -53,14 +54,16 @@ def meta(key: str, version: str | None = None, region: str | None = None) -> dic
 
 def normalise(gdf: gpd.GeoDataFrame, key: str, class_field: str | None = None, class_map: dict | None = None,
               const_class: str | None = None, name_field: str | None = None, conf_field: str | None = None,
-              id_field: str | None = None) -> gpd.GeoDataFrame:
+              id_field: str | None = None, keep_fields: list[str] | None = None) -> gpd.GeoDataFrame:
+    """Source features -> the store's columns (class, name, confidence, src_id, geometry), 2D.
+    keep_fields: source columns carried along as extra columns (read_clip packs them into attrs)."""
     reg = {l["key"]: l for l in load_layers()["layers"]}[key]
     vocab = reg["classes"]
     if gdf.crs is None:
         raise ValueError("source has no CRS")
     gdf = gdf.to_crs(4326)
     gdf = gdf[gdf.geometry.notna() & ~gdf.geometry.is_empty].copy()
-    gdf["geometry"] = gdf.geometry.apply(lambda g: g if g.is_valid else make_valid(g))
+    gdf["geometry"] = shapely.force_2d(gdf.geometry.apply(lambda g: g if g.is_valid else make_valid(g)).values)
     if const_class:
         cls = pd.Series(const_class, index=gdf.index)
     elif class_field:
@@ -75,10 +78,14 @@ def normalise(gdf: gpd.GeoDataFrame, key: str, class_field: str | None = None, c
         raise ValueError(f"classes {bad} not in the {key} vocabulary {vocab}")
     out = gpd.GeoDataFrame({
         "class": cls.values,
-        "name": gdf[name_field].astype(str).values if name_field else None,
+        "name": gdf[name_field].map(lambda v: None if v is None or v != v or str(v).strip() == "" else str(v)).values
+        if name_field else None,
         "confidence": pd.to_numeric(gdf[conf_field], errors="coerce").values if conf_field else None,
         "src_id": gdf[id_field].astype(str).values if id_field else gdf.index.astype(str),
     }, geometry=gdf.geometry.values, crs=4326)
+    for f in keep_fields or []:
+        if f in gdf.columns and f not in out.columns:
+            out[f] = gdf[f].values
     out.attrs["unknown_classes"] = unknown
     return out
 

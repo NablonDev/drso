@@ -36,6 +36,20 @@ export default function FeatureInfo({ runId, fid, layerName }: { runId: string; 
                 </td>
               </tr>
             ) : null}
+            {f.layer_key === "pipelines" && f.attrs ? (
+              <tr>
+                <td>Pipeline</td>
+                <td className="mono">
+                  {f.attrs.owner ? String(f.attrs.owner) : "Owner not given"}
+                  {f.attrs.fuel_class ? ` · ${String(f.attrs.fuel_class).replace(/_/g, " ")}` : ""}
+                  <div className="hint">
+                    {String(f.attrs.source ?? "")}
+                    {f.attrs.source_vintage ? ` ${String(f.attrs.source_vintage)}` : ""}
+                    {f.attrs.positional_class ? ` · ${String(f.attrs.positional_class).replace(/_/g, " ")}` : ""}
+                  </div>
+                </td>
+              </tr>
+            ) : null}
             {f.layer_key === "aviation" && f.attrs ? (
               <tr>
                 <td>Airport</td>
