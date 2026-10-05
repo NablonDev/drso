@@ -226,6 +226,10 @@ export interface RunLayer {
   name: string;
   desc: string | null;
   producer: string;
+  configured_producer?: string;
+  extracted_producer?: string;
+  /** the layer has an online source (OSM) that "Refresh" re-pulls for the run's area */
+  refreshable?: boolean;
   minutes_per_km2: number | null;
   rules: string[];
   source_setting: SourceSetting;
@@ -247,7 +251,12 @@ export interface RunLayer {
   feature_count?: number;
   status?: "done" | "failed";
   error?: string | null;
-  stats?: { classes?: Record<string, number> } | null;
+  stats?: {
+    classes?: Record<string, number>;
+    /** OSM power: counts keyed "line_765", "tower_400" … */
+    by_voltage?: Record<string, number>;
+    refresh?: { load_id: number; osm_timestamp: string; replaced?: number } & Record<string, number | string>;
+  } | null;
   created_at?: string;
   extracted_in?: string;
   coverage_pct?: number | null;
@@ -288,6 +297,7 @@ export interface Feature {
   layer_conf: number | null;
   file_name: string | null;
   chainage_km: [number, number];
+  attrs?: Record<string, string | number> | null;
 }
 
 export interface RuleParam {

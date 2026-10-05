@@ -34,7 +34,19 @@ tests/            test_engine.py (synthetic, incl. brute-force optimality), test
    ```
    Layers land in `<bucket>/reference/gujarat/<layer>/<version>/` with provenance and coverage.
    Fetch hooks for AOIs that are not covered go in `config/reference_sources.yaml`.
-5. **Open** `http://<vm>:8080/` over the VPN.
+5. **OSM power lines and towers (all India)** — 765 / 400 / 220 / 132 kV only, stored by voltage
+   (PostGIS table `osm_power`, one partition per voltage). Load once (downloads the ~1.7 GB Geofabrik
+   India extract into the bucket, ~5 min):
+   ```
+   docker compose run --rm worker python -m beeline_api.osm_power load-india
+   docker compose run --rm worker python -m beeline_api.osm_power status
+   ```
+   "Refresh from OSM" on the power layer (Review the layers) re-pulls the run's area from Overpass,
+   replaces it in the store in one transaction, and re-extracts the power layer. It runs as an
+   extraction job, so it is refused while a solve runs. Every load is logged with its OSM timestamp,
+   and the layer's provenance says which extract / refresh it came from. Lines with no voltage tag
+   or another voltage are not stored (India extract of 3 Oct 2026: 2,547 untagged, 11,787 other).
+6. **Open** `http://<vm>:8080/` over the VPN.
 
 Upgrades: `git pull && docker compose up -d --build`. The worker marks any job it was running as
 failed on restart, so restart only when `GET /api/jobs/active` is `{"job": null}`.

@@ -26,6 +26,16 @@ export default function FeatureInfo({ runId, fid, layerName }: { runId: string; 
           <tbody>
             <tr><td>Layer</td><td>{layerName ?? f.layer_key}</td></tr>
             <tr><td>Class</td><td>{humanClass(f.class)}</td></tr>
+            {f.attrs?.voltage_kv ? (
+              <tr>
+                <td>Voltage</td>
+                <td className="mono">
+                  {f.attrs.voltage_kv} kV
+                  {f.attrs.circuits ? ` · ${f.attrs.circuits} circuit${String(f.attrs.circuits) === "1" ? "" : "s"}` : ""}
+                  {f.attrs.operator ? <div className="hint">{String(f.attrs.operator)}</div> : null}
+                </td>
+              </tr>
+            ) : null}
             <tr><td>Extent</td><td className="mono">{extent}</td></tr>
             <tr>
               <td>Chainage</td>

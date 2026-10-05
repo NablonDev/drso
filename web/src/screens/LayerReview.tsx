@@ -13,6 +13,7 @@ import {
   DEFAULT_ON,
   geomCoords,
   LAYER_COLOURS,
+  VOLTAGE_COLOURS,
   LAYER_ORDER,
   layerIds,
   LULC_CLASSES,
@@ -55,6 +56,19 @@ const FLAG_PILL: Record<LayerFlag["kind"], [string, string]> = {
   coverage: ["p-cross", "partial coverage"],
   stale: ["p-cross", "source changed"],
 };
+
+function VoltageLegend({ counts }: { counts: Record<string, number> }) {
+  return (
+    <span style={{ display: "flex", flexWrap: "wrap", gap: "2px 8px", marginTop: 3 }} data-testid="voltage-legend">
+      {VOLTAGE_COLOURS.map((v) => (
+        <span key={v.kv} className="mono" style={{ fontSize: 10.5, color: "var(--ink-3, #777)" }}>
+          <i style={{ display: "inline-block", width: 10, height: 3, background: v.colour, verticalAlign: "middle", marginRight: 3 }} />
+          {v.kv} kV {int(counts[`line_${v.kv}`] ?? 0)}/{int(counts[`tower_${v.kv}`] ?? 0)}
+        </span>
+      ))}
+    </span>
+  );
+}
 
 export default function LayerReview() {
   const run = useRunCtx();
@@ -176,6 +190,15 @@ function Body({ L }: { L: LayersResponse }) {
     };
   }, [map, sel]);
 
+  const refresh = useApiMutation<Job, string>({
+    mutationFn: (key) => apiCalls.refreshLayer(run.id, key),
+    errorTitle: "Refresh not started",
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: qk.active });
+      void qc.invalidateQueries({ queryKey: qk.run(run.id) });
+      nav(`/runs/${run.id}/extracting`);
+    },
+  });
   const extract = useApiMutation<Job, string[]>({
     mutationFn: (keys) => apiCalls.extract(run.id, keys),
     errorTitle: "Extraction not started",
@@ -394,6 +417,7 @@ function Body({ L }: { L: LayersResponse }) {
                           {l.extracted ? `${int(l.feature_count ?? 0)} features` : "not extracted"}
                           {l.extracted && l.confidence !== null && l.confidence !== undefined ? ` · ${l.confidence.toFixed(2)}` : ""}
                         </em>
+                        {l.key === "power" && l.stats?.by_voltage ? <VoltageLegend counts={l.stats.by_voltage} /> : null}
                       </span>
                     </label>
                     {emptyL || !l.extracted ? (
@@ -521,6 +545,18 @@ function Body({ L }: { L: LayersResponse }) {
                       ) : (
                         <button className="mini" onClick={() => nav(`/runs/${run.id}/sources`)}>Add or correct</button>
                       )}
+                      {l.refreshable && l.source_setting.mode !== "replace" ? (
+                        <button
+                          className="mini"
+                          style={{ marginLeft: 6 }}
+                          data-testid={`refresh-${l.key}`}
+                          disabled={Boolean(run.job) || refresh.isPending}
+                          title={l.stats?.refresh ? `Last refreshed from OSM ${when(l.stats.refresh.osm_timestamp)}` : "Pull this area again from OpenStreetMap"}
+                          onClick={() => refresh.mutate(l.key)}
+                        >
+                          {refresh.isPending ? "Starting…" : "Refresh from OSM"}
+                        </button>
+                      ) : null}
                     </td>
                   </tr>
                 );

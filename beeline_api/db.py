@@ -107,6 +107,7 @@ create table if not exists features (
   origin text,
   geom geometry(Geometry, 4326) not null
 );
+alter table features add column if not exists attrs jsonb;
 create index if not exists features_geom on features using gist (geom);
 create index if not exists features_lv on features (layer_version_id);
 
@@ -175,6 +176,8 @@ def init_schema():
         with c.transaction():
             c.execute("select pg_advisory_xact_lock(724001)")
             c.execute(SCHEMA)
+    from . import osm_power
+    osm_power.init_schema()
 
 
 def J(v):

@@ -25,7 +25,9 @@ with psycopg.connect(ADMIN, autocommit=True) as _c:
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-from beeline_api import app as appmod, db, imagery, jobs, solvejob, worker  # noqa: E402
+from beeline_api import app as appmod, db, imagery, jobs, osm_power, solvejob, worker  # noqa: E402
+
+FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "overpass_power_bhuj.json")
 
 A = {"lat": 23.4525, "lon": 69.5924, "name": "Bhujpool"}
 B = {"lat": 23.3932, "lon": 70.5955, "name": "Shivlaka"}
@@ -38,7 +40,9 @@ IMG = {"esri": {"covered_pct": 100.0, "newest": "2026-03-03", "sources": ["Vanto
 def client():
     imagery.check = lambda frame, band: IMG          # no network in tests
     solvejob.settings.DEM_DIR = None                 # no DEM fetch
+    osm_power._overpass = lambda q, timeout=300: json.load(open(FIXTURE))   # recorded Overpass answer
     with TestClient(appmod.app) as c:
+        osm_power.refresh_aoi((69.50, 23.25, 70.10, 23.60))                  # seed the OSM power store
         yield c
 
 
@@ -237,3 +241,45 @@ def test_tiles_and_delete(client):
     assert client.delete(f"/api/runs/{rid}").status_code == 200
     assert client.get(f"/api/runs/{rid}").status_code == 404
     assert client.get("/api/runs/NOPE-0000").status_code == 404
+
+
+def test_voltage_parsing():
+    p = osm_power.parse_voltages
+    assert p("400000") == [400] and p("400000;220000") == [400, 220] and p("220 kV") == [220]
+    assert p("66000") == [] and p("230000") == [] and p(None) == [] and p("11000;132000") == [132]
+
+
+def test_osm_power_refresh_from_ui(client):
+    rid = make_run(client)
+    client.post(f"/api/runs/{rid}/extract", json={})
+    assert run_next_job()["status"] == "done"
+    L = {l["key"]: l for l in client.get(f"/api/runs/{rid}/layers").json()["layers"]}
+    p = L["power"]
+    assert p["status"] == "done" and p["feature_count"] > 0 and p["image_source"] == "OpenStreetMap"
+    assert set(p["stats"]["by_voltage"]) <= {f"{k}_{v}" for k in ("line", "tower") for v in (765, 400, 220, 132)}
+    # refresh: one extraction job for the power layer only; refused while anything runs
+    j = client.post(f"/api/runs/{rid}/layers/power/refresh")
+    assert j.status_code == 202, j.text
+    assert client.post(f"/api/runs/{rid}/layers/power/refresh").status_code == 409
+    assert client.post(f"/api/runs/{rid}/solve").status_code == 409
+    done = run_next_job()
+    assert done["status"] == "done" and list(done["detail"]["result"]) == ["power"]
+    p2 = {l["key"]: l for l in client.get(f"/api/runs/{rid}/layers").json()["layers"]}["power"]
+    assert p2["layer_version_id"] != p["layer_version_id"] and "refreshed for this area" in p2["source"]
+    assert p2["stats"]["refresh"]["load_id"]
+    st = client.get("/api/osm/power").json()
+    assert st["loads"][0]["run_id"] == rid and st["loads"][0]["kind"] == "aoi"
+    # voltage reaches the map: tile property and feature popup
+    import mapbox_vector_tile, mercantile
+    found = None
+    for lon in (69.62, 69.66, 69.70, 69.75, 69.80, 69.85):
+        tl = mercantile.tile(lon, 23.43, 11)
+        dec = mapbox_vector_tile.decode(client.get(f"/api/tiles/{rid}/{tl.z}/{tl.x}/{tl.y}.pbf").content)
+        if "power" in dec and dec["power"]["features"]:
+            found = dec["power"]["features"][0]
+            break
+    assert found and found["properties"]["voltage_kv"] in (765, 400, 220, 132)
+    ft = client.get(f"/api/runs/{rid}/features/{found['properties']['id']}").json()
+    assert ft["attrs"]["voltage_kv"] == found["properties"]["voltage_kv"]
+    # a run that replaced the layer with its own file cannot refresh it from OSM
+    assert client.post(f"/api/runs/{rid}/layers/roads/refresh").status_code == 400

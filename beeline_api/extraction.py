@@ -21,7 +21,7 @@ import pandas as pd
 
 from beeline_engine.config import LineSpec, load_layers, resolve_rules
 
-from . import db, imagery, layers, models, reference, settings, uploads
+from . import db, imagery, layers, models, osm_power, reference, settings, uploads
 from .derive import derive_clusters
 from .geo import band_polygon
 from .jobs import Cancelled, Reporter
@@ -130,6 +130,20 @@ def _extract_one(run, k, lay, mode, src, band, img, rules, progress, rep):
             meta.update(source=f"Derived from buildings at {p.get('max_spacing_m', 50)} m / {p.get('min_area_m2', 9000)} m²",
                         model="cluster-derive", model_version="1.0", confidence=lay.get("default_confidence"),
                         image_source=(bmeta or {}).get("image_source"), image_date=(bmeta or {}).get("image_date"))
+        elif lay["producer"] == "osm":
+            if (rep.job.get("detail") or {}).get("refresh_osm"):
+                minx, miny, maxx, maxy = band.bounds
+                res = osm_power.refresh_aoi((minx, miny, maxx, maxy), run_id=run["id"],
+                                            progress=lambda f, st: progress(0.8 * f))
+                meta["refresh"] = res
+            auto_gdf, om = osm_power.read_band(band)
+            auto_cov = None
+            if not om["india_loaded"] and not om["last_refresh"]:
+                raise FileNotFoundError("OSM power store is empty — load India (python -m beeline_api.osm_power "
+                                        "load-india) or press Refresh from OSM for this run")
+            meta.update(source=om["source"], image_source="OpenStreetMap", image_date=om["osm_timestamp"],
+                        model=None, model_version=None, confidence=lay.get("default_confidence"))
+            meta["stats_extra"] = om["counts"]
         elif lay["producer"] == "model":
             plugin = models.get(lay["model"])
             ctx = models.ModelContext(layer_key=k, band=band, imagery=img or {}, progress=progress, cancelled=rep.cancelled)

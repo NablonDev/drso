@@ -74,12 +74,12 @@ layers:
   - key: power
     name: "Power lines and towers"
     kind: any
-    producer: model
-    model: power_stub
-    imagery: esri
-    desc: "Line detector · 50 cm imagery"
-    minutes_per_km2: 0.049
+    producer: osm
+    desc: "OpenStreetMap power=line / power=tower · 765, 400, 220, 132 kV only"
+    minutes_per_km2: 0.002
     default_confidence: 0.85
+    voltages: [765, 400, 220, 132]
+    refreshable: true
     classes: [power_line, power_tower]
 
   - key: plotted

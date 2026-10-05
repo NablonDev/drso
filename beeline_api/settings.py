@@ -21,6 +21,9 @@ ESRI_TILE_URL = os.environ.get(
 ESRI_MAX_ZOOM = int(os.environ.get("BEELINE_ESRI_MAX_ZOOM", "18"))
 FETCH_IMAGERY_ON_EXTRACT = os.environ.get("BEELINE_FETCH_IMAGERY", "0") == "1"
 HTTP_UA = "beeline-route-planner/1.0"
+OVERPASS_URLS = [u.strip() for u in os.environ.get(
+    "BEELINE_OVERPASS_URLS",
+    "https://overpass-api.de/api/interpreter,https://overpass.kumi.systems/api/interpreter").split(",") if u.strip()]
 
 for d in (DATA, REFERENCE_DIR, IMAGERY_DIR, DEM_DIR, RUNS_DIR, UPLOADS_DIR, TILE_CACHE_DIR):
     d.mkdir(parents=True, exist_ok=True)

@@ -25,6 +25,21 @@ export const LAYER_COLOURS: Record<string, string> = {
   solar: "#C9A227",
 };
 
+/** Transmission voltage colours (OSM power layer). */
+export const VOLTAGE_COLOURS: { kv: number; colour: string }[] = [
+  { kv: 765, colour: "#E0473A" },
+  { kv: 400, colour: "#F28C28" },
+  { kv: 220, colour: "#3FA7D6" },
+  { kv: 132, colour: "#B28DFF" },
+];
+
+function voltageColour(fallback: string): ExpressionSpecification {
+  const m: unknown[] = ["match", ["coalesce", ["get", "voltage_kv"], 0]];
+  for (const v of VOLTAGE_COLOURS) m.push(v.kv, v.colour);
+  m.push(fallback);
+  return m as ExpressionSpecification;
+}
+
 /** LULC class colours from the prototype's LCLS array, keyed by API class. */
 export const LULC_CLASSES: { key: string; label: string; colour: string }[] = [
   { key: "agriculture", label: "Agriculture — kharif", colour: "#B9C79A" },
@@ -170,7 +185,7 @@ export function addRunLayers(map: maplibregl.Map, runId: string, opts: { before?
         filter: IS_LINE,
         layout: { "line-cap": "round", "line-join": "round" },
         paint: {
-          "line-color": c,
+          "line-color": key === "power" ? voltageColour(c) : c,
           "line-width": ["case", ["boolean", ["feature-state", "sel"], false], 5, key === "water" ? 3 : key === "rail" ? 2.4 : 2.2],
           "line-opacity": 0.95,
           ...(key === "rail" ? { "line-dasharray": [3, 2] } : key === "pipelines" ? { "line-dasharray": [1, 2] } : {}),
@@ -185,7 +200,7 @@ export function addRunLayers(map: maplibregl.Map, runId: string, opts: { before?
         ...common,
         filter: IS_POINT,
         paint: {
-          "circle-color": c,
+          "circle-color": key === "power" ? voltageColour(c) : c,
           "circle-radius": ["interpolate", ["linear"], ["zoom"], 8, 1.6, 13, 3.2, 16, 5],
           "circle-stroke-color": ["case", ["boolean", ["feature-state", "sel"], false], "#ffffff", "rgba(255,255,255,.7)"],
           "circle-stroke-width": ["case", ["boolean", ["feature-state", "sel"], false], 2.5, 0.8],

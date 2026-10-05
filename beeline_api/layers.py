@@ -32,6 +32,10 @@ def create_version(run_id: str, layer_key: str, mode: str, producer: str, meta: 
     stats = {}
     if gdf is not None and len(gdf):
         stats["classes"] = {str(k): int(v) for k, v in gdf["class"].value_counts().items()}
+    if meta.get("stats_extra"):
+        stats["by_voltage"] = meta["stats_extra"]
+    if meta.get("refresh"):
+        stats["refresh"] = meta["refresh"]
     row = db.one("""insert into layer_versions (run_id, layer_key, mode, producer, source, file_name, model, model_version,
                       image_source, image_date, model_run_at, confidence, feature_count, coverage, status, error, stats)
                     values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
@@ -53,14 +57,16 @@ def write_features(lv: int, gdf: gpd.GeoDataFrame):
     wkb = shapely.to_wkb(geoms, hex=True, include_srid=True)
     conf = g["confidence"] if "confidence" in g else pd.Series([None] * len(g))
     origin = g["origin"] if "origin" in g else pd.Series(["auto"] * len(g))
+    attrs = g["attrs"] if "attrs" in g else pd.Series([None] * len(g))
     with db.conn() as c:
         with c.cursor() as cur:
-            with cur.copy("copy features (layer_version_id, class, name, confidence, src_id, origin, geom) from stdin") as cp:
+            with cur.copy("copy features (layer_version_id, class, name, confidence, src_id, origin, attrs, geom) from stdin") as cp:
                 for i in range(len(g)):
                     cf = conf.iloc[i]
                     cp.write_row((lv, g["class"].iloc[i], _s(g["name"].iloc[i] if "name" in g else None),
                                   None if cf is None or (isinstance(cf, float) and np.isnan(cf)) else float(cf),
-                                  _s(g["src_id"].iloc[i] if "src_id" in g else None), origin.iloc[i], wkb[i]))
+                                  _s(g["src_id"].iloc[i] if "src_id" in g else None), origin.iloc[i],
+                                  db.dumps(attrs.iloc[i]) if isinstance(attrs.iloc[i], dict) else None, wkb[i]))
     db.exec_("update layer_versions set feature_count=(select count(*) from features where layer_version_id=%s) where id=%s",
              (lv, lv))
 
@@ -80,15 +86,16 @@ def link(run_id: str, layer_key: str, lv: int, carried: bool = False):
 
 def read_version(lv: int) -> gpd.GeoDataFrame:
     with db.conn() as c:
-        rows = c.execute("""select class, name, confidence, src_id, origin, ST_AsBinary(geom) as wkb
+        rows = c.execute("""select class, name, confidence, src_id, origin, attrs, ST_AsBinary(geom) as wkb
                             from features where layer_version_id=%s""", (lv,)).fetchall()
     if not rows:
-        return gpd.GeoDataFrame({"class": [], "name": [], "confidence": [], "src_id": [], "origin": []},
+        return gpd.GeoDataFrame({"class": [], "name": [], "confidence": [], "src_id": [], "origin": [], "attrs": []},
                                 geometry=[], crs=4326)
     geoms = shapely.from_wkb([bytes(r["wkb"]) for r in rows])
     return gpd.GeoDataFrame({"class": [r["class"] for r in rows], "name": [r["name"] for r in rows],
                              "confidence": [r["confidence"] for r in rows], "src_id": [r["src_id"] for r in rows],
-                             "origin": [r["origin"] for r in rows]}, geometry=geoms, crs=4326)
+                             "origin": [r["origin"] for r in rows], "attrs": [r["attrs"] for r in rows]},
+                            geometry=geoms, crs=4326)
 
 
 def version(lv: int) -> dict | None:

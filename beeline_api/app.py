@@ -675,6 +675,7 @@ def run_layers(run_id: str):
     for l in reg:
         x = have.get(l["key"])
         item = {"key": l["key"], "name": l["name"], "desc": l.get("desc"), "producer": l["producer"],
+                "configured_producer": l["producer"], "refreshable": bool(l.get("refreshable")),
                 "minutes_per_km2": l.get("minutes_per_km2"), "rules": rules_by_layer.get(l["key"], []),
                 "source_setting": src.get(l["key"], {"mode": "auto"}), "extracted": x is not None}
         if x:
@@ -684,6 +685,7 @@ def run_layers(run_id: str):
                 cov_pct = round(100 * geo.area_km2(band.intersection(cov), frame) / band_km2, 1)
             item.update({k: (v.isoformat() if hasattr(v, "isoformat") else v) for k, v in x.items()
                          if k not in ("coverage_geojson",)})
+            item["extracted_producer"] = x["producer"]
             item["coverage_pct"] = cov_pct
             if x["status"] == "failed":
                 flags.append({"layer": l["key"], "kind": "failed", "text": f"{l['name']}: extraction failed — {x['error']}"})
@@ -706,10 +708,37 @@ def run_layers(run_id: str):
             "band": band.__geo_interface__}
 
 
+@app.post("/api/runs/{run_id}/layers/{layer_key}/refresh", status_code=202)
+def refresh_layer(run_id: str, layer_key: str):
+    """Re-pull the layer's source for this run's area, update the shared store, re-extract the layer."""
+    _run(run_id)
+    reg = {l["key"]: l for l in load_layers()["layers"]}
+    if layer_key not in reg:
+        raise HTTPException(404, f"unknown layer {layer_key}")
+    if not reg[layer_key].get("refreshable"):
+        raise HTTPException(400, f"{reg[layer_key]['name']} has no online source to refresh from")
+    src = (_run(run_id)["sources"] or {}).get(layer_key, {"mode": "auto"})
+    if src.get("mode") == "replace":
+        raise HTTPException(400, f"{reg[layer_key]['name']} uses your file (Replace); switch it to Auto-fetch or Add more to refresh from OSM")
+    j = jobs.start(run_id, "extract", {"requested": [layer_key], "refresh_osm": True})
+    return _job_json(j)
+
+
+@app.get("/api/osm/power")
+def osm_power_status():
+    from . import osm_power
+    st = osm_power.status()
+    for l in st["loads"]:
+        for k in ("osm_timestamp", "started_at", "finished_at"):
+            if l.get(k) is not None:
+                l[k] = l[k].isoformat()
+    return st
+
+
 @app.get("/api/runs/{run_id}/features/{fid}")
 def feature(run_id: str, fid: int):
     r = _run(run_id)
-    f = db.one("""select f.id, f.class, f.name, f.confidence, f.origin, f.src_id, ST_AsGeoJSON(f.geom, 6)::jsonb as geom,
+    f = db.one("""select f.id, f.class, f.name, f.confidence, f.origin, f.src_id, f.attrs, ST_AsGeoJSON(f.geom, 6)::jsonb as geom,
                          ST_Area(f.geom::geography) as area_m2, ST_Length(f.geom::geography) as length_m,
                          lv.layer_key, lv.mode, lv.source, lv.model, lv.model_version, lv.image_source, lv.image_date,
                          lv.model_run_at, lv.confidence as layer_conf, lv.file_name
@@ -735,6 +764,7 @@ def _tile_native(run_id, z, x, y, skip_dense) -> bytes:
                       and (not %s or layer_key not in ('buildings')))
           select q.layer_key, ST_AsMVT(q, q.layer_key, 4096, 'geom', 'id') as tile from (
             select lv.layer_key, f.id, f.class, f.name, f.confidence, f.origin,
+                   (f.attrs->>'voltage_kv')::int as voltage_kv,
                    ST_AsMVTGeom(ST_Transform(f.geom, 3857), env.e, 4096, 64, true) as geom
             from features f join lv on f.layer_version_id = lv.layer_version_id, env
             where f.geom && ST_Transform(env.e, 4326)
@@ -752,6 +782,7 @@ def _tile_python(run_id, z, x, y, skip_dense) -> bytes:
                lv as (select layer_key, layer_version_id from run_layers where run_id=%s
                       and (not %s or layer_key not in ('buildings')))
           select lv.layer_key, f.id, f.class, f.name, f.confidence, f.origin,
+                 (f.attrs->>'voltage_kv')::int as voltage_kv,
                  ST_AsBinary(ST_SimplifyPreserveTopology(ST_ClipByBox2D(ST_Transform(f.geom, 3857),
                      ST_Expand(env.e, (ST_XMax(env.e) - ST_XMin(env.e)) * 64 / 4096)),
                      (ST_XMax(env.e) - ST_XMin(env.e)) / 4096)) as wkb,
@@ -771,7 +802,8 @@ def _tile_python(run_id, z, x, y, skip_dense) -> bytes:
         layers_.setdefault(r["layer_key"], []).append({
             "geometry": g, "id": r["id"],
             "properties": {k: v for k, v in (("id", r["id"]), ("class", r["class"]), ("name", r["name"]),
-                                             ("confidence", r["confidence"]), ("origin", r["origin"])) if v is not None}})
+                                             ("confidence", r["confidence"]), ("origin", r["origin"]),
+                                             ("voltage_kv", r["voltage_kv"])) if v is not None}})
     return mapbox_vector_tile.encode(
         [{"name": k, "features": v} for k, v in layers_.items()],
         default_options={"quantize_bounds": bounds, "extents": 4096, "y_coord_down": False})
