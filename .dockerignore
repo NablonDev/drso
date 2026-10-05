@@ -1,0 +1,10 @@
+data/
+LULC output/
+**/node_modules
+web/dist
+web/test-results
+web/playwright-report
+**/__pycache__
+.git
+*.html
+deploy/.env

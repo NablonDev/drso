@@ -1,0 +1,28 @@
+# Runtime environment for the API + worker image (conda-forge for the GDAL/PROJ/PostGIS stack).
+name: beeline
+channels: [conda-forge]
+dependencies:
+  - python=3.12
+  - gdal=3.9.3
+  - pyogrio=0.10.0
+  - rasterio=1.4.2
+  - geopandas=1.1.4
+  - shapely=2.0.7
+  - pyproj=3.7.1
+  - scipy=1.18.1
+  - numpy=2.5.3
+  - pandas=3.0.6
+  - fastapi=0.142.2
+  - uvicorn=0.54.0
+  - psycopg=3.2.3
+  - psycopg-pool=3.3.3
+  - pydantic=2.13.5
+  - pyyaml=6.0.3
+  - httpx=0.28.1
+  - ezdxf=1.4.2
+  - reportlab=5.0.1
+  - mercantile=1.2.1
+  - pillow=12.3.0
+  - python-multipart=0.0.32
+  - pytest=9.1.1
+  - pip

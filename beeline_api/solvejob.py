@@ -19,6 +19,9 @@ log = logging.getLogger(__name__)
 
 
 def _git_rev() -> str | None:
+    import os
+    if os.environ.get("BEELINE_COMMIT"):
+        return os.environ["BEELINE_COMMIT"]
     try:
         return subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=settings.REPO, capture_output=True,
                               text=True, timeout=5).stdout.strip() or None

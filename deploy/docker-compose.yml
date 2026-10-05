@@ -1,0 +1,56 @@
+# Beeline route planner — production stack for one GPU VM.
+#   docker compose --env-file .env up -d --build
+services:
+  db:
+    image: postgis/postgis:16-3.4
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: beeline
+      POSTGRES_PASSWORD: ${BEELINE_DB_PASSWORD:?set BEELINE_DB_PASSWORD in .env}
+      POSTGRES_DB: beeline
+    volumes:
+      - ${BEELINE_PGDATA:-/srv/beeline/pgdata}:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U beeline -d beeline"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    shm_size: 1g
+
+  api:
+    build: { context: .., dockerfile: deploy/Dockerfile }
+    image: beeline:${BEELINE_TAG:-latest}
+    restart: unless-stopped
+    depends_on: { db: { condition: service_healthy } }
+    environment: &env
+      BEELINE_DB_URL: postgresql://beeline:${BEELINE_DB_PASSWORD}@db:5432/beeline
+      BEELINE_DATA: /data/bucket
+      BEELINE_REFERENCE_DIR: /data/bucket/reference
+      BEELINE_REGION: ${BEELINE_REGION:-gujarat}
+      BEELINE_FETCH_IMAGERY: ${BEELINE_FETCH_IMAGERY:-0}
+    volumes:
+      - ${BEELINE_BUCKET:-/srv/beeline/bucket}:/data/bucket
+    ports:
+      - "${BEELINE_PORT:-8080}:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  worker:
+    image: beeline:${BEELINE_TAG:-latest}
+    restart: unless-stopped
+    depends_on: { db: { condition: service_healthy }, api: { condition: service_started } }
+    command: ["python", "-m", "beeline_api.worker"]
+    environment: *env
+    volumes:
+      - ${BEELINE_BUCKET:-/srv/beeline/bucket}:/data/bucket
+    stop_grace_period: 30s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
