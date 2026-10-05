@@ -7,6 +7,7 @@ import type { Job, RunDetail } from "../api/types";
 import { lineSpec } from "../lib/format";
 import { toggleTheme, useUi } from "../store/ui";
 import { Prog } from "./ui";
+import ErrorBoundary from "./ErrorBoundary";
 
 export type StepKey =
   | "corridor"
@@ -38,7 +39,7 @@ export function hasLayers(run: RunDetail): boolean {
     run.layers_ready ||
       run.last_extract ||
       run.reuse_from ||
-      run.layers_stale.length ||
+      run.layers_stale?.length ||
       ["review", "solving", "complete", "blocked"].includes(run.status),
   );
 }
@@ -267,7 +268,9 @@ export default function Shell() {
       </header>
       <Rail run={run} runId={runId} />
       <main className="main" id="main">
-        <Outlet />
+        <ErrorBoundary key={loc.pathname}>
+          <Outlet />
+        </ErrorBoundary>
       </main>
       <Toasts />
     </div>

@@ -34,6 +34,6 @@ export const useJobLayers = create<JobLayersState>((set, get) => ({
 
 /** Layers a job was asked to extract, when the request named them. */
 export function requestedLayers(job: Job): string[] | null {
-  const l = job.detail?.layers;
-  return Array.isArray(l) ? l : null;
+  const l = job.detail?.requested ?? job.detail?.layers;
+  return Array.isArray(l) ? (l as string[]) : null;
 }

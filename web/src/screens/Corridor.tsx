@@ -158,8 +158,9 @@ export default function Corridor() {
     mutationFn: (body) => apiCalls.createRun(body),
     errorTitle: "Could not create the run",
     onSuccess: (r) => {
-      qc.setQueryData(qk.run(r.id), r);
+      // POST /api/runs returns the bare run row (no layers_ready / last_extract…), so fetch the full record
       void qc.invalidateQueries({ queryKey: qk.runs });
+      void qc.invalidateQueries({ queryKey: qk.run(r.id) });
       nav(`/runs/${r.id}/images`);
     },
   });

@@ -26,3 +26,5 @@ dependencies:
   - python-multipart=0.0.32
   - pytest=9.1.1
   - pip
+  - pip:
+      - mapbox-vector-tile==2.2.0

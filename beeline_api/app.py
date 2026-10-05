@@ -240,7 +240,7 @@ def create_run(req: RunCreate):
               req.band_km, req.routes_wanted, db.J(gv)))
     if req.reuse_from:
         _reuse(rid, req.reuse_from)
-    return _run_json(_run(rid))
+    return get_run(rid)
 
 
 def _reuse(rid: str, src_id: str):
@@ -401,6 +401,19 @@ def upload(file: UploadFile = File(...)):
         raise HTTPException(400, f"could not read the file: {e}")
 
 
+@app.get("/api/uploads/{uid}")
+def upload_info(uid: int, layer: str | None = None):
+    try:
+        up = uploads.get(uid)
+    except KeyError as e:
+        raise HTTPException(404, str(e))
+    try:
+        info = uploads.inspect(Path(up["path"]), layer)
+    except Exception as e:
+        raise HTTPException(400, f"could not read layer {layer!r}: {e}")
+    return {"id": uid, "filename": up["filename"], "created_at": up["created_at"].isoformat(), **info}
+
+
 @app.post("/api/uploads/{uid}/mapping/check")
 def mapping_check(uid: int, req: MappingReq):
     try:
@@ -477,7 +490,10 @@ def set_rule(run_id: str, rule_id: str, req: RuleSet):
         elif p["type"] == "rng":
             if not isinstance(v, (list, tuple)) or len(v) != 2:
                 raise HTTPException(400, f"{p['label']} needs two values")
-            v = [float(v[0]), float(v[1])]
+            try:
+                v = [float(v[0]), float(v[1])]
+            except (TypeError, ValueError):
+                raise HTTPException(400, f"{p['label']} needs two numbers")
             if v[0] > v[1]:
                 raise HTTPException(400, f"{p['label']}: the lower bound is above the upper bound")
         elif p["type"] == "sel":
@@ -599,7 +615,7 @@ def start_extract(run_id: str, req: ExtractReq | None = None):
     for k, s in src.items():
         if s.get("mode") in ("replace", "add") and not s.get("upload_id"):
             raise HTTPException(400, f"layer {k} is set to {s['mode']} but has no file attached")
-    j = jobs.start(run_id, "extract", {"layers": req.layers if req else None})
+    j = jobs.start(run_id, "extract", {"requested": req.layers if req else None})
     return _job_json(j)
 
 
@@ -708,11 +724,10 @@ def feature(run_id: str, fid: int):
     return {k: (v.isoformat() if hasattr(v, "isoformat") else v) for k, v in f.items()}
 
 
-@app.get("/api/tiles/{run_id}/{z}/{x}/{y}.pbf")
-def vector_tile(run_id: str, z: int, x: int, y: int):
-    if z < 6 or z > 16:
-        return Response(b"", media_type="application/x-protobuf")
-    skip_dense = z < 12
+_MVT_NATIVE: bool | None = None   # PostGIS built with protobuf-c? decided on first tile
+
+
+def _tile_native(run_id, z, x, y, skip_dense) -> bytes:
     with db.conn() as c:
         rows = c.execute("""
           with env as (select ST_TileEnvelope(%s, %s, %s) as e),
@@ -724,7 +739,63 @@ def vector_tile(run_id: str, z: int, x: int, y: int):
             from features f join lv on f.layer_version_id = lv.layer_version_id, env
             where f.geom && ST_Transform(env.e, 4326)
           ) q where q.geom is not null group by q.layer_key""", (z, x, y, run_id, skip_dense)).fetchall()
-    data = b"".join(bytes(r["tile"]) for r in rows if r["tile"])
+    return b"".join(bytes(r["tile"]) for r in rows if r["tile"])
+
+
+def _tile_python(run_id, z, x, y, skip_dense) -> bytes:
+    """Same tile, encoded in Python (PostGIS builds without protobuf-c, e.g. conda-forge)."""
+    import mapbox_vector_tile
+    import shapely
+    with db.conn() as c:
+        rows = c.execute("""
+          with env as (select ST_TileEnvelope(%s, %s, %s) as e),
+               lv as (select layer_key, layer_version_id from run_layers where run_id=%s
+                      and (not %s or layer_key not in ('buildings')))
+          select lv.layer_key, f.id, f.class, f.name, f.confidence, f.origin,
+                 ST_AsBinary(ST_SimplifyPreserveTopology(ST_ClipByBox2D(ST_Transform(f.geom, 3857),
+                     ST_Expand(env.e, (ST_XMax(env.e) - ST_XMin(env.e)) * 64 / 4096)),
+                     (ST_XMax(env.e) - ST_XMin(env.e)) / 4096)) as wkb,
+                 ST_XMin(env.e) as x0, ST_YMin(env.e) as y0, ST_XMax(env.e) as x1, ST_YMax(env.e) as y1
+          from features f join lv on f.layer_version_id = lv.layer_version_id, env
+          where f.geom && ST_Transform(env.e, 4326)""", (z, x, y, run_id, skip_dense)).fetchall()
+    if not rows:
+        return b""
+    bounds = (rows[0]["x0"], rows[0]["y0"], rows[0]["x1"], rows[0]["y1"])
+    layers_: dict[str, list] = {}
+    for r in rows:
+        if r["wkb"] is None:
+            continue
+        g = shapely.from_wkb(bytes(r["wkb"]))
+        if g.is_empty:
+            continue
+        layers_.setdefault(r["layer_key"], []).append({
+            "geometry": g, "id": r["id"],
+            "properties": {k: v for k, v in (("id", r["id"]), ("class", r["class"]), ("name", r["name"]),
+                                             ("confidence", r["confidence"]), ("origin", r["origin"])) if v is not None}})
+    return mapbox_vector_tile.encode(
+        [{"name": k, "features": v} for k, v in layers_.items()],
+        default_options={"quantize_bounds": bounds, "extents": 4096, "y_coord_down": False})
+
+
+@app.get("/api/tiles/{run_id}/{z}/{x}/{y}.pbf")
+def vector_tile(run_id: str, z: int, x: int, y: int):
+    global _MVT_NATIVE
+    if z < 6 or z > 16:
+        return Response(b"", media_type="application/x-protobuf")
+    skip_dense = z < 12
+    data = None
+    if _MVT_NATIVE is not False:
+        try:
+            data = _tile_native(run_id, z, x, y, skip_dense)
+            if data:
+                _MVT_NATIVE = True
+        except Exception as e:
+            if "protobuf" not in str(e).lower():
+                raise
+            _MVT_NATIVE = False
+            log.warning("PostGIS lacks protobuf-c; encoding vector tiles in Python")
+    if data is None:
+        data = _tile_python(run_id, z, x, y, skip_dense)
     return Response(data, media_type="application/x-protobuf", headers={"Cache-Control": "no-cache"})
 
 
@@ -738,10 +809,13 @@ def esri_tile(z: int, x: int, y: int):
 
 # ---- results --------------------------------------------------------------------------
 def _solve_json(s: dict) -> dict:
-    files = []
+    files, sizes = [], {}
     if s.get("out_dir") and Path(s["out_dir"]).exists():
-        files = sorted(p.name for p in Path(s["out_dir"]).iterdir() if p.is_file())
-    return {"id": s["id"], "run_id": s["run_id"], "created_at": s["created_at"].isoformat(), "feasible": s["feasible"],
+        for p in sorted(Path(s["out_dir"]).iterdir()):
+            if p.is_file():
+                files.append(p.name)
+                sizes[p.name] = p.stat().st_size
+    return {"file_sizes": sizes, "id": s["id"], "run_id": s["run_id"], "created_at": s["created_at"].isoformat(), "feasible": s["feasible"],
             "result": s["result"], "manifest": s["manifest"], "files": files}
 
 

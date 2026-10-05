@@ -49,7 +49,7 @@ def run_extraction(job: dict, rep: Reporter):
     db.exec_("update runs set status='extracting', updated_at=now() where id=%s", (run["id"],))
     band, frame = band_polygon((run["a_lon"], run["a_lat"]), (run["b_lon"], run["b_lat"]), run["band_km"], margin_m=500)
     reg = {l["key"]: l for l in load_layers()["layers"]}
-    todo = layers_to_extract(run, (job.get("detail") or {}).get("layers"))
+    todo = layers_to_extract(run, (job.get("detail") or {}).get("requested"))
     area = frame.geom_to_utm(band).area / 1e6
     weights = {k: max(0.2, reg[k].get("minutes_per_km2", 0.01) * area) for k in todo}
     total_w = sum(weights.values()) or 1.0

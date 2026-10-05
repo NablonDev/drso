@@ -40,10 +40,18 @@ export function useMapLibre(
     m.on("error", () => undefined);
     let alive = true;
     m.once("load", () => {
-      if (alive) setMap(m);
+      if (!alive) return;
+      m.resize();
+      setMap(m);
     });
+    // MapLibre only tracks window resizes; layout changes (grid, sidebar, fonts) need this.
+    const ro = new ResizeObserver(() => {
+      if (alive) m.resize();
+    });
+    ro.observe(el);
     return () => {
       alive = false;
+      ro.disconnect();
       setMap(null);
       m.remove();
     };
@@ -58,8 +66,19 @@ export function useFitBounds(map: maplibregl.Map | null, bounds: Bounds | null |
   const done = useRef<string>("");
   useEffect(() => {
     if (!map || !bounds || done.current === key) return;
-    done.current = key;
-    map.fitBounds(bounds as maplibregl.LngLatBoundsLike, { padding, duration: 0 });
+    // wait until the container has a real size, or the fit lands at a useless zoom
+    const tryFit = () => {
+      const c = map.getContainer();
+      if (c.clientWidth < 200 || c.clientHeight < 150) return;
+      done.current = key;
+      map.off("resize", tryFit);
+      map.fitBounds(bounds as maplibregl.LngLatBoundsLike, { padding, duration: 0 });
+    };
+    map.on("resize", tryFit);
+    tryFit();
+    return () => {
+      map.off("resize", tryFit);
+    };
   }, [map, key, bounds, padding]);
 }
 
@@ -80,7 +99,7 @@ export function useRunTiles(map: maplibregl.Map | null, runId: string, enabled: 
     addRunLayers(map, runId, { before: firstSymbol });
     addLowConfLayer(map);
     ready.current?.(map);
-    const onErr = (e: maplibregl.ErrorEvent & { sourceId?: string }) => {
+    const onErr = (e: { error?: unknown; sourceId?: string }) => {
       if (e.sourceId !== "run") return;
       const st = (e.error as { status?: number } | undefined)?.status;
       setError(

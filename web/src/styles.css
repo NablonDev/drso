@@ -453,3 +453,9 @@ dialog .dlg .tw{max-height:46vh;overflow:auto}
 }
 .catrow .l{flex:1;font-size:12.5px;color:var(--ink-2);min-width:0}
 .catrow .inp input{width:100%}
+button.link{padding:0;background:none;border:0;font:inherit;color:var(--accent-ink);text-decoration:underline}
+.n-warn button.link,.n-stop button.link{color:inherit}
+.app{min-height:100vh}
+.storybox{max-height:1150px;overflow:auto}
+.mapcanvas .maplibregl-popup{z-index:6}
+.mapcanvas .maplibregl-ctrl-bottom-right{z-index:6}

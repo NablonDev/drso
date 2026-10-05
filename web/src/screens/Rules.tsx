@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { useRunCtx } from "../App";
 import { apiCalls, qk, useApiMutation, useRules } from "../api/hooks";
@@ -207,7 +207,8 @@ export default function Rules() {
   const nav = useNavigate();
   const qc = useQueryClient();
   const q = useRules(run.id);
-  const [search, setSearch] = useState("");
+  const [params] = useSearchParams();
+  const [search, setSearch] = useState(params.get("q") ?? "");
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const [edit, setEdit] = useState<{ rule: Rule; statutory: boolean } | null>(null);
   const [confirmReset, setConfirmReset] = useState(false);
@@ -222,7 +223,7 @@ export default function Rules() {
     },
   });
 
-  const groups = q.data?.groups ?? [];
+  const groups = useMemo(() => q.data?.groups ?? [], [q.data]);
   const ql = search.trim().toLowerCase();
   const filtered = useMemo(
     () =>

@@ -1,1 +1,575 @@
-export default function Results() { return <div>Results</div>; }
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import maplibregl from "maplibre-gl";
+import type { GeoJSONSource } from "maplibre-gl";
+import { useRunCtx } from "../App";
+import { useCompare, useLayers, useSolve } from "../api/hooks";
+import type { RunDetail, Solve } from "../api/types";
+import CopyDialog from "../components/CopyDialog";
+import TowerLayer from "../components/map/TowerLayer";
+import {
+  bboxOf,
+  geomCoords,
+  NOGO_LAYERS,
+  routeColour,
+  setLowConfVisible,
+  setRunLayerOpacity,
+  setRunLayerVisibility,
+} from "../components/map/style";
+import { useFitBounds, useMapLibre, useRunTiles, type Bounds } from "../components/map/useMap";
+import { CeilingNote, ScaleBar, useCeiling, ZoomBar } from "../components/map/ZoomBar";
+import { ErrorNote, Head, Kpi, Loading, Note } from "../components/ui";
+import { crore, int, num } from "../lib/format";
+import { endpoints, linesGeoJSON, routesGeoJSON, tradeOff } from "../lib/solve";
+import { useTowers } from "../store/towers";
+import { useUi } from "../store/ui";
+import { useSelectedRoute } from "../store/selection";
+import { useStartSolve } from "./Solve";
+
+type Toggles = { lulc: boolean; constraints: boolean; towers: boolean; beeline: boolean; lowconf: boolean; prev: boolean };
+
+export default function Results() {
+  const run = useRunCtx();
+  const nav = useNavigate();
+  const q = useSolve(run.id, run.latest_solve_id);
+  const start = useStartSolve(run.id);
+  if (!run.latest_solve_id) {
+    return (
+      <section>
+        <Head title="Route map">This run has not been solved yet.</Head>
+        <div className="row" style={{ gap: 8 }}>
+          <button className="btn ghost" onClick={() => nav(`/runs/${run.id}/layers`)}>Review the layers</button>
+          <button className="btn" disabled={!run.layers_ready || Boolean(run.job) || start.isPending} onClick={() => start.mutate()}>Solve the route</button>
+        </div>
+      </section>
+    );
+  }
+  if (q.isPending) return <Loading text="Loading the routes…" />;
+  if (q.isError) return <ErrorNote error={q.error} retry={() => void q.refetch()} />;
+  return <Body s={q.data} />;
+}
+
+function Body({ s }: { s: Solve }) {
+  const run = useRunCtx();
+  const nav = useNavigate();
+  const layersQ = useLayers(run.id);
+  const cmp = useCompare(run.id, run.latest_solve_id, Boolean(run.parent_id)).data;
+  const [selId, select] = useSelectedRoute(run, s);
+  const loadTowers = useTowers((x) => x.load);
+  const focus = useUi((x) => x.focus);
+  const setFocus = useUi((x) => x.setFocus);
+  const [t, setT] = useState<Toggles>({ lulc: false, constraints: true, towers: true, beeline: false, lowconf: false, prev: false });
+  const [widen, setWiden] = useState(false);
+  const routes = s.result.routes;
+  const feasible = s.result.feasible && routes.length > 0;
+  const sel = routes.find((r) => r.id === selId) ?? routes[0];
+
+  useEffect(() => {
+    loadTowers(s.id, routes);
+  }, [s.id, routes, loadTowers]);
+
+  const ends = useMemo(() => endpoints(run), [run.a_lon, run.a_lat, run.b_lon, run.b_lat]); // eslint-disable-line react-hooks/exhaustive-deps
+  const routesFC = useMemo(() => routesGeoJSON(routes), [routes]);
+  const prevFC = useMemo(() => linesGeoJSON(cmp?.parent_routes ?? []), [cmp]);
+  const band = layersQ.data?.band;
+  const bounds = useMemo<Bounds | null>(() => {
+    const pts: [number, number][] = [ends.a, ends.b];
+    for (const r of routes) for (let i = 0; i < r.geometry.length; i += 5) pts.push(r.geometry[i]);
+    if (band) for (const c of geomCoords(band)) pts.push(c);
+    return bboxOf(pts);
+  }, [routes, ends, band]);
+
+  const mapRef = useRef<HTMLDivElement>(null);
+  const map = useMapLibre(mapRef, { bounds });
+  useFitBounds(map, bounds);
+  const ceiling = useCeiling(map);
+  const wantTiles = t.lulc || t.constraints || t.lowconf;
+  const applyTiles = (m: maplibregl.Map) => {
+    setRunLayerVisibility(m, (k) => (k === "lulc" ? t.lulc : t.constraints && NOGO_LAYERS.includes(k)));
+    setRunLayerOpacity(m, 0.55);
+    setLowConfVisible(m, t.lowconf);
+  };
+  const applyRef = useRef(applyTiles);
+  applyRef.current = applyTiles;
+  const tiles = useRunTiles(map, run.id, wantTiles, (m) => applyRef.current(m));
+  useEffect(() => {
+    if (map && map.getSource("run")) applyRef.current(map);
+  }, [map, t.lulc, t.constraints, t.lowconf]);
+
+  // static overlays: band, bee-line, previous revision, routes, end points
+  useEffect(() => {
+    if (!map) return;
+    const add = (id: string, data: GeoJSON.GeoJSON) => {
+      const src = map.getSource(id) as GeoJSONSource | undefined;
+      if (src) src.setData(data);
+      else map.addSource(id, { type: "geojson", data });
+    };
+    if (band) add("band", { type: "Feature", properties: {}, geometry: band });
+    add("beeline", { type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: [ends.a, ends.b] } });
+    add("prev", prevFC);
+    add("routes", routesFC);
+    if (band && !map.getLayer("band-line"))
+      map.addLayer({ id: "band-line", type: "line", source: "band", paint: { "line-color": "#ffffff", "line-width": 1.4, "line-dasharray": [4, 3], "line-opacity": 0.7 } });
+    if (!map.getLayer("beeline-line"))
+      map.addLayer({ id: "beeline-line", type: "line", source: "beeline", layout: { visibility: "none" }, paint: { "line-color": "#ffffff", "line-width": 1.6, "line-dasharray": [4, 3], "line-opacity": 0.85 } });
+    if (!map.getLayer("prev-line"))
+      map.addLayer({ id: "prev-line", type: "line", source: "prev", layout: { visibility: "none", "line-join": "round" }, paint: { "line-color": "#C8D0CC", "line-width": 2.6, "line-dasharray": [3, 2], "line-opacity": 0.9 } });
+    if (!map.getLayer("routes-casing")) {
+      map.addLayer({
+        id: "routes-casing",
+        type: "line",
+        source: "routes",
+        layout: { "line-join": "round", "line-cap": "round" },
+        paint: { "line-color": "#0d1418", "line-width": 5, "line-opacity": 0.55 },
+      });
+      map.addLayer({
+        id: "routes-line",
+        type: "line",
+        source: "routes",
+        layout: { "line-join": "round", "line-cap": "round" },
+        paint: {
+          "line-color": ["match", ["get", "id"], 1, routeColour(1), 2, routeColour(2), 3, routeColour(3), 4, routeColour(4), "#cccccc"],
+          "line-width": 2.6,
+          "line-opacity": 0.6,
+        },
+      });
+    }
+  }, [map, band, ends, prevFC, routesFC]);
+
+  // selection styling
+  useEffect(() => {
+    if (!map || !map.getLayer("routes-line")) return;
+    map.setPaintProperty("routes-line", "line-width", ["case", ["==", ["get", "id"], selId], 5, 2.4]);
+    map.setPaintProperty("routes-line", "line-opacity", ["case", ["==", ["get", "id"], selId], 1, 0.55]);
+    map.setPaintProperty("routes-casing", "line-width", ["case", ["==", ["get", "id"], selId], 8.5, 4.5]);
+    map.setLayoutProperty("routes-line", "line-sort-key", ["case", ["==", ["get", "id"], selId], 10, 0]);
+    map.setLayoutProperty("routes-casing", "line-sort-key", ["case", ["==", ["get", "id"], selId], 10, 0]);
+  }, [map, selId, routesFC]);
+
+  useEffect(() => {
+    if (!map) return;
+    if (map.getLayer("beeline-line")) map.setLayoutProperty("beeline-line", "visibility", t.beeline ? "visible" : "none");
+    if (map.getLayer("prev-line")) map.setLayoutProperty("prev-line", "visibility", t.prev ? "visible" : "none");
+  }, [map, t.beeline, t.prev, prevFC]);
+
+  // A / B markers like the prototype: a ring at A, a square at B
+  useEffect(() => {
+    if (!map) return;
+    const mk = (cls: string, title: string) => {
+      const el = document.createElement("div");
+      el.title = title;
+      el.style.cssText =
+        cls === "a"
+          ? "width:16px;height:16px;border-radius:50%;background:#fff;border:3px solid #14202A;box-shadow:0 0 0 2px rgba(255,255,255,.6)"
+          : "width:15px;height:15px;background:#fff;border:3px solid #14202A;box-shadow:0 0 0 2px rgba(255,255,255,.6)";
+      return el;
+    };
+    const a = new maplibregl.Marker({ element: mk("a", `A · ${run.a_name ?? ""}`) }).setLngLat(ends.a).addTo(map);
+    const b = new maplibregl.Marker({ element: mk("b", `B · ${run.b_name ?? ""}`) }).setLngLat(ends.b).addTo(map);
+    return () => {
+      a.remove();
+      b.remove();
+    };
+  }, [map, ends, run.a_name, run.b_name]);
+
+  // click a route to select it
+  useEffect(() => {
+    if (!map) return;
+    const onClick = (e: maplibregl.MapLayerMouseEvent) => {
+      if (e.defaultPrevented) return;
+      const id = Number(e.features?.[0]?.properties?.id);
+      if (Number.isFinite(id)) select(id);
+    };
+    const enter = () => (map.getCanvas().style.cursor = "pointer");
+    const leave = () => (map.getCanvas().style.cursor = "");
+    map.on("click", "routes-casing", onClick);
+    map.on("mouseenter", "routes-casing", enter);
+    map.on("mouseleave", "routes-casing", leave);
+    return () => {
+      map.off("click", "routes-casing", onClick);
+      map.off("mouseenter", "routes-casing", enter);
+      map.off("mouseleave", "routes-casing", leave);
+    };
+  }, [map, select]);
+
+  // fly to a spot requested from "Why this route"
+  useEffect(() => {
+    if (!map || !focus || focus.runId !== run.id) return;
+    map.flyTo({ center: [focus.lon, focus.lat], zoom: focus.zoom, duration: 800 });
+    setFocus(null);
+  }, [map, focus, run.id, setFocus]);
+
+  const lowConf = (s.manifest.sources ?? []).filter((x) => (x.confidence ?? 1) < 0.8 && x.features > 0);
+  const srcCounts = { auto: 0, replace: 0, add: 0 };
+  for (const x of s.manifest.sources ?? []) srcCounts[x.mode] = (srcCounts[x.mode] ?? 0) + 1;
+  const withFeat = (s.manifest.sources ?? []).filter((x) => x.features > 0 && x.confidence !== null);
+  const meanConf = withFeat.length ? withFeat.reduce((a, x) => a + (x.confidence ?? 0), 0) / withFeat.length : null;
+  const tog = (k: keyof Toggles) => setT((x) => ({ ...x, [k]: !x[k] }));
+  const nWord = ["No", "One", "Two", "Three", "Four"][routes.length] ?? String(routes.length);
+
+  return (
+    <section>
+      <Head title={feasible ? `${nWord} route${routes.length === 1 ? "" : "s"}` : "No viable route"}>
+        {feasible
+          ? "Each optimises something different. Compare them on the table below the map, pick one, or change a constraint and solve again."
+          : "The solve could not connect A to B inside the band with the rules as they stand."}
+      </Head>
+
+      {!feasible ? <Failure s={s} onWiden={() => setWiden(true)} /> : null}
+
+      {feasible && lowConf.length ? (
+        <Note kind="warn" style={{ marginBottom: 12 }}>
+          <b>
+            {lowConf.length} layer{lowConf.length > 1 ? "s" : ""} extracted below 0.80 confidence
+          </b>{" "}
+          — {lowConf.map((x) => `${x.layer} ${x.confidence?.toFixed(2)}`).join(", ")}. The route treats their features as certain; the
+          report does not. Full breakdown on{" "}
+          <button className="link" style={{ padding: 0 }} onClick={() => nav(`/runs/${run.id}/why`)}><b>Why this route</b></button>.
+        </Note>
+      ) : null}
+
+      <div className="withnotes" style={{ gridTemplateColumns: "minmax(0,1fr) 288px" }}>
+        <div>
+          <div className="maptools">
+            <button aria-pressed={t.lulc} onClick={() => tog("lulc")}>LULC overlay</button>
+            <button aria-pressed={t.constraints} onClick={() => tog("constraints")}>No-Go features</button>
+            <button aria-pressed={t.towers} onClick={() => tog("towers")} disabled={!feasible}>Towers</button>
+            <button aria-pressed={t.beeline} onClick={() => tog("beeline")}>Bee-line</button>
+            <button aria-pressed={t.lowconf} onClick={() => tog("lowconf")}>Low-confidence</button>
+            <button aria-pressed={t.prev} onClick={() => tog("prev")} disabled={!cmp?.parent_routes?.length}
+              title={cmp?.parent_routes?.length ? undefined : "No solved previous revision"}>
+              Previous revision
+            </button>
+            <ZoomBar map={map} ceiling={ceiling} />
+          </div>
+          <div className="mapcanvas" data-testid="route-map">
+            <div ref={mapRef} className="mlmap" />
+            {!map ? <div className="mapnote"><Loading text="Loading imagery…" /></div> : null}
+          </div>
+          {t.towers && feasible ? <TowerLayer map={map} routes={[sel.id]} editable={false} /> : null}
+          <ScaleBar map={map} />
+          <CeilingNote ceiling={ceiling} />
+          {tiles.error && wantTiles ? (
+            <div className="note n-stop" style={{ marginTop: 8 }} role="alert" data-testid="tile-error">
+              <div style={{ flex: 1 }}>
+                <b>{tiles.error}</b> Routes, towers and the bee-line are drawn from the solve and are unaffected; the LULC, No-Go and
+                low-confidence overlays are unavailable until the tile server is fixed.
+              </div>
+              <button className="mini" onClick={tiles.retry}>Try again</button>
+            </div>
+          ) : null}
+          <div className="legend">
+            <div><i style={{ background: "#A33A31" }} />No-Go features</div>
+            {routes.map((r) => (
+              <div key={r.id}><i style={{ background: routeColour(r.id) }} />Route {r.id}</div>
+            ))}
+            <div><i style={{ background: "#D69A4E", borderRadius: "50%", width: 8, height: 8 }} />Angle tower</div>
+            <div><i style={{ background: "#fff", border: "1px solid #14202A", borderRadius: "50%", width: 8, height: 8 }} />Suspension tower</div>
+            <div><i style={{ background: "repeating-linear-gradient(90deg,var(--ink-2) 0 4px,transparent 4px 7px)" }} />Bee-line / band</div>
+          </div>
+          <div className="row" style={{ marginTop: 8, gap: 8 }}>
+            <span className="hint" style={{ margin: 0, flex: 1 }}>
+              Click a route to select it, a tower for its details. Tower labels appear from z14.
+            </span>
+            <button className="mini" onClick={() => nav(`/runs/${run.id}/layers`)}>Inspect layers at 0.5 m</button>
+          </div>
+        </div>
+        <div>
+          {feasible ? (
+            <>
+              <div className="eyebrow" style={{ marginBottom: 8 }}>Routes</div>
+              <div data-testid="route-cards">
+                {routes.map((r) => (
+                  <button key={r.id} className="routecard" aria-pressed={r.id === sel.id} onClick={() => select(r.id)}>
+                    <span className="swatch" style={{ background: routeColour(r.id) }} />
+                    <span>
+                      <span className="nm">Route {r.id} — {r.name}</span>
+                      <span className="sub">
+                        {num(r.stats.length_km, 1)} km · {int(r.stats.towers)} towers · {num(r.stats.forest_ha, 1)} ha forest
+                      </span>
+                    </span>
+                    <span className="cost">{crore(r.cost.total, { unit: false, digits: 1 })}<span>₹ Cr</span></span>
+                  </button>
+                ))}
+              </div>
+            </>
+          ) : null}
+          <div className="card" style={{ marginTop: 10 }}>
+            <div className="cb stack">
+              <div className="eyebrow">Where the data came from</div>
+              <div className="tw">
+                <table>
+                  <tbody>
+                    <tr><td>Auto-fetched</td><td className="mono" style={{ textAlign: "right" }}>{srcCounts.auto} layers</td></tr>
+                    <tr><td>Your files</td><td className="mono" style={{ textAlign: "right" }}>{srcCounts.replace} layers</td></tr>
+                    <tr><td>Supplemented</td><td className="mono" style={{ textAlign: "right" }}>{srcCounts.add} layers</td></tr>
+                    <tr><td>Mean confidence</td><td className="mono" style={{ textAlign: "right" }}>{meanConf === null ? "—" : meanConf.toFixed(2)}</td></tr>
+                  </tbody>
+                </table>
+              </div>
+              <div className="hint">Solve {s.id} · {s.manifest.ruleset_version} · {s.manifest.costs_version}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {feasible ? (
+        <>
+          <div className="kpis" style={{ marginTop: 14 }} data-testid="kpis">
+            <Kpi k="Length" v={num(sel.stats.length_km, 1)} unit="km" />
+            <Kpi k="Towers" v={int(sel.stats.towers)} />
+            <Kpi k="Angle points" v={int(sel.stats.angle_points)} />
+            <Kpi k="Crossings" v={int(sel.stats.crossings_total)} />
+            <Kpi k="Forest" v={num(sel.stats.forest_ha, 1)} unit="ha" />
+            <Kpi k="Cost" v={crore(sel.cost.total, { unit: false, digits: 1 })} unit="₹Cr" />
+          </div>
+          <CompareTable s={s} selId={sel.id} select={select} />
+          <RevisionCard run={run} cmp={cmp} selId={sel.id} prevOn={t.prev} togglePrev={() => tog("prev")} />
+          <div className="actions">
+            <button className="btn ghost" onClick={() => nav(`/runs/${run.id}/why`)}>Why this route?</button>
+            <button className="btn ghost" onClick={() => nav(`/runs/${run.id}/rules`)}>Change a constraint and re-solve</button>
+            <button className="btn" onClick={() => nav(`/runs/${run.id}/export`)}>Export</button>
+          </div>
+        </>
+      ) : null}
+
+      <CopyDialog
+        open={widen}
+        onClose={() => setWiden(false)}
+        run={run}
+        then="corridor"
+        defaultNote={`Widen the band beyond ± ${num(run.band_km, 0)} km`}
+        extra={
+          <Note kind="warn" style={{ marginBottom: 12 }}>
+            <b>Widening the band means extracting the layers again</b> over the new ground. In this version a copy keeps the layers, so its
+            corridor stays locked — the Corridor screen will show the server's refusal if you try. To widen now, start a <b>New route</b> with
+            the same end points and a wider band.
+          </Note>
+        }
+      />
+    </section>
+  );
+}
+
+function CompareTable({ s, selId, select }: { s: Solve; selId: number; select: (n: number) => void }) {
+  const routes = s.result.routes;
+  const cols = useMemo(() => {
+    const v = (f: (r: (typeof routes)[number]) => number) => Math.min(...routes.map(f));
+    return {
+      len: v((r) => r.stats.length_km),
+      vs: v((r) => r.stats.vs_beeline_pct),
+      ang: v((r) => r.stats.angle_points),
+      forest: v((r) => r.stats.forest_ha),
+      agri: v((r) => r.stats.agri_ha),
+      cross: v((r) => r.stats.crossings_total),
+      cost: v((r) => r.cost.total),
+    };
+  }, [routes]);
+  const b = (x: number, best: number) => (Math.abs(x - best) < 1e-9 ? "best" : "");
+  const n = routes.length;
+  const note = tradeOff(routes);
+  return (
+    <div className="card" style={{ marginTop: 14 }}>
+      <div className="ch">
+        <h3>Compare the {n === 4 ? "four" : n === 3 ? "three" : n === 2 ? "two" : n}</h3>
+        <span className="hint" style={{ marginLeft: "auto" }}>best value in each column marked · click a row to select</span>
+      </div>
+      <div className="tw">
+        <table className="cmp" data-testid="compare-table">
+          <thead>
+            <tr>
+              <th>Route</th>
+              <th>Optimises</th>
+              <th style={{ textAlign: "right" }}>Length</th>
+              <th style={{ textAlign: "right" }}>vs bee-line</th>
+              <th style={{ textAlign: "right" }}>Angle twr</th>
+              <th style={{ textAlign: "right" }}>Susp. twr</th>
+              <th style={{ textAlign: "right" }}>Forest</th>
+              <th style={{ textAlign: "right" }}>Agri</th>
+              <th style={{ textAlign: "right" }}>Crossings</th>
+              <th style={{ textAlign: "right" }}>Total cost</th>
+            </tr>
+          </thead>
+          <tbody>
+            {routes.map((r) => (
+              <tr key={r.id} className={r.id === selId ? "selrow" : ""} style={{ cursor: "pointer" }} onClick={() => select(r.id)}
+                tabIndex={0} onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && select(r.id)} aria-selected={r.id === selId}>
+                <td>
+                  <span className="swatch" style={{ background: routeColour(r.id), display: "inline-block", verticalAlign: "middle", marginRight: 7 }} />
+                  <b>Route {r.id}</b>
+                </td>
+                <td style={{ fontSize: 12.5 }}>{r.name}</td>
+                <td className={`mono ${b(r.stats.length_km, cols.len)}`} style={{ textAlign: "right" }}>{num(r.stats.length_km, 1)} km</td>
+                <td className={`mono ${b(r.stats.vs_beeline_pct, cols.vs)}`} style={{ textAlign: "right" }}>+{num(r.stats.vs_beeline_pct, 1)}%</td>
+                <td className={`mono ${b(r.stats.angle_points, cols.ang)}`} style={{ textAlign: "right" }}>{int(r.stats.angle_points)}</td>
+                <td className="mono" style={{ textAlign: "right" }}>{int(r.stats.suspension_towers)}</td>
+                <td className={`mono ${b(r.stats.forest_ha, cols.forest)}`} style={{ textAlign: "right" }}>{num(r.stats.forest_ha, 1)} ha</td>
+                <td className={`mono ${b(r.stats.agri_ha, cols.agri)}`} style={{ textAlign: "right" }}>{int(r.stats.agri_ha)} ha</td>
+                <td className={`mono ${b(r.stats.crossings_total, cols.cross)}`} style={{ textAlign: "right" }}>{int(r.stats.crossings_total)}</td>
+                <td className={`mono ${b(r.cost.total, cols.cost)}`} style={{ textAlign: "right" }}>{crore(r.cost.total)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="cb" style={{ borderTop: "1px solid var(--rule-2)" }}>
+        <Note kind="info">
+          Nothing here is a recommendation. {note} That trade-off belongs to the business, which is why the table sits next to the map
+          rather than behind it.
+        </Note>
+      </div>
+    </div>
+  );
+}
+
+function RevisionCard({
+  run,
+  cmp,
+  selId,
+  prevOn,
+  togglePrev,
+}: {
+  run: RunDetail;
+  cmp: ReturnType<typeof useCompare>["data"];
+  selId: number;
+  prevOn: boolean;
+  togglePrev: () => void;
+}) {
+  if (!run.parent_id || !cmp || !cmp.parent) return null;
+  const rows = cmp.rows?.find((r) => r.route === selId) ?? cmp.rows?.[0];
+  const fmt = (v: number | null, unit: string) => {
+    if (v === null || v === undefined) return "—";
+    if (unit === "₹ Cr") return `₹${num(v, 2)} Cr`;
+    if (unit === "km") return `${num(v, 2)} km`;
+    if (unit === "ha") return `${num(v, 1)} ha`;
+    return int(v);
+  };
+  const fmtD = (d: number | null, unit: string) => {
+    if (d === null || d === undefined) return "—";
+    const sgn = d > 0 ? "+" : d < 0 ? "−" : "±";
+    const a = Math.abs(d);
+    if (unit === "₹ Cr") return `${sgn}₹${num(a, 2)} Cr`;
+    if (unit === "km") return `${sgn}${num(a, 2)} km`;
+    if (unit === "ha") return `${sgn}${num(a, 1)} ha`;
+    return `${sgn}${int(a)}`;
+  };
+  return (
+    <div className="card" style={{ marginTop: 14, borderColor: "var(--accent-line)" }} data-testid="revision-card">
+      <div className="ch">
+        <h3>What changed since the last revision</h3>
+        <span className="pill p-chg" style={{ marginLeft: "auto" }}>rev {cmp.parent_rev ?? "?"} → rev {cmp.rev ?? run.rev}</span>
+      </div>
+      <div className="cb stack">
+        {rows ? (
+          <div className="tw">
+            <table>
+              <thead>
+                <tr>
+                  <th>Route {rows.route} — {rows.name}</th>
+                  <th style={{ textAlign: "right" }}>rev {cmp.parent_rev}</th>
+                  <th style={{ textAlign: "right" }}>rev {cmp.rev}</th>
+                  <th style={{ textAlign: "right" }}>Change</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.rows.map((r) => (
+                  <tr key={r.label}>
+                    <td>{r.label}</td>
+                    <td className="mono" style={{ textAlign: "right" }}>{fmt(r.prev, r.unit)}</td>
+                    <td className="mono" style={{ textAlign: "right" }}>{fmt(r.now, r.unit)}</td>
+                    <td className="mono" style={{ textAlign: "right", color: r.delta === null || r.delta === 0 ? undefined : r.delta < 0 ? "var(--go)" : "var(--nogo)" }}>
+                      {fmtD(r.delta, r.unit)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="hint">{cmp.parent} has not been solved, so there is nothing to compare numbers against yet.</p>
+        )}
+        <Note kind="ok">
+          <div>
+            <b>What changed in the inputs.</b>{" "}
+            {cmp.changes?.length ? (
+              <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
+                {cmp.changes.map((c) => (
+                  <li key={c}>{c}</li>
+                ))}
+              </ul>
+            ) : (
+              "Nothing — the inputs match the previous revision."
+            )}
+          </div>
+        </Note>
+        <div className="row" style={{ gap: 8 }}>
+          <button className="mini" aria-pressed={prevOn} onClick={togglePrev} disabled={!cmp.parent_routes?.length}>
+            {prevOn ? "Hide" : "Show"} rev {cmp.parent_rev} on the map
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Failure({ s, onWiden }: { s: Solve; onWiden: () => void }) {
+  const run = useRunCtx();
+  const nav = useNavigate();
+  const bl = s.result.blocked;
+  return (
+    <div data-testid="no-route">
+      <Note kind="stop" style={{ marginBottom: 14 }}>
+        <b>No route could be found inside the ± {num(run.band_km, 0)} km band.</b> {bl?.event?.text ?? ""}{" "}
+        {bl ? `The search reached km ${num(bl.reach_km, 1)} before the band closed.` : ""} The extraction is kept, so fixing this does not
+        mean starting over.
+      </Note>
+      <div className="card">
+        <div className="tw">
+          <table data-testid="blockers">
+            <thead>
+              <tr>
+                <th>Blocking constraint</th>
+                <th>Type</th>
+                <th>Where</th>
+                <th style={{ textAlign: "right" }}>Fix</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(bl?.blockers ?? []).map((b) => (
+                <tr key={b.rule_id}>
+                  <td>
+                    {b.rule} — {b.feature}
+                    <div className="hint">
+                      spans {b.band_cover_pct}% of the band width
+                      {b.source ? ` · ${b.source.layer_name}, ${b.source.mode}${b.source.confidence !== null ? ` ${b.source.confidence.toFixed(2)}` : ""}` : ""}
+                    </div>
+                  </td>
+                  <td>{b.statutory ? <span className="pill p-lock">Statutory</span> : <span className="pill p-nogo">No-Go</span>}</td>
+                  <td className="mono">km {num(b.from_km, 1)} – {num(b.to_km, 1)}</td>
+                  <td style={{ textAlign: "right" }}>
+                    <button className="mini" onClick={() => nav(`/runs/${run.id}/rules?q=${encodeURIComponent(b.rule)}`)}>
+                      Relax rule{b.statutory ? " (flagged)" : ""}
+                    </button>
+                  </td>
+                </tr>
+              ))}
+              <tr>
+                <td>Band too narrow to route around it</td>
+                <td><span className="pill p-cross">Band</span></td>
+                <td className="mono">{bl?.blockers[0] ? `km ${num(bl.blockers[0].from_km, 1)} – ${num(bl.blockers[0].to_km, 1)}` : "—"}</td>
+                <td style={{ textAlign: "right" }}>
+                  <button className="mini" onClick={onWiden}>Widen the band</button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <Note kind="info" style={{ marginTop: 14, marginBottom: 14 }}>
+        Relaxing a rule re-uses the extraction and re-solves in minutes; widening the band is the only fix that runs the vision models
+        again.
+      </Note>
+    </div>
+  );
+}
+

@@ -88,10 +88,13 @@ class Reporter:
         with db.conn() as c:
             c.execute("""update jobs set progress=%s, stage=coalesce(%s, stage), message=coalesce(%s, message),
                            eta_s=%s, heartbeat_at=now(),
-                           detail = case when %s::jsonb is null then detail else detail || %s::jsonb end
+                           detail = case when %s::jsonb is null then detail
+                                         else (detail || (%s::jsonb - 'layers')) || jsonb_build_object('layers',
+                                              coalesce(case when jsonb_typeof(detail->'layers') = 'object' then detail->'layers' end,
+                                                       '{}'::jsonb) || coalesce(%s::jsonb->'layers', '{}'::jsonb)) end
                          where id=%s""",
                       (frac, stage, message, eta, db.dumps(detail) if detail else None,
-                       db.dumps(detail) if detail else None, self.id))
+                       db.dumps(detail) if detail else None, db.dumps(detail) if detail else None, self.id))
 
     def cancelled(self) -> bool:
         r = db.one("select cancel_requested from jobs where id=%s", (self.id,))

@@ -91,7 +91,9 @@ def validate(a: tuple[float, float], b: tuple[float, float]) -> dict:
     if la["state"] and lb["state"]:
         checks.append({"ok": True, "text": "Corridor stays within one state" if single else
                        f"Corridor crosses states: {la['state']} → {lb['state']}"})
-    region_ok = (la["state"] or "").lower() == settings.REGION and (lb["state"] or "").lower() == settings.REGION
+    import unicodedata
+    norm = lambda v: unicodedata.normalize("NFKD", v or "").encode("ascii", "ignore").decode().lower().strip()
+    region_ok = norm(la["state"]) == norm(settings.REGION) and norm(lb["state"]) == norm(settings.REGION)
     return {"a": la, "b": lb, "checks": checks, "single_state": single, "beeline_km": dist,
             "region_supported": region_ok,
             "ok": ok_coords and bool(in_india) and dist is not None}
