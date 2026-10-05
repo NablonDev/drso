@@ -172,8 +172,8 @@ groups:
         params:
           - {key: setback_m, label: "Tower setback", type: num, unit: m, value: 50, best_guess: true}
 
-      # Rules 32-33, added 5 Oct 2026 with the LULC model layers. Values are placeholders
-      # pending AESL (falling-structure / blade-throw distance; road edge clearance).
+      # Rules 32-33, added 5 Oct 2026 with the LULC model layers. Values confirmed by Vivek as
+      # placeholders (5 Oct 2026) until AESL gives blade-throw / road-clearance distances.
       - id: wind_turbines
         name: "Wind turbine"
         note: "Tower and conductor kept clear of turbines (blade-throw / fall distance) — AESL to confirm"

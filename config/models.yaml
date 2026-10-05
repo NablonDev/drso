@@ -62,7 +62,10 @@ models:
     timeout_h: 4
     # S1 gate everywhere; NISAR gate only where a coherence raster is registered; the manual
     # reject step is replaced by drafter review (low-confidence flag on ungated detections)
-    params: {threshold: 0.50, min_area_ha: 0.05, vv_db_min: -10.10, coh_min: 0.337, s1_scenes: 8}
+    # conf_gated: new detection passing the SAR gates (~29% correct on the corridor without manual
+    # QA) -> drafter review; conf_unchecked: a gate could not be evaluated (Vivek, 5 Oct 2026)
+    params: {threshold: 0.50, min_area_ha: 0.05, vv_db_min: -10.10, coh_min: 0.337, s1_scenes: 8,
+             conf_gated: 0.30, conf_unchecked: 0.25}
 
   wind_turbines:
     layer: wind_turbines
@@ -73,4 +76,5 @@ models:
     gpu: true
     vram_mb: 24000
     timeout_h: 8
-    params: {thresh: 160, min_px: 15, nms_m: 95, osm_match_m: 60, gsd_m: 0.45}
+    # osm_match_m 100: detection points sit 50-100 m from the tower along the shadow (Vivek, 5 Oct 2026)
+    params: {thresh: 160, min_px: 15, nms_m: 95, osm_match_m: 100, gsd_m: 0.45}

@@ -295,7 +295,11 @@ def s1_vv(scenes, det4326, log=print):
 
 
 # ---- gates / confidence ----------------------------------------------------------------------
-CONF_OSM, CONF_GATED, CONF_REVIEW = 0.90, 0.75, 0.50
+# Vivek, 5 Oct 2026: without the manual reject step, new detections that pass the SAR gates
+# were ~29% correct on Bhuj–Lakadia (67 of 94 were rejected by hand) -> low confidence + review.
+# Ungated (not evaluable) ones rank below gated ones. Overridable via params conf_gated /
+# conf_unchecked in config/models.yaml.
+CONF_OSM, CONF_GATED, CONF_REVIEW = 0.90, 0.30, 0.25
 
 
 def _finite(x) -> bool:
@@ -305,16 +309,17 @@ def _finite(x) -> bool:
         return False
 
 
-def evaluate_gates(vv_db, coh, nisar_applicable, osm_matched, vv_db_min, coh_min):
+def evaluate_gates(vv_db, coh, nisar_applicable, osm_matched, vv_db_min, coh_min,
+                   conf_gated=None, conf_unchecked=None):
     """One detection -> dict(keep, confidence, review, gates, reason).
 
     S1 VV gate everywhere; NISAR gate only where a coherence raster covers the polygon.
       a gate that is evaluated and fails     -> dropped (kept in `rejected` with the reason),
                                                 OSM-matched or not (production gated TPs too)
       OSM-matched, no failed gate            -> 0.90
-      every applicable gate evaluated, pass  -> 0.75
+      every applicable gate evaluated, pass  -> 0.30, review = True
       an applicable gate not evaluable (no S1 pixels; NISAR registered but no valid pixel)
-                                             -> 0.50, review = True
+                                             -> 0.25, review = True
     Comparisons are inclusive (>=), as sA11. NaN / None / inf mean "not evaluable".
     """
     parts, fails, na = [], [], False
@@ -344,14 +349,16 @@ def evaluate_gates(vv_db, coh, nisar_applicable, osm_matched, vv_db_min, coh_min
     if osm_matched:
         return dict(keep=True, confidence=CONF_OSM, review=False, gates=gates, reason=None)
     if na:
-        return dict(keep=True, confidence=CONF_REVIEW, review=True, gates=gates, reason=None)
-    return dict(keep=True, confidence=CONF_GATED, review=False, gates=gates, reason=None)
+        return dict(keep=True, confidence=CONF_REVIEW if conf_unchecked is None else conf_unchecked,
+                    review=True, gates=gates, reason=None)
+    return dict(keep=True, confidence=CONF_GATED if conf_gated is None else conf_gated,
+                review=True, gates=gates, reason=None)
 
 
-def apply_gates(det, vv_db_min, coh_min):
+def apply_gates(det, vv_db_min, coh_min, conf_gated=None, conf_unchecked=None):
     """det has columns vv_db, coh, nisar_applicable, matches_osm -> adds confidence/review/
     gates/reject_reason/keep."""
-    rows = [evaluate_gates(v, c, bool(a), bool(m), vv_db_min, coh_min)
+    rows = [evaluate_gates(v, c, bool(a), bool(m), vv_db_min, coh_min, conf_gated, conf_unchecked)
             for v, c, a, m in zip(det["vv_db"], det["coh"], det["nisar_applicable"],
                                   det["matches_osm"])]
     det = det.copy()

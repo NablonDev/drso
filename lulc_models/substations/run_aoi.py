@@ -248,7 +248,8 @@ def main():
 
     # ---- gates, ids, outputs -------------------------------------------------------------
     common.progress(0.96, "gates")
-    det = sub_post.apply_gates(det, float(params["vv_db_min"]), float(params["coh_min"]))
+    det = sub_post.apply_gates(det, float(params["vv_db_min"]), float(params["coh_min"]),
+                               params.get("conf_gated"), params.get("conf_unchecked"))
     det["class"] = CLASS
     if len(det):
         c = det.geometry.representative_point()
