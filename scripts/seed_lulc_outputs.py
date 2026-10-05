@@ -118,6 +118,34 @@ def seed_plotted():
     print(f"plotted: {len(out):,} clusters", flush=True)
 
 
+def seed_plotted_corridor(work_dir: str):
+    """Add the Bhuj–Lakadia plotted-land run (plugin output in work_dir) to the statewide version."""
+    import json
+    from shapely.geometry import shape
+    cur_v = reference.current_version("plotted")
+    state, sm = reference.read_clip("plotted", box(60, 5, 100, 40), version=cur_v)
+    state = state[state["src_id"].astype(str).str.startswith("GJ-")] if len(state) else state
+    if "attrs" in state:      # read_clip packs extra columns; unpack for writing
+        ex = pd.DataFrame(list(state["attrs"]))
+        state = gpd.GeoDataFrame(pd.concat([state.drop(columns="attrs").reset_index(drop=True), ex], axis=1),
+                                 geometry="geometry", crs=4326)
+    c = pyogrio.read_dataframe(Path(work_dir) / "out.gpkg", layer="features")
+    res = json.loads((Path(work_dir) / "result.json").read_text())
+    c["src_id"] = "BL-" + c["src_id"].astype(str)
+    keep = ["class", "name", "confidence", "src_id", "n_plots", "area_ha", "built_pct", "built_class",
+            "vacant_plots_pct", "geometry"]
+    c = c[[k for k in keep if k in c]]
+    allg = gpd.GeoDataFrame(pd.concat([state, c], ignore_index=True), crs=4326)
+    cov = unary_union([reference.coverage_of(sm), shape(res["coverage"])])
+    reference.write_version("plotted", allg, VERSION + "-bl", {
+        "source": "Plotted land — statewide Gujarat minus Kachchh (Sep 2026) + Bhuj–Lakadia corridor run "
+                  "(5 Oct 2026, edge-fixed corridor roads, Google+MS buildings, WorldCover 2021 salt filter)",
+        "image_source": "derived from village roads (Esri Wayback z18) + Google/MS buildings + ESA WorldCover 2021",
+        "source_date": "2026-09-30", "model": "plotted-land-geometry", "model_version": "guj chord IDEAL=1",
+        "confidence": 0.61, "corridor_warnings": res.get("warnings")}, coverage=cov)
+    print(f"plotted: {len(state):,} statewide + {len(c):,} corridor clusters", flush=True)
+
+
 # ---- solar -------------------------------------------------------------------------------
 def seed_solar():
     g = pyogrio.read_dataframe("/mnt/drso-data/solar_lora/data/FINAL_solar_v2.gpkg", layer="SOLAR_FINAL_all")
@@ -219,7 +247,11 @@ SEEDERS = {"solar": seed_solar, "substations": seed_substations, "wind_turbines"
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--only", nargs="*")
+    ap.add_argument("--plotted-corridor", help="work_dir of a plotted_land plugin run on Bhuj–Lakadia")
     a = ap.parse_args()
+    if a.plotted_corridor:
+        seed_plotted_corridor(a.plotted_corridor)
+        return
     for k, fn in SEEDERS.items():
         if a.only and k not in a.only:
             continue
