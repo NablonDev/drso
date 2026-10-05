@@ -25,9 +25,11 @@ with psycopg.connect(ADMIN, autocommit=True) as _c:
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-from beeline_api import app as appmod, db, imagery, jobs, osm_power, solvejob, worker  # noqa: E402
+from beeline_api import app as appmod, cell_towers, db, imagery, jobs, osm_highways, osm_power, solvejob, worker  # noqa: E402
 
 FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "overpass_power_bhuj.json")
+HW_FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "overpass_highways_bhuj.json")   # 5 Oct 2026
+TS_FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "ts_towers_bhuj.parquet")   # 871 sites, Bhuj–Bhachau
 
 A = {"lat": 23.4525, "lon": 69.5924, "name": "Bhujpool"}
 B = {"lat": 23.3932, "lon": 70.5955, "name": "Shivlaka"}
@@ -41,8 +43,11 @@ def client():
     imagery.check = lambda frame, band: IMG          # no network in tests
     solvejob.settings.DEM_DIR = None                 # no DEM fetch
     osm_power._overpass = lambda q, timeout=300: json.load(open(FIXTURE))   # recorded Overpass answer
+    osm_highways._overpass = lambda q, timeout=300: json.load(open(HW_FIXTURE))
     with TestClient(appmod.app) as c:
         osm_power.refresh_aoi((69.50, 23.25, 70.10, 23.60))                  # seed the OSM power store
+        osm_highways.refresh_aoi((69.45, 23.15, 70.70, 23.70))               # seed the OSM highway store
+        cell_towers.load_india(TS_FIXTURE)                                   # seed the cell tower store
         yield c
 
 
@@ -162,7 +167,7 @@ def test_rules_and_costs_validation(client):
     assert r.json()["n_off"] == 1
     assert client.delete(f"/api/runs/{rid}/rules").json()["n_off"] == 0
     rules = client.get(f"/api/runs/{rid}/rules").json()
-    assert rules["n_rules"] == 30
+    assert rules["n_rules"] == 31
     r = client.put(f"/api/runs/{rid}/costs", json={"tower": {"rate_per_tonne_rs": "abc"}})
     assert r.status_code == 400
     r = client.put(f"/api/runs/{rid}/costs", json={"land": {"agri_land_cr_ha": -1}})
@@ -281,5 +286,111 @@ def test_osm_power_refresh_from_ui(client):
     assert found and found["properties"]["voltage_kv"] in (765, 400, 220, 132)
     ft = client.get(f"/api/runs/{rid}/features/{found['properties']['id']}").json()
     assert ft["attrs"]["voltage_kv"] == found["properties"]["voltage_kv"]
-    # a run that replaced the layer with its own file cannot refresh it from OSM
-    assert client.post(f"/api/runs/{rid}/layers/roads/refresh").status_code == 400
+    # a layer with no online source cannot be refreshed
+    assert client.post(f"/api/runs/{rid}/layers/rail/refresh").status_code == 400
+
+
+def test_cell_towers_layer_and_refresh(client):
+    rid = make_run(client)
+    client.post(f"/api/runs/{rid}/extract", json={})
+    assert run_next_job()["status"] == "done"
+    resp = client.get(f"/api/runs/{rid}/layers").json()
+    t = {l["key"]: l for l in resp["layers"]}["telecom"]
+    assert t["status"] == "done" and t["feature_count"] > 0 and t["image_source"] == "Tarang Sanchar"
+    assert set(t["stats"]["by_structure"]) <= {"Ground", "Roof", "Wall"}
+    assert sum(t["stats"]["by_structure"].values()) == t["feature_count"]
+    assert "Cell tower" in t["rules"] and t["refresh_label"] == "Tarang Sanchar"
+    # no machine source yet: the button is shown disabled, the endpoint refuses and starts nothing
+    assert t["refreshable"] and t["refresh_available"] is False and "OTP" in t["refresh_note"]
+    r = client.post(f"/api/runs/{rid}/layers/telecom/refresh")
+    assert r.status_code == 503 and "not available" in r.json()["detail"]
+    assert client.get("/api/jobs/active").json()["job"] is None
+    st = client.get("/api/telecom/towers").json()
+    assert st["refresh_available"] is False and st["loads"][0]["kind"] == "india"
+    # popup carries the Tarang Sanchar attributes
+    fid = db.one("""select f.id from features f join run_layers rl on rl.layer_version_id=f.layer_version_id
+                    where rl.run_id=%s and rl.layer_key='telecom' limit 1""", (rid,))["id"]
+    ft = client.get(f"/api/runs/{rid}/features/{fid}").json()
+    assert ft["class"] == "cell_tower" and ft["attrs"]["structure"] in ("Ground", "Roof", "Wall") and ft["attrs"]["site_id"]
+
+    # once a source is plugged in, the refresh path is the same as OSM power
+    from shapely.geometry import shape
+    c = shape(resp["band"]).centroid
+    fetched = [{"site_id": "T-1", "structure": "ground", "lon": c.x, "lat": c.y, "operator": "X"},
+               {"site_id": "T-2", "structure": "Roof", "lon": c.x + 0.001, "lat": c.y},
+               {"site_id": "FAR", "structure": "Ground", "lon": 80.0, "lat": 20.0}]          # outside: dropped
+    cell_towers.FETCHER = lambda bbox: (fetched, None)
+    try:
+        j = client.post(f"/api/runs/{rid}/layers/telecom/refresh")
+        assert j.status_code == 202, j.text
+        assert client.post(f"/api/runs/{rid}/layers/telecom/refresh").status_code == 409
+        assert client.post(f"/api/runs/{rid}/solve").status_code == 409
+        done = run_next_job()
+        assert done["status"] == "done" and list(done["detail"]["result"]) == ["telecom"]
+        t2 = {l["key"]: l for l in client.get(f"/api/runs/{rid}/layers").json()["layers"]}["telecom"]
+        assert t2["layer_version_id"] != t["layer_version_id"] and "refreshed for this area" in t2["source"]
+        assert t2["feature_count"] == 2 and t2["stats"]["by_structure"] == {"Ground": 1, "Roof": 1}
+        assert t2["stats"]["refresh"]["replaced"] >= t["feature_count"]
+        st = client.get("/api/telecom/towers").json()
+        assert st["loads"][0]["run_id"] == rid and st["loads"][0]["kind"] == "aoi" and st["loads"][0]["status"] == "done"
+    finally:
+        cell_towers.FETCHER = None
+        cell_towers.load_india(TS_FIXTURE)        # restore the store for later tests
+
+
+def test_highway_classification():
+    c = osm_highways.classify
+    assert c({"highway": "trunk", "ref": "NH27"}, [("nh", "NH")]) == [("nh", "NH 27", False)]
+    assert c({"highway": "primary", "ref": "NH341;SH45"}) == [("nh", "NH 341", False), ("sh", "SH 45", False)]
+    assert c({"highway": "trunk"}) == [("nh", None, True)]                      # untagged trunk = NH, inferred
+    assert c({"highway": "primary"}) == [] and c({"highway": "trunk_link", "ref": "NH27"}) == []
+    rel = osm_highways.relation_class({"route": "road", "network": "IN:NH", "ref": "341"})
+    assert rel == ("nh", "NH 341") and c({"highway": "secondary"}, [rel]) == [("nh", "NH 341", False)]
+    assert osm_highways.relation_class({"route": "road", "network": "IN:SH:GJ", "ref": "SH__"}) == ("sh", "SH")
+    assert osm_highways.parse_refs("NE4") == {"nh": ["NE 4"]} and osm_highways.parse_refs("MDR 12") == {}
+
+
+def test_osm_highways_refresh_from_ui(client):
+    rid = make_run(client)
+    client.post(f"/api/runs/{rid}/extract", json={})
+    assert run_next_job()["status"] == "done"
+    L = {l["key"]: l for l in client.get(f"/api/runs/{rid}/layers").json()["layers"]}
+    h = L["roads"]
+    assert h["name"].startswith("Highways") and h["refresh_label"] == "OSM" and h["refresh_available"]
+    assert h["status"] == "done" and h["feature_count"] > 0 and h["image_source"] == "OpenStreetMap"
+    assert set(h["stats"]["by_class"]) <= {"nh", "sh", "nh_inferred"} and h["stats"]["by_class"].get("nh")
+    assert "National highway" in h["rules"]
+    j = client.post(f"/api/runs/{rid}/layers/roads/refresh")
+    assert j.status_code == 202, j.text
+    assert client.post(f"/api/runs/{rid}/layers/roads/refresh").status_code == 409
+    assert client.post(f"/api/runs/{rid}/solve").status_code == 409
+    done = run_next_job()
+    assert done["status"] == "done" and list(done["detail"]["result"]) == ["roads"]
+    h2 = {l["key"]: l for l in client.get(f"/api/runs/{rid}/layers").json()["layers"]}["roads"]
+    assert h2["layer_version_id"] != h["layer_version_id"] and "refreshed for this area" in h2["source"]
+    assert h2["stats"]["refresh"]["load_id"] and h2["stats"]["refresh"]["replaced"] > 0
+    st = client.get("/api/osm/highways").json()
+    assert st["loads"][0]["run_id"] == rid and st["loads"][0]["kind"] == "aoi"
+    # the popup names the highway
+    fid = db.one("""select f.id from features f join run_layers rl on rl.layer_version_id=f.layer_version_id
+                    where rl.run_id=%s and rl.layer_key='roads' and f.class='nh' and f.attrs->>'ref' is not null
+                    limit 1""", (rid,))["id"]
+    ft = client.get(f"/api/runs/{rid}/features/{fid}").json()
+    assert ft["attrs"]["ref"].startswith(("NH ", "NE ")) and ft["attrs"]["road_class"] == "nh"
+
+
+def test_overpass_retries_busy_mirror_before_moving_on(monkeypatch):
+    calls = []
+
+    class R:
+        def __init__(self, code):
+            self.status_code = code
+
+        def json(self):
+            return {"elements": []}
+
+    answers = iter([504, 504, 200])
+    monkeypatch.setattr(osm_power.httpx, "post", lambda url, **kw: calls.append(url) or R(next(answers)))
+    monkeypatch.setattr(osm_power.time, "sleep", lambda s: None)
+    assert osm_power.overpass_query("[out:json];") == {"elements": []}
+    assert calls == [osm_power.OVERPASS_URLS[0]] * 3          # stayed on the first mirror

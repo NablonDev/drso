@@ -21,7 +21,7 @@ import pandas as pd
 
 from beeline_engine.config import LineSpec, load_layers, resolve_rules
 
-from . import db, imagery, layers, models, osm_power, reference, settings, uploads
+from . import cell_towers, db, imagery, layers, models, osm_highways, osm_power, reference, settings, uploads
 from .derive import derive_clusters
 from .geo import band_polygon
 from .jobs import Cancelled, Reporter
@@ -131,7 +131,7 @@ def _extract_one(run, k, lay, mode, src, band, img, rules, progress, rep):
                         model="cluster-derive", model_version="1.0", confidence=lay.get("default_confidence"),
                         image_source=(bmeta or {}).get("image_source"), image_date=(bmeta or {}).get("image_date"))
         elif lay["producer"] == "osm":
-            if (rep.job.get("detail") or {}).get("refresh_osm"):
+            if _refresh_requested(rep):
                 minx, miny, maxx, maxy = band.bounds
                 res = osm_power.refresh_aoi((minx, miny, maxx, maxy), run_id=run["id"],
                                             progress=lambda f, st: progress(0.8 * f))
@@ -143,7 +143,35 @@ def _extract_one(run, k, lay, mode, src, band, img, rules, progress, rep):
                                         "load-india) or press Refresh from OSM for this run")
             meta.update(source=om["source"], image_source="OpenStreetMap", image_date=om["osm_timestamp"],
                         model=None, model_version=None, confidence=lay.get("default_confidence"))
-            meta["stats_extra"] = om["counts"]
+            meta["stats_extra"] = {"by_voltage": om["counts"]}
+        elif lay["producer"] == "osm_highways":
+            if _refresh_requested(rep):
+                minx, miny, maxx, maxy = band.bounds
+                res = osm_highways.refresh_aoi((minx, miny, maxx, maxy), run_id=run["id"],
+                                               progress=lambda f, st: progress(0.8 * f))
+                meta["refresh"] = res
+            auto_gdf, hm = osm_highways.read_band(band)
+            auto_cov = None
+            if not hm["india_loaded"] and not hm["last_refresh"]:
+                raise FileNotFoundError("OSM highway store is empty — load India (python -m beeline_api.osm_highways "
+                                        "load-india) or press Refresh from OSM for this run")
+            meta.update(source=hm["source"], image_source="OpenStreetMap", image_date=hm["osm_timestamp"],
+                        model=None, model_version=None, confidence=lay.get("default_confidence"))
+            meta["stats_extra"] = {"by_class": hm["counts"]}
+        elif lay["producer"] == "tarangsanchar":
+            if _refresh_requested(rep):
+                minx, miny, maxx, maxy = band.bounds
+                res = cell_towers.refresh_aoi((minx, miny, maxx, maxy), run_id=run["id"],
+                                              progress=lambda f, st: progress(0.8 * f))
+                meta["refresh"] = res
+            auto_gdf, tm = cell_towers.read_band(band)
+            auto_cov = None
+            if not tm["india_loaded"] and not tm["last_refresh"]:
+                raise FileNotFoundError("Cell tower store is empty — load India (python -m beeline_api.cell_towers "
+                                        "load-india)")
+            meta.update(source=tm["source"], image_source="Tarang Sanchar", image_date=tm["data_date"],
+                        model=None, model_version=None, confidence=lay.get("default_confidence"))
+            meta["stats_extra"] = {"by_structure": tm["counts"]}
         elif lay["producer"] == "model":
             plugin = models.get(lay["model"])
             ctx = models.ModelContext(layer_key=k, band=band, imagery=img or {}, progress=progress, cancelled=rep.cancelled)
@@ -188,6 +216,11 @@ def _extract_one(run, k, lay, mode, src, band, img, rules, progress, rep):
     meta["source"] = f"{meta.get('source')} + your file {upr['filename']} (yours wins)"
     meta["file_name"] = upr["filename"]
     return merged, meta, auto_cov.union(band) if auto_cov is not None else band
+
+
+def _refresh_requested(rep) -> bool:
+    d = rep.job.get("detail") or {}
+    return bool(d.get("refresh") or d.get("refresh_osm"))      # refresh_osm: jobs queued before the rename
 
 
 def _current_layer(run_id: str, key: str) -> gpd.GeoDataFrame | None:

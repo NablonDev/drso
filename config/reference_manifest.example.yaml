@@ -15,13 +15,15 @@ layers:
     name_field: null
     source: "Forest boundaries delivery"
     source_date: null
-  roads:
-    - path: "Highways/India_National_Highways_GatiShakti.gpkg"
-      const_class: nh
-      source: "PM GatiShakti national highways"
-    - path: "Highways/India_State_Highways_OSM.gpkg"
-      const_class: sh
-      source: "OSM state highways"
+  # roads: now sourced from the OSM highway store (beeline_api/osm_highways), not the reference
+  # store. The GatiShakti NH file can still be attached to a run with "Add more" on Data sources.
+  # roads:
+  #   - path: "Highways/India_National_Highways_GatiShakti.gpkg"
+  #     const_class: nh
+  #     source: "PM GatiShakti national highways"
+  #   - path: "Highways/India_State_Highways_OSM.gpkg"
+  #     const_class: sh
+  #     source: "OSM state highways"
   rail:
     path: "Railway Stations and Lines/gujarat_railway_stations.gpkg"
     layer: null            # pick the lines layer, not the stations layer

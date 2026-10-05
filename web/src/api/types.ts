@@ -193,7 +193,7 @@ export interface LayerConfig {
   key: string;
   name: string;
   kind: "polygon" | "line" | "point" | "any";
-  producer: "model" | "derived" | "reference";
+  producer: "model" | "derived" | "reference" | "osm" | "tarangsanchar";
   model?: string;
   imagery?: string;
   derived_from?: string;
@@ -228,8 +228,13 @@ export interface RunLayer {
   producer: string;
   configured_producer?: string;
   extracted_producer?: string;
-  /** the layer has an online source (OSM) that "Refresh" re-pulls for the run's area */
+  /** the layer has an online source (OSM, Tarang Sanchar) that "Refresh" re-pulls for the run's area */
   refreshable?: boolean;
+  /** source name for the button: "Refresh from {refresh_label}" */
+  refresh_label?: string | null;
+  /** false when this deployment cannot reach the source; refresh_note says why */
+  refresh_available?: boolean;
+  refresh_note?: string | null;
   minutes_per_km2: number | null;
   rules: string[];
   source_setting: SourceSetting;
@@ -255,7 +260,11 @@ export interface RunLayer {
     classes?: Record<string, number>;
     /** OSM power: counts keyed "line_765", "tower_400" … */
     by_voltage?: Record<string, number>;
-    refresh?: { load_id: number; osm_timestamp: string; replaced?: number } & Record<string, number | string>;
+    /** cell towers: counts keyed by structure type "Ground", "Roof", "Wall" */
+    by_structure?: Record<string, number>;
+    /** OSM highways: counts keyed "nh", "sh", "nh_inferred" */
+    by_class?: Record<string, number>;
+    refresh?: { load_id: number; osm_timestamp?: string; data_date?: string; replaced?: number } & Record<string, number | string>;
   } | null;
   created_at?: string;
   extracted_in?: string;

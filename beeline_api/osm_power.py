@@ -36,6 +36,7 @@ KEEP_TAGS = ("name", "ref", "operator", "owner", "circuits", "cables", "voltage"
 GEOFABRIK_URL = "https://download.geofabrik.de/asia/india-latest.osm.pbf"
 GEOFABRIK_STATE = "https://download.geofabrik.de/asia/india-updates/state.txt"
 OVERPASS_URLS = settings.OVERPASS_URLS
+QUICK_RETRIES = 3          # same-mirror retries on a busy answer (429/502/503/504)
 OSM_DIR = settings.DATA / "osm"
 
 SCHEMA = """
@@ -161,9 +162,8 @@ def _pbf_timestamp(pbf: Path) -> datetime | None:
         return None
 
 
-def load_india(pbf: Path | None = None, progress=None) -> dict:
-    import osmium
-    init_schema()
+def ensure_india_pbf(pbf: Path | None = None) -> Path:
+    """The Geofabrik India extract in the bucket (downloaded once, shared by every OSM store)."""
     OSM_DIR.mkdir(parents=True, exist_ok=True)
     pbf = Path(pbf) if pbf else OSM_DIR / "india-latest.osm.pbf"
     if not pbf.exists():
@@ -176,7 +176,18 @@ def load_india(pbf: Path | None = None, progress=None) -> dict:
                 for chunk in r.iter_bytes(1 << 22):
                     f.write(chunk)
         tmp.rename(pbf)
-    ts = _pbf_timestamp(pbf) or _osm_timestamp_from_state()
+    return pbf
+
+
+def india_timestamp(pbf: Path) -> datetime | None:
+    return _pbf_timestamp(pbf) or _osm_timestamp_from_state()
+
+
+def load_india(pbf: Path | None = None, progress=None) -> dict:
+    import osmium
+    init_schema()
+    pbf = ensure_india_pbf(pbf)
+    ts = india_timestamp(pbf)
     filtered = OSM_DIR / "india-power.osm.pbf"
     subprocess.run(["osmium", "tags-filter", str(pbf), "w/power=line", "n/power=tower", "-o", str(filtered),
                     "--overwrite"], check=True)
@@ -224,17 +235,32 @@ def load_india(pbf: Path | None = None, progress=None) -> dict:
 
 # ---- AOI refresh (Overpass) -------------------------------------------------------------
 def _overpass(query: str, timeout: int = 300) -> dict:
+    return overpass_query(query, timeout)
+
+
+def overpass_query(query: str, timeout: int = 300) -> dict:
+    """POST an Overpass QL query, trying each mirror, three rounds with back-off.
+
+    overpass-api.de balances over several backends and one can answer 504 within seconds while
+    the next call succeeds (~1 in 6, 5 Oct 2026), so a busy answer is retried on the same mirror
+    a few times before moving to a slower one.
+    """
     last = None
     for attempt in range(3):
         for url in OVERPASS_URLS:
-            try:
-                r = httpx.post(url, data={"data": query}, timeout=timeout + 60,
-                               headers={"User-Agent": settings.HTTP_UA})
-                if r.status_code == 200:
-                    return r.json()
-                last = f"{url} -> HTTP {r.status_code}"
-            except (httpx.HTTPError, ValueError) as e:
-                last = f"{url} -> {type(e).__name__}: {e}"
+            for quick in range(QUICK_RETRIES + 1):
+                try:
+                    r = httpx.post(url, data={"data": query}, timeout=timeout + 60,
+                                   headers={"User-Agent": settings.HTTP_UA})
+                    if r.status_code == 200:
+                        return r.json()
+                    last = f"{url} -> HTTP {r.status_code}"
+                    if r.status_code not in (429, 502, 503, 504):
+                        break
+                except (httpx.HTTPError, ValueError) as e:
+                    last = f"{url} -> {type(e).__name__}: {e}"
+                    break
+                time.sleep(2 * (quick + 1))
         time.sleep(10 * (attempt + 1))
     raise RuntimeError(f"Overpass unavailable ({last})")
 

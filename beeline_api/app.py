@@ -676,6 +676,7 @@ def run_layers(run_id: str):
         x = have.get(l["key"])
         item = {"key": l["key"], "name": l["name"], "desc": l.get("desc"), "producer": l["producer"],
                 "configured_producer": l["producer"], "refreshable": bool(l.get("refreshable")),
+                "refresh_label": l.get("refresh_label"), **_refresh_state(l),
                 "minutes_per_km2": l.get("minutes_per_km2"), "rules": rules_by_layer.get(l["key"], []),
                 "source_setting": src.get(l["key"], {"mode": "auto"}), "extracted": x is not None}
         if x:
@@ -717,11 +718,27 @@ def refresh_layer(run_id: str, layer_key: str):
         raise HTTPException(404, f"unknown layer {layer_key}")
     if not reg[layer_key].get("refreshable"):
         raise HTTPException(400, f"{reg[layer_key]['name']} has no online source to refresh from")
+    lay = reg[layer_key]
+    label = lay.get("refresh_label") or "its source"
+    st = _refresh_state(lay)
+    if not st["refresh_available"]:
+        raise HTTPException(503, f"{lay['name']}: refresh from {label} is not available — {st['refresh_note']}")
     src = (_run(run_id)["sources"] or {}).get(layer_key, {"mode": "auto"})
     if src.get("mode") == "replace":
-        raise HTTPException(400, f"{reg[layer_key]['name']} uses your file (Replace); switch it to Auto-fetch or Add more to refresh from OSM")
-    j = jobs.start(run_id, "extract", {"requested": [layer_key], "refresh_osm": True})
+        raise HTTPException(400, f"{lay['name']} uses your file (Replace); switch it to Auto-fetch or Add more to refresh from {label}")
+    j = jobs.start(run_id, "extract", {"requested": [layer_key], "refresh": True})
     return _job_json(j)
+
+
+def _refresh_state(lay: dict) -> dict:
+    """Whether a refreshable layer's online source can be reached by this deployment."""
+    if not lay.get("refreshable"):
+        return {"refresh_available": False, "refresh_note": None}
+    if lay["producer"] == "tarangsanchar":
+        from . import cell_towers
+        ok = cell_towers.refresh_available()
+        return {"refresh_available": ok, "refresh_note": None if ok else cell_towers.REFRESH_PENDING}
+    return {"refresh_available": True, "refresh_note": None}
 
 
 @app.get("/api/osm/power")
@@ -730,6 +747,28 @@ def osm_power_status():
     st = osm_power.status()
     for l in st["loads"]:
         for k in ("osm_timestamp", "started_at", "finished_at"):
+            if l.get(k) is not None:
+                l[k] = l[k].isoformat()
+    return st
+
+
+@app.get("/api/osm/highways")
+def osm_highways_status():
+    from . import osm_highways
+    st = osm_highways.status()
+    for l in st["loads"]:
+        for k in ("osm_timestamp", "started_at", "finished_at"):
+            if l.get(k) is not None:
+                l[k] = l[k].isoformat()
+    return st
+
+
+@app.get("/api/telecom/towers")
+def cell_towers_status():
+    from . import cell_towers
+    st = cell_towers.status()
+    for l in st["loads"]:
+        for k in ("data_date", "started_at", "finished_at"):
             if l.get(k) is not None:
                 l[k] = l[k].isoformat()
     return st

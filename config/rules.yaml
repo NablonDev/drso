@@ -1,4 +1,4 @@
-# Default rule set — 29 rules, five groups (the prototype's Rules screen).
+# Default rule set — 29 prototype rules + 2 added (protected areas, cell towers), five groups (the prototype's Rules screen).
 #
 # Every value tagged best_guess: true is a placeholder pending AESL confirmation.
 # A parameter value is either a scalar or a per-voltage map {765, 400, 220, 132}.
@@ -158,6 +158,17 @@ groups:
           - {key: tower_setback_m, label: "Tower buffer", type: num, unit: m, value: 0}
           - {key: conductor_buffer_m, label: "Conductor buffer", type: num, unit: m, value: 0}
           - {key: treatment, label: "Treatment", type: sel, value: "No-Go", options: ["No-Go", "Allowed"]}
+
+      # Not in the prototype's 29; added 5 Oct 2026 with the Tarang Sanchar cell tower layer.
+      # Counted as rule 31. No regulation found — the setback is a falling-structure placeholder.
+      - id: cell_towers
+        name: "Cell tower"
+        note: "Tower kept clear of mobile tower sites (Tarang Sanchar) — distance pending AESL"
+        layer: telecom
+        classes: [cell_tower]
+        mechanism: tower_setback
+        params:
+          - {key: setback_m, label: "Tower setback", type: num, unit: m, value: 50, best_guess: true}
 
   - key: cross
     title: "Crossings"

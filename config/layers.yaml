@@ -6,6 +6,11 @@
 #                model      -> produced by a LULC model over imagery (stub in v1: reads the
 #                              reference gpkg and stamps model + imagery provenance)
 #                derived    -> computed from another layer (clusters from buildings)
+#                osm        -> PostGIS store of OSM power lines/towers (beeline_api/osm_power)
+#                osm_highways -> PostGIS store of OSM national / state highways (beeline_api/osm_highways)
+#                tarangsanchar -> PostGIS store of DoT mobile tower sites (beeline_api/cell_towers)
+# refreshable    the layer has an online source the review screen can re-pull for the run's
+#                area ("Refresh from <refresh_label>")
 # model          plugin name in beeline_api/models (model producers only)
 # imagery        which imagery product the model reads (provenance only in v1)
 # classes        Beeline class vocabulary for this layer; the attribute-mapping screen maps
@@ -80,7 +85,19 @@ layers:
     default_confidence: 0.85
     voltages: [765, 400, 220, 132]
     refreshable: true
+    refresh_label: OSM
     classes: [power_line, power_tower]
+
+  - key: telecom
+    name: "Cell towers"
+    kind: point
+    producer: tarangsanchar
+    desc: "Tarang Sanchar (DoT) mobile tower sites · ground, roof and wall"
+    minutes_per_km2: 0.002
+    default_confidence: 0.80
+    refreshable: true
+    refresh_label: Tarang Sanchar
+    classes: [cell_tower]
 
   - key: plotted
     name: "Plotted land"
@@ -93,14 +110,17 @@ layers:
     default_confidence: 0.61
     classes: [plotted_land]
 
+  # Key stays "roads" so the national-highway rule and saved runs keep working.
   - key: roads
-    name: "Roads — NH, SH, MDR"
+    name: "Highways — NH, SH"
     kind: line
-    producer: reference
-    desc: "Cached — Geosadak + OSM, centreline aligned"
+    producer: osm_highways
+    desc: "OpenStreetMap national and state highways · ref + IN:NH / IN:SH relations"
     minutes_per_km2: 0.002
-    default_confidence: 0.97
-    classes: [mdr, nh, sh]
+    default_confidence: 0.90
+    refreshable: true
+    refresh_label: OSM
+    classes: [nh, sh]
 
   - key: rail
     name: "Railway and metro"

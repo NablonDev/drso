@@ -33,7 +33,7 @@ def create_version(run_id: str, layer_key: str, mode: str, producer: str, meta: 
     if gdf is not None and len(gdf):
         stats["classes"] = {str(k): int(v) for k, v in gdf["class"].value_counts().items()}
     if meta.get("stats_extra"):
-        stats["by_voltage"] = meta["stats_extra"]
+        stats.update(meta["stats_extra"])     # e.g. {"by_voltage": {...}}, {"by_structure": {...}}
     if meta.get("refresh"):
         stats["refresh"] = meta["refresh"]
     row = db.one("""insert into layer_versions (run_id, layer_key, mode, producer, source, file_name, model, model_version,

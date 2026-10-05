@@ -14,6 +14,7 @@ import {
   geomCoords,
   LAYER_COLOURS,
   VOLTAGE_COLOURS,
+  HIGHWAY_COLOURS,
   LAYER_ORDER,
   layerIds,
   LULC_CLASSES,
@@ -66,6 +67,40 @@ function VoltageLegend({ counts }: { counts: Record<string, number> }) {
           {v.kv} kV {int(counts[`line_${v.kv}`] ?? 0)}/{int(counts[`tower_${v.kv}`] ?? 0)}
         </span>
       ))}
+    </span>
+  );
+}
+
+function HighwayLegend({ counts }: { counts: Record<string, number> }) {
+  return (
+    <span style={{ display: "flex", flexWrap: "wrap", gap: "2px 8px", marginTop: 3 }} data-testid="highway-legend">
+      {HIGHWAY_COLOURS.map((h) => {
+        const inferred = counts[`${h.cls}_inferred`] ?? 0;
+        return (
+          <span key={h.cls} className="mono" style={{ fontSize: 10.5, color: "var(--ink-3, #777)" }}>
+            <i style={{ display: "inline-block", width: 10, height: 3, background: h.colour, verticalAlign: "middle", marginRight: 3 }} />
+            {h.label} {int((counts[h.cls] ?? 0) + inferred)}
+            {inferred ? <span title="highway=trunk / motorway with no NH ref — counted as NH"> ({int(inferred)} inferred)</span> : null}
+          </span>
+        );
+      })}
+    </span>
+  );
+}
+
+function refreshTitle(l: RunLayer): string {
+  const src = l.refresh_label ?? "its source";
+  if (l.refresh_available === false) return l.refresh_note ?? `Refresh from ${src} is not available on this deployment`;
+  const at = l.stats?.refresh?.osm_timestamp ?? l.stats?.refresh?.data_date;
+  return at ? `Last refreshed from ${src} ${when(at)}` : `Pull this area again from ${src}`;
+}
+
+function StructureCounts({ counts }: { counts: Record<string, number> }) {
+  const order = ["Ground", "Roof", "Wall"];
+  const keys = [...order.filter((k) => k in counts), ...Object.keys(counts).filter((k) => !order.includes(k))];
+  return (
+    <span className="mono" style={{ display: "block", fontSize: 10.5, color: "var(--ink-3, #777)", marginTop: 3 }} data-testid="structure-counts">
+      {keys.map((k) => `${k.toLowerCase()} ${int(counts[k])}`).join(" · ")}
     </span>
   );
 }
@@ -418,6 +453,8 @@ function Body({ L }: { L: LayersResponse }) {
                           {l.extracted && l.confidence !== null && l.confidence !== undefined ? ` · ${l.confidence.toFixed(2)}` : ""}
                         </em>
                         {l.key === "power" && l.stats?.by_voltage ? <VoltageLegend counts={l.stats.by_voltage} /> : null}
+                        {l.key === "roads" && l.stats?.by_class ? <HighwayLegend counts={l.stats.by_class} /> : null}
+                        {l.stats?.by_structure && Object.keys(l.stats.by_structure).length ? <StructureCounts counts={l.stats.by_structure} /> : null}
                       </span>
                     </label>
                     {emptyL || !l.extracted ? (
@@ -550,11 +587,11 @@ function Body({ L }: { L: LayersResponse }) {
                           className="mini"
                           style={{ marginLeft: 6 }}
                           data-testid={`refresh-${l.key}`}
-                          disabled={Boolean(run.job) || refresh.isPending}
-                          title={l.stats?.refresh ? `Last refreshed from OSM ${when(l.stats.refresh.osm_timestamp)}` : "Pull this area again from OpenStreetMap"}
+                          disabled={Boolean(run.job) || refresh.isPending || l.refresh_available === false}
+                          title={refreshTitle(l)}
                           onClick={() => refresh.mutate(l.key)}
                         >
-                          {refresh.isPending ? "Starting…" : "Refresh from OSM"}
+                          {refresh.isPending && refresh.variables === l.key ? "Starting…" : `Refresh from ${l.refresh_label ?? "source"}`}
                         </button>
                       ) : null}
                     </td>

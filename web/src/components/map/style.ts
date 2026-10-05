@@ -15,6 +15,7 @@ export const LAYER_COLOURS: Record<string, string> = {
   roads: "#8C8274",
   rail: "#46596A",
   power: "#7A5EA8",
+  telecom: "#2BB0A6",
   pipelines: "#B07A2A",
   wetlands: "#4E8C7A",
   aviation: "#9E6811",
@@ -32,6 +33,19 @@ export const VOLTAGE_COLOURS: { kv: number; colour: string }[] = [
   { kv: 220, colour: "#3FA7D6" },
   { kv: 132, colour: "#B28DFF" },
 ];
+
+/** Highway class colours (OSM highways, the roads layer). */
+export const HIGHWAY_COLOURS: { cls: string; label: string; colour: string }[] = [
+  { cls: "nh", label: "NH", colour: "#F4C430" },
+  { cls: "sh", label: "SH", colour: "#E8875B" },
+];
+
+function highwayColour(fallback: string): ExpressionSpecification {
+  const m: unknown[] = ["match", ["get", "class"]];
+  for (const h of HIGHWAY_COLOURS) m.push(h.cls, h.colour);
+  m.push(fallback);
+  return m as ExpressionSpecification;
+}
 
 function voltageColour(fallback: string): ExpressionSpecification {
   const m: unknown[] = ["match", ["coalesce", ["get", "voltage_kv"], 0]];
@@ -77,6 +91,7 @@ export const LAYER_ORDER = [
   "rail",
   "pipelines",
   "power",
+  "telecom",
   "monuments",
 ];
 
@@ -90,6 +105,7 @@ export const DEFAULT_ON = new Set([
   "roads",
   "rail",
   "power",
+  "telecom",
   "wetlands",
   "substations",
   "solar",
@@ -185,8 +201,8 @@ export function addRunLayers(map: maplibregl.Map, runId: string, opts: { before?
         filter: IS_LINE,
         layout: { "line-cap": "round", "line-join": "round" },
         paint: {
-          "line-color": key === "power" ? voltageColour(c) : c,
-          "line-width": ["case", ["boolean", ["feature-state", "sel"], false], 5, key === "water" ? 3 : key === "rail" ? 2.4 : 2.2],
+          "line-color": key === "power" ? voltageColour(c) : key === "roads" ? highwayColour(c) : c,
+          "line-width": ["case", ["boolean", ["feature-state", "sel"], false], 5, key === "water" ? 3 : key === "rail" ? 2.4 : key === "roads" ? ["match", ["get", "class"], "nh", 3.2, 2.2] : 2.2],
           "line-opacity": 0.95,
           ...(key === "rail" ? { "line-dasharray": [3, 2] } : key === "pipelines" ? { "line-dasharray": [1, 2] } : {}),
         },

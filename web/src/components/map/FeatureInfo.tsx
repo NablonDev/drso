@@ -36,6 +36,28 @@ export default function FeatureInfo({ runId, fid, layerName }: { runId: string; 
                 </td>
               </tr>
             ) : null}
+            {f.attrs?.road_class ? (
+              <tr>
+                <td>Highway</td>
+                <td className="mono">
+                  {f.attrs.ref ? String(f.attrs.ref) : String(f.attrs.road_class).toUpperCase()}
+                  {f.attrs.highway ? ` · ${f.attrs.highway}` : ""}
+                  {f.attrs.lanes ? ` · ${f.attrs.lanes} lanes` : ""}
+                  {f.attrs.bridge && f.attrs.bridge !== "no" ? " · bridge" : ""}
+                  {f.attrs.inferred ? <div className="hint">Inferred NH — {String(f.attrs.inferred)}</div> : null}
+                  {f.attrs.name && f.attrs.name !== f.attrs.ref ? <div className="hint">{String(f.attrs.name)}</div> : null}
+                </td>
+              </tr>
+            ) : null}
+            {f.attrs?.structure || f.attrs?.site_id ? (
+              <tr>
+                <td>Tower site</td>
+                <td className="mono">
+                  {f.attrs.structure ? `${f.attrs.structure}-based` : "Type not given"}
+                  {f.attrs.site_id ? <div className="hint">Tarang Sanchar site {String(f.attrs.site_id)}</div> : null}
+                </td>
+              </tr>
+            ) : null}
             <tr><td>Extent</td><td className="mono">{extent}</td></tr>
             <tr>
               <td>Chainage</td>

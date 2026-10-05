@@ -8,7 +8,7 @@ towers, ₹ cost, a typed decision log, DXF/SHP/KML/CSV/PDF exports and a reprod
 web/              React + TypeScript + MapLibre UI (served by the API from web/dist)
 beeline_api/      FastAPI app, GPU worker, extraction, solve job, exports, imagery, uploads
 beeline_engine/   route solver (pure Python: NumPy/SciPy/Shapely + PyTorch on GPU)
-config/           layers.yaml, rules.yaml (30 rules), costs.yaml (8 categories), engine.yaml
+config/           layers.yaml, rules.yaml (31 rules), costs.yaml (8 categories), engine.yaml
 deploy/           Dockerfile, docker-compose.yml, environment.yml, .env.example
 scripts/          ingest_reference.py, ingest_all.py, build_dev_reference.py, benchmark.py, dev_up.sh
 tests/            test_engine.py (synthetic, incl. brute-force optimality), test_api.py, e2e_api.py
@@ -46,7 +46,36 @@ tests/            test_engine.py (synthetic, incl. brute-force optimality), test
    extraction job, so it is refused while a solve runs. Every load is logged with its OSM timestamp,
    and the layer's provenance says which extract / refresh it came from. Lines with no voltage tag
    or another voltage are not stored (India extract of 3 Oct 2026: 2,547 untagged, 11,787 other).
-6. **Open** `http://<vm>:8080/` over the VPN.
+6. **Cell towers (all India, Tarang Sanchar)** — one PostGIS table `cell_towers` (site id,
+   structure type Ground / Roof / Wall). Load once (downloads the 20 MB parquet of the 2022
+   Tarang Sanchar scrape mirrored by ramSeraph/indian_communications, 665,077 sites, ~20 s):
+   ```
+   docker compose run --rm worker python -m beeline_api.cell_towers load-india
+   docker compose run --rm worker python -m beeline_api.cell_towers status
+   ```
+   The data is from 2022 and ~81 % of DoT's Mar-2025 tower count; treat it as a floor, not a
+   census. Licence: CC0 on the curation only, the route is listed as "not-so-open" — clear it
+   before a client deliverable. "Refresh from Tarang Sanchar" is shown on the review screen but
+   disabled: the portal's tower search needs name + email + phone + CAPTCHA + emailed OTP and
+   answers Indian IPs only, so there is no machine source yet. When one is secured (PM GatiShakti
+   Public, an NIC token), set `cell_towers.FETCHER`; the refresh job, store replace, provenance
+   and UI already work (covered by `tests/test_api.py::test_cell_towers_layer_and_refresh`).
+   Rule 31 "Cell tower" keeps new towers 50 m from tower sites — a placeholder pending AESL.
+7. **Highways — NH and SH (all India, OSM)** — the `roads` layer. PostGIS table `osm_highways`,
+   one partition per class (nh / sh). Uses the same Geofabrik India extract as the power store
+   (downloaded once):
+   ```
+   docker compose run --rm worker python -m beeline_api.osm_highways load-india
+   docker compose run --rm worker python -m beeline_api.osm_highways status
+   ```
+   A way is NH when its `ref` reads NH… / NE…, or it belongs to a route relation with network
+   IN:NH / IN:NE; SH when its ref reads SH… or its relation is IN:SH:<state>. A motorway / trunk
+   with neither is counted as NH and marked *inferred* in the popup and the legend. A way that is
+   both is stored once per class. `*_link` ramps are not kept. MDR is no longer carried (it had
+   no rule). "Refresh from OSM" on the Highways layer re-pulls the run's area from Overpass,
+   replaces it in the store in one transaction and re-extracts the layer — same job, lock and
+   provenance as the power layer.
+8. **Open** `http://<vm>:8080/` over the VPN.
 
 Upgrades: `git pull && docker compose up -d --build`. The worker marks any job it was running as
 failed on restart, so restart only when `GET /api/jobs/active` is `{"job": null}`.

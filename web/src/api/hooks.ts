@@ -269,7 +269,7 @@ export const apiCalls = {
       json: layers && layers.length ? { layers } : {},
     }),
   solve: (id: string) => api<Job>(`/api/runs/${encodeURIComponent(id)}/solve`, { method: "POST" }),
-  /** Re-pull a layer's online source (OSM power) for the run's area, update the store, re-extract it. */
+  /** Re-pull a layer's online source (OSM power, Tarang Sanchar towers) for the run's area, update the store, re-extract it. */
   refreshLayer: (id: string, key: string) =>
     api<Job>(`/api/runs/${encodeURIComponent(id)}/layers/${encodeURIComponent(key)}/refresh`, { method: "POST" }),
   cancelJob: (jobId: number) => api<Job>(`/api/jobs/${jobId}/cancel`, { method: "POST" }),
