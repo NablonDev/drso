@@ -1,0 +1,195 @@
+# Layer registry. One entry per layer the drafter sees on the Data sources screen.
+#
+# key            stable id used by rules, the DB and the API
+# kind           polygon | line | point (geometry the engine expects after normalisation)
+# producer       reference  -> clipped from a statewide gpkg in the bucket (cached layer)
+#                model      -> produced by a LULC model over imagery (stub in v1: reads the
+#                              reference gpkg and stamps model + imagery provenance)
+#                derived    -> computed from another layer (clusters from buildings)
+# model          plugin name in beeline_api/models (model producers only)
+# imagery        which imagery product the model reads (provenance only in v1)
+# classes        Beeline class vocabulary for this layer; the attribute-mapping screen maps
+#                a file's values onto these. First entry is the fallback class.
+# minutes_per_km2  model time estimate used for the extraction ETA on the setup screens
+# default_confidence  used when a source carries no per-feature confidence
+
+version: "2026.10-v1"
+
+layers:
+  - key: lulc
+    name: "Land use / land cover"
+    kind: polygon
+    producer: model
+    model: lulc_stub
+    imagery: sentinel2
+    desc: "LULC segmentation model · Sentinel-2 10 m"
+    minutes_per_km2: 0.174
+    default_confidence: 0.89
+    classes: [unclassified, agriculture, agriculture_fallow, orchard, shrub, barren, hard_rock,
+              marsh, salt_pan, sand_dunes, social_forest, reserve_forest, water_body, built_up]
+
+  - key: buildings
+    name: "Buildings"
+    kind: polygon
+    producer: model
+    model: buildings_stub
+    imagery: esri
+    desc: "Footprint model · 50 cm imagery"
+    minutes_per_km2: 0.214
+    default_confidence: 0.94
+    classes: [building]
+
+  - key: clusters
+    name: "Built-up clusters"
+    kind: polygon
+    producer: derived
+    derived_from: buildings
+    desc: "Grouped from the buildings layer at 50 m / 9,000 m²"
+    minutes_per_km2: 0.009
+    default_confidence: 0.91
+    classes: [builtup_cluster]
+
+  - key: water
+    name: "Water — river, canal, nalla, pond"
+    kind: any
+    producer: model
+    model: water_stub
+    imagery: sentinel2
+    desc: "Water index model + India-WRIS"
+    minutes_per_km2: 0.058
+    default_confidence: 0.93
+    classes: [pond, river, canal, nalla, dam, creek]
+
+  - key: soil
+    name: "Soil — marsh, salt pan, dunes, rock"
+    kind: polygon
+    producer: model
+    model: soil_stub
+    imagery: sentinel2
+    desc: "Spectral classifier + BHUKOSH lithology"
+    minutes_per_km2: 0.085
+    default_confidence: 0.74
+    classes: [normal_dry, wet_submerged, black_cotton, hard_rock, sandy_fissured]
+
+  - key: power
+    name: "Power lines and towers"
+    kind: any
+    producer: model
+    model: power_stub
+    imagery: esri
+    desc: "Line detector · 50 cm imagery"
+    minutes_per_km2: 0.049
+    default_confidence: 0.85
+    classes: [power_line, power_tower]
+
+  - key: plotted
+    name: "Plotted land"
+    kind: polygon
+    producer: model
+    model: plotted_stub
+    imagery: esri
+    desc: "Layout-pattern detector · 50 cm imagery"
+    minutes_per_km2: 0.036
+    default_confidence: 0.61
+    classes: [plotted_land]
+
+  - key: roads
+    name: "Roads — NH, SH, MDR"
+    kind: line
+    producer: reference
+    desc: "Cached — Geosadak + OSM, centreline aligned"
+    minutes_per_km2: 0.002
+    default_confidence: 0.97
+    classes: [mdr, nh, sh]
+
+  - key: rail
+    name: "Railway and metro"
+    kind: line
+    producer: reference
+    desc: "Cached — OSM, manually checked"
+    minutes_per_km2: 0.002
+    default_confidence: 0.96
+    classes: [railway, metro]
+
+  - key: forest
+    name: "Forest boundaries"
+    kind: polygon
+    producer: reference
+    desc: "Cached — SOI toposheet"
+    minutes_per_km2: 0.002
+    default_confidence: 0.80
+    classes: [reserve_forest, protected_forest]
+
+  - key: protected
+    name: "Protected areas and ESZ"
+    kind: polygon
+    producer: reference
+    desc: "Cached — SOI legal boundaries"
+    minutes_per_km2: 0.002
+    default_confidence: 0.99
+    classes: [sanctuary, national_park, esz]
+
+  - key: wetlands
+    name: "Notified wetlands"
+    kind: polygon
+    producer: reference
+    desc: "Cached — State Wetland Authority notification"
+    minutes_per_km2: 0.002
+    default_confidence: 0.99
+    classes: [notified_wetland]
+
+  - key: aviation
+    name: "Aviation surfaces"
+    kind: polygon
+    producer: reference
+    desc: "Cached — airport boundaries + AAI colour-coded zoning maps"
+    minutes_per_km2: 0.002
+    default_confidence: 1.0
+    classes: [airport, approach_surface]
+
+  - key: monuments
+    name: "Monuments"
+    kind: any
+    producer: reference
+    desc: "Cached — ASI protected list"
+    minutes_per_km2: 0.002
+    default_confidence: 1.0
+    classes: [monument]
+
+  - key: pipelines
+    name: "Pipelines"
+    kind: line
+    producer: reference
+    desc: "Cached — published alignments + operator records"
+    minutes_per_km2: 0.004
+    default_confidence: 0.90
+    classes: [gas_pipeline, oil_pipeline]
+
+  - key: defence
+    name: "Defence land"
+    kind: polygon
+    producer: reference
+    desc: "Cached — notified defence boundary records"
+    minutes_per_km2: 0.002
+    default_confidence: 0.97
+    classes: [defence_land]
+
+  # Layers that rules need but that the prototype folds into other rows. They are shown on
+  # the sources screen under "More layers" so the drafter can still replace them.
+  - key: substations
+    name: "Sub-stations"
+    kind: polygon
+    producer: reference
+    desc: "Cached — AESL substation register"
+    minutes_per_km2: 0.002
+    default_confidence: 0.95
+    classes: [substation]
+
+  - key: solar
+    name: "Solar parks"
+    kind: polygon
+    producer: reference
+    desc: "Cached — solar park clustering"
+    minutes_per_km2: 0.002
+    default_confidence: 0.90
+    classes: [solar_park]

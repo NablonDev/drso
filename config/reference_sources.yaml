@@ -1,0 +1,8 @@
+# Fetch hooks for reference layers whose store does not cover a band.
+# A hook is a shell command template; placeholders: {minx} {miny} {maxx} {maxy} {key} {region}
+# {reference_dir}. It must write a new version into the store (scripts/ingest_reference.py does)
+# and update CURRENT. Leave a layer out to report the gap instead of fetching.
+#
+# Example:
+#   forest: "python scripts/fetch_forest.py --bbox {minx} {miny} {maxx} {maxy} --out {reference_dir}"
+fetch_hooks: {}

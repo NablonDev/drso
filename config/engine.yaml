@@ -1,0 +1,48 @@
+# Internal solver parameters. Not shown to drafters (the Rules screen deliberately has no
+# weights). Tuned by the engineering team only.
+
+grid:
+  raster_res_m: 20            # rule-compile raster resolution
+  site_spacing_m: 50          # candidate tower site spacing (chainage and lateral)
+  band_margin_m: 500          # extra length before A and after B in the chainage frame
+  raster_margin_m: 0          # padding on raster buffers; spotting repairs grid/exact disagreements
+  nudge_radius_m: 30          # how far spotting may move a grid tower to satisfy the exact check
+
+spans:
+  # min span comes from the rule "Span limits at a crossing — Minimum span" (100 m default)
+  max_factor: 1.125           # max span = factor x plain design span (450 m at 400 m)
+  # Long spans are allowed only where the span crosses a river (best guess, AESL to confirm)
+  river_crossing_max_span_m: 1000
+  long_heading_limit_deg: 60
+  long_heading_step_deg: 5
+  long_length_step_m: 100
+
+crossings:
+  single_angle_tolerance_deg: 15   # a rule giving one angle (e.g. river 90°) accepts ±this
+  parallel_angle_deg: 30           # span within this angle of a road/canal = running parallel
+
+routes:
+  # Each route is the same solver re-run with one extra internal penalty. The reported ₹ cost
+  # of every route is always the true cost, never the penalised objective.
+  - {id: 1, key: least_cost,      name: "Least cost"}
+  - {id: 2, key: fewest_angles,   name: "Fewest angle points",     angle_tower_penalty_rs: 15000000}
+  - {id: 3, key: closest_beeline, name: "Closest to the bee-line", lateral_penalty_rs_per_m_per_km: 40000}
+  - {id: 4, key: least_sensitive, name: "Least sensitive land",    sensitive_multiplier: 6.0}
+
+diversity:
+  min_distinct_fraction: 0.15     # a route sharing >85 % of its corridor with an earlier one is re-run
+  corridor_m: 150
+  penalty_rs_per_m: 20000
+
+spotting:
+  # Ground-clearance check on the Copernicus GLO-30 DEM (30 m — coarser than the 10 m the
+  # research doc asks for; the report says so).
+  ground_clearance_m: {765: 15.0, 400: 8.84, 220: 7.02, 132: 6.1}
+  lowest_attachment_m: {765: 42.0, 400: 30.0, 220: 22.0, 132: 18.0}
+  sag_at_design_span_m: {765: 15.0, 400: 12.0, 220: 9.5, 132: 8.0}
+  simplify_tolerance_m: 30
+  hilly_slope_deg: 10
+
+events:
+  low_confidence: 0.80
+  turn_feature_search_m: 1500

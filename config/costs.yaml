@@ -1,0 +1,108 @@
+# Cost categories (8). Delay & time removed per Vivek, 5 Oct 2026.
+# status: sourced | tcc  (tcc = awaiting AESL TCC sign-off; the report names every such category)
+# Values may be scalars or per-voltage maps keyed like rules.yaml ("765", "765_dc", "default").
+# best_guess: true marks placeholders invented for the build; replace with TCC figures.
+
+version: "AESL-2026.10-draft"
+
+categories:
+  - key: land
+    title: "Land & RoW"
+    desc: "Acquisition for the tower base and compensation across the corridor width"
+    status: sourced
+    items:
+      - {key: agri_land_cr_ha, label: "Agricultural land", unit: "₹Cr/ha", value: 0.21}
+      - {key: nonagri_land_cr_ha, label: "Non-agricultural", unit: "₹Cr/ha", value: 0.34}
+      - {key: tower_base_pct, label: "Tower base", unit: "% land", value: 100}
+      - {key: row_corridor_pct, label: "RoW corridor", unit: "% land", value: 30}
+      - {key: stamp_legal_l_ha, label: "Revenue stamp & legal", unit: "₹L/ha", value: 0.8}
+
+  - key: crops
+    title: "Crops & trees"
+    desc: "Standing crop for one season, and trees felled inside the corridor"
+    status: sourced
+    items:
+      - {key: standing_crop_l_ha, label: "Standing crop", unit: "₹L/ha", value: 0.9}
+      - {key: orchard_tree_rs, label: "Orchard tree", unit: "₹/tree", value: 4200}
+      - {key: timber_tree_rs, label: "Timber tree", unit: "₹/tree", value: 2800}
+      - {key: plantation_l_ha, label: "Plantation, per season", unit: "₹L/ha", value: 1.4}
+      - {key: orchard_trees_per_ha, label: "Orchard tree density", unit: "trees/ha", value: 100, best_guess: true}
+      - {key: social_forest_trees_per_ha, label: "Social forest tree density", unit: "trees/ha", value: 400, best_guess: true}
+
+  - key: forest
+    title: "Forest"
+    desc: "Net present value, compensatory afforestation and the diversion fee"
+    status: sourced
+    items:
+      - {key: npv_l_ha, label: "NPV, eco-class IV", unit: "₹L/ha", value: 10.4}
+      - {key: ca_l_ha, label: "Compensatory afforestation", unit: "₹L/ha", value: 6.2}
+      - {key: diversion_l_case, label: "Diversion processing", unit: "₹L/case", value: 1.1}
+      - {key: rf_land_cr_ha, label: "Reserve forest land", unit: "₹Cr/ha", value: 0.48}
+
+  - key: env
+    title: "Environment / CRZ"
+    desc: "Clearance, studies and mitigation where the corridor touches a regulated zone"
+    status: tcc
+    items:
+      - {key: crz_case_l, label: "CRZ clearance case", unit: "₹L", value: 18}
+      - {key: wildlife_case_l, label: "Wildlife clearance case", unit: "₹L", value: 24}
+      - {key: eia_study_l, label: "EIA / biodiversity study", unit: "₹L", value: 9}
+      - {key: mitigation_l_km, label: "Mitigation, per km", unit: "₹L/km", value: 2.6}
+
+  - key: tower
+    title: "Tower hardware"
+    desc: "Steel, bolts, insulators and fittings by tower type"
+    status: tcc
+    items:
+      - {key: rate_per_tonne_rs, label: "Rate per tonne", unit: "₹/t", value: 120000}
+      - {key: insulator_tension_rs, label: "Insulator set, tension", unit: "₹/set", value: {765: 148000, 400: 62000, 220: 28000, 132: 14000}, best_guess: true}
+      - {key: insulator_susp_rs, label: "Insulator set, susp.", unit: "₹/set", value: {765: 96000, 400: 41000, 220: 18000, 132: 9000}, best_guess: true}
+      - {key: earthing_rs, label: "Earthing per tower", unit: "₹", value: 22000}
+      - {key: extension_pct, label: "Extension, +18 m", unit: "% cost", value: 9.4}
+    # Tower weight by type (tonnes). 765 kV D/C from the prototype; the rest best guess.
+    # Circuit factor scales the D/C figure: S/C 0.62, Q/C 1.55 (best guess).
+    tonnage:
+      best_guess: true
+      circuit_factor: {sc: 0.62, dc: 1.0, qc: 1.55}
+      by_voltage:
+        "765": {A: 39.71, B1: 57.38, B2: 65.21, C1: 65.03, C2: 73.89, D45: 81.29, D60: 92.37}
+        "400": {A: 16.5, B1: 22.0, B2: 25.5, C1: 27.0, C2: 30.5, D45: 34.0, D60: 39.0}
+        "220": {A: 8.2, B1: 11.0, B2: 12.6, C1: 13.4, C2: 15.2, D45: 17.0, D60: 19.5}
+        "132": {A: 4.6, B1: 6.2, B2: 7.1, C1: 7.6, C2: 8.6, D45: 9.6, D60: 11.0}
+    # insulator sets per tower = phases x circuits x strings; tension towers carry 2 strings per phase
+    insulator_sets_per_circuit: {suspension: 3, tension: 6}
+    # tower base footprint for land acquisition (m²), best guess
+    base_area_m2: {765: 576, 400: 324, 220: 196, 132: 121}
+
+  - key: conductor
+    title: "Conductor & earthwire"
+    desc: "Stringing cost per route-km, including sag and tension work"
+    status: tcc
+    items:
+      - {key: conductor_cr_km, label: "Conductor, bundled", unit: "₹Cr/km", value: {765: 1.61, 400: 0.72, 220: 0.34, 132: 0.18}, best_guess: true}
+      - {key: earthwire_cr_km, label: "Earthwire", unit: "₹Cr/km", value: {765: 0.09, 400: 0.07, 220: 0.05, 132: 0.04}, best_guess: true}
+      - {key: stringing_cr_km, label: "Stringing labour", unit: "₹Cr/km", value: {765: 0.14, 400: 0.09, 220: 0.06, 132: 0.04}, best_guess: true}
+      - {key: spacer_cr_km, label: "Spacer and damper set", unit: "₹Cr/km", value: {765: 0.06, 400: 0.04, 220: 0.02, 132: 0.01}, best_guess: true}
+
+  - key: foundation
+    title: "Soil type & foundation"
+    desc: "Foundation class drives the excavation and concrete quantity"
+    status: tcc
+    items:
+      - {key: normal_dry, label: "Normal dry", unit: "× base", value: 1.0}
+      - {key: wet_submerged, label: "Wet / submerged", unit: "× base", value: 1.34}
+      - {key: black_cotton, label: "Black cotton", unit: "× base", value: 1.52}
+      - {key: hard_rock, label: "Hard rock", unit: "× base", value: 1.68}
+      - {key: sandy_fissured, label: "Sandy / fissured", unit: "× base", value: 1.41}
+      - {key: base_cr_tower, label: "Base foundation", unit: "₹Cr/twr", value: {765: 0.18, 400: 0.09, 220: 0.045, 132: 0.025}, best_guess: true}
+
+  - key: crossings
+    title: "Crossings"
+    desc: "Extra cost at each controlled crossing — permission, shutdown and heavier towers"
+    status: tcc
+    items:
+      - {key: railway, label: "Railway crossing", unit: "₹L each", value: 34}
+      - {key: national_highway, label: "National highway", unit: "₹L each", value: 18}
+      - {key: power_line, label: "Power line, shutdown", unit: "₹L each", value: 26}
+      - {key: major_river, label: "Major river", unit: "₹L each", value: 62}
+      - {key: pipeline, label: "Pipeline", unit: "₹L each", value: 14}

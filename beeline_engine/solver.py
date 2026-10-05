@@ -1,0 +1,480 @@
+"""Pylon-graph solver: layer-wise dynamic programme on GPU.
+
+Candidate tower sites sit on a grid in the chainage frame (columns = chainage, rows = lateral
+offset). A span is one of K offsets (dc, dr) whose length is within [Smin, Smax]; dc >= 1, so
+the graph is a DAG ordered by chainage. State = (site, incoming offset k). The tower at a site
+gets its type, hence its cost, from the deflection between the incoming and outgoing offsets.
+
+  M[c, r, k'] = S[c, r] + min_k ( V[c, r, k] + T[k, k'] )        tower at (c, r)
+  W[c, r, k'] = M[c, r, k'] + E[c, r, k']                          span leaving (c, r)
+  V[c+dc, r+dr, k'] = W[c, r, k']                                  arrival
+
+Exact for this graph. Detours that go backwards along the bee-line are not representable (v1).
+"""
+from __future__ import annotations
+
+import logging
+import math
+import time
+from dataclasses import dataclass
+
+import numpy as np
+import torch
+from scipy import ndimage
+from shapely.geometry import Point
+
+from .compile import Compiled
+from .config import TOWER_TYPES, max_type, tower_type_for
+
+log = logging.getLogger(__name__)
+INF = float("inf")
+
+
+@dataclass
+class SolverParams:
+    site_spacing_m: float
+    span_min_m: float
+    span_max_m: float
+    max_dev_deg: float
+    type_bands: dict[str, float]
+    tower_cost_rs: dict[str, float]          # by type, excluding site cost
+    parallel_angle_deg: float = 30.0
+    # long spans, valid only across a river (0 disables)
+    river_max_span_m: float = 0.0
+    long_heading_limit_deg: float = 60.0
+    long_heading_step_deg: float = 5.0
+    long_length_step_m: float = 100.0
+    # variant penalties (route 2-4 and diversity)
+    angle_tower_penalty_rs: float = 0.0
+    lateral_penalty_rs_per_m: float = 0.0    # per tower, per metre of lateral offset
+    sensitive_multiplier: float = 1.0
+    extra_strip_rs_per_m: np.ndarray | None = None   # raster, ₹ per metre of line (diversity)
+
+
+@dataclass
+class Grid:
+    nc: int
+    nr: int
+    r0: int
+    sx: float
+    sy: float
+    offsets: np.ndarray      # (K, 2) int  (dc, dr)
+    heading_deg: np.ndarray  # (K,)
+    length_m: np.ndarray     # (K,)
+    is_long: np.ndarray      # (K,) bool: river-only long span
+
+    def site_xy(self, c, r):
+        return np.asarray(c) * self.sx, (np.asarray(r) - self.r0) * self.sy
+
+
+@dataclass
+class SolveOutcome:
+    feasible: bool
+    cost_rs: float
+    sites: list[tuple[int, int]]          # (c, r) towers from the first dead-end to the last
+    headings: list[int]                   # offset index of each span
+    grid: Grid
+    reach_chainage_m: float               # furthest chainage reached (for BAND_BLOCKED)
+    seconds: float
+    reach_map: np.ndarray | None = None   # (nc+1, R) bool: a tower can stand here on some feasible path from A
+
+
+def make_grid(compiled: Compiled, p: SolverParams) -> Grid:
+    f = compiled.frame
+    nc = max(2, int(round(f.length_m / p.site_spacing_m)))
+    sx = f.length_m / nc
+    sy = p.site_spacing_m
+    half_rows = int(math.floor(f.half_width_m / sy))
+    nr = 2 * half_rows + 1
+    r0 = half_rows
+    dcmax = int(math.ceil(p.span_max_m / sx))
+    drmax = int(math.ceil(p.span_max_m / sy))
+    offs = []
+    for dc in range(1, dcmax + 1):
+        for dr in range(-drmax, drmax + 1):
+            L = math.hypot(dc * sx, dr * sy)
+            if p.span_min_m - 1e-6 <= L <= p.span_max_m + 1e-6:
+                offs.append((dc, dr))
+    n_short = len(offs)
+    if p.river_max_span_m > p.span_max_m:
+        seen = set(offs)
+        Lv = p.span_max_m + p.long_length_step_m
+        while Lv <= p.river_max_span_m + 1e-6:
+            th = -p.long_heading_limit_deg
+            while th <= p.long_heading_limit_deg + 1e-6:
+                dc = int(round(Lv * math.cos(math.radians(th)) / sx))
+                dr = int(round(Lv * math.sin(math.radians(th)) / sy))
+                L = math.hypot(dc * sx, dr * sy)
+                if dc >= 1 and L > p.span_max_m + 1e-6 and (dc, dr) not in seen:
+                    seen.add((dc, dr))
+                    offs.append((dc, dr))
+                th += p.long_heading_step_deg
+            Lv += p.long_length_step_m
+    offs = np.array(offs, dtype=np.int64)
+    head = np.degrees(np.arctan2(offs[:, 1] * sy, offs[:, 0] * sx))
+    length = np.hypot(offs[:, 0] * sx, offs[:, 1] * sy)
+    is_long = np.zeros(len(offs), bool)
+    is_long[n_short:] = True
+    return Grid(nc=nc, nr=nr, r0=r0, sx=sx, sy=sy, offsets=offs, heading_deg=head, length_m=length,
+                is_long=is_long)
+
+
+def _device():
+    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
+def prepare_strip(compiled: Compiled, p: SolverParams) -> np.ndarray:
+    """₹ per metre of line at each raster cell: corridor-width box mean of the ₹/m² density."""
+    res = compiled.frame.res_m
+    width_px = max(1, int(round(2 * compiled.half_width_m / res)))
+    dens = compiled.strip_density.astype(np.float32)
+    if p.sensitive_multiplier != 1.0:
+        dens = dens * (1.0 + (p.sensitive_multiplier - 1.0) * compiled.sensitive)
+    sm = ndimage.uniform_filter(dens, size=width_px, mode="nearest")
+    strip = sm * (2 * compiled.half_width_m)
+    if p.extra_strip_rs_per_m is not None:
+        strip = strip + p.extra_strip_rs_per_m
+    return strip.astype(np.float32)
+
+
+class _Rasters:
+    def __init__(self, compiled: Compiled, p: SolverParams, dev, strip_np: np.ndarray | None = None):
+        self.dev = dev
+        t = lambda a, dt=torch.float32: torch.as_tensor(np.ascontiguousarray(a), dtype=dt, device=dev)
+        self.cond = t(compiled.conductor_forbidden, torch.bool)
+        self.strip = t(strip_np if strip_np is not None else prepare_strip(compiled, p))
+        self.cross = [(cr, t(np.nan_to_num(cr.angle, nan=-1.0)),
+                       None if cr.width_raster is None else t(cr.width_raster, torch.bool))
+                      for cr in compiled.crossings]
+        self.par = [t(np.nan_to_num(pr.angle, nan=-1.0)) for pr in compiled.parallels]
+        self.h, self.w = compiled.tower_forbidden.shape
+        self.river_cols = None
+
+    def set_river_cols(self, compiled: Compiled, grid: "Grid", p: SolverParams):
+        """Grid columns from which a long span could reach a river."""
+        f = compiled.frame
+        riv = [cr for cr in compiled.crossings if cr.rule_id == "river"]
+        if not riv or p.river_max_span_m <= p.span_max_m:
+            return
+        has = np.zeros(f.width, bool)
+        for cr in riv:
+            has |= ~np.isnan(cr.angle).all(axis=0)
+        xs = f.x0 + (np.nonzero(has)[0] + 0.5) * f.res_m
+        cols = np.zeros(grid.nc + 1, bool)
+        cx = np.arange(grid.nc + 1) * grid.sx
+        for x in xs:
+            cols |= (cx <= x + f.res_m) & (cx >= x - p.river_max_span_m)
+        self.river_cols = cols
+
+
+def _acute(a_deg, b_deg):
+    d = torch.remainder(a_deg - b_deg, 180.0)
+    return torch.minimum(d, 180.0 - d)
+
+
+def _edge_block(compiled: Compiled, grid: Grid, p: SolverParams, rasters: "_Rasters",
+                c_from: int, c_to: int, kidx: np.ndarray, n_samples: int, require_river: bool) -> torch.Tensor:
+    """E for columns c_from..c_to-1 and offsets kidx -> (C, R, len(kidx)) ₹, inf = invalid."""
+    dev = rasters.dev
+    f = compiled.frame
+    C = c_to - c_from
+    R, K = grid.nr, len(kidx)
+    offs = grid.offsets[kidx]
+    cs = torch.arange(c_from, c_to, device=dev, dtype=torch.float32)
+    rs = torch.arange(R, device=dev, dtype=torch.float32)
+    x0 = (cs * grid.sx).view(C, 1, 1, 1)
+    y0 = ((rs - grid.r0) * grid.sy).view(1, R, 1, 1)
+    dx = torch.as_tensor(offs[:, 0] * grid.sx, device=dev, dtype=torch.float32).view(1, 1, K, 1)
+    dy = torch.as_tensor(offs[:, 1] * grid.sy, device=dev, dtype=torch.float32).view(1, 1, K, 1)
+    tt = torch.linspace(0, 1, n_samples, device=dev).view(1, 1, 1, n_samples)
+    col = ((x0 + tt * dx - f.x0) / f.res_m).long().clamp_(0, rasters.w - 1)
+    row = ((f.y_top - (y0 + tt * dy)) / f.res_m).long().clamp_(0, rasters.h - 1)
+    length = torch.as_tensor(grid.length_m[kidx], device=dev, dtype=torch.float32).view(1, 1, K)
+    heading = torch.as_tensor(grid.heading_deg[kidx], device=dev, dtype=torch.float32).view(1, 1, K, 1)
+
+    invalid = rasters.cond[row, col].any(dim=-1)
+    strip = rasters.strip[row, col].mean(dim=-1)
+    E = length * (compiled.conductor_rs_per_m + strip)
+    crossed_river = torch.zeros_like(invalid)
+
+    tA = p.tower_cost_rs["A"]
+    for cr, ang_t, width_t in rasters.cross:
+        a = ang_t[row, col]                        # (C,R,K,S), -1 = none
+        hit = a >= 0
+        crossed = hit.any(dim=-1)
+        if not bool(crossed.any()):
+            continue
+        first = torch.argmax(hit.to(torch.int8), dim=-1, keepdim=True)
+        fa = torch.gather(a, -1, first).squeeze(-1)
+        acute = _acute(heading.squeeze(-1), fa)
+        bad = torch.zeros_like(crossed)
+        if cr.window is not None:
+            bad |= acute < cr.window[0] - 1e-3
+        if cr.max_span_m is not None:
+            bad |= length > cr.max_span_m + 1e-3
+        min_type = cr.min_type
+        cost = cr.cost_rs
+        if width_t is not None and cr.major_threshold_m is not None:
+            step = length / (n_samples - 1)
+            width = width_t[row, col].sum(dim=-1).float() * step
+            major = width >= cr.major_threshold_m
+            surcharge_major = 2 * max(0.0, p.tower_cost_rs[cr.major_type] - tA) + cr.major_cost_rs
+            surcharge_minor = 2 * max(0.0, p.tower_cost_rs[min_type] - tA) + cost
+            add = torch.where(major, torch.full_like(E, surcharge_major), torch.full_like(E, surcharge_minor))
+        else:
+            add = torch.full_like(E, 2 * max(0.0, p.tower_cost_rs[min_type] - tA) + cost)
+        if cr.rule_id == "river":
+            crossed_river |= crossed
+        E = E + torch.where(crossed, add, torch.zeros_like(E))
+        invalid |= crossed & bad
+    for pa in rasters.par:
+        a = pa[row, col]
+        near = a >= 0
+        if not bool(near.any()):
+            continue
+        acute = _acute(heading.expand_as(a), a)
+        invalid |= (near & (acute < p.parallel_angle_deg)).any(dim=-1)
+    if require_river:
+        invalid |= ~crossed_river
+    return torch.where(invalid, torch.full_like(E, INF), E)
+
+
+def edge_costs(compiled: Compiled, grid: Grid, p: SolverParams, rasters: "_Rasters",
+               c_from: int, c_to: int, n_samples: int) -> torch.Tensor:
+    """E[c, r, k] for columns c_from..c_to-1 -> tensor (C, R, K) of ₹ (inf = invalid).
+    Long (river-only) offsets are evaluated only where a river lies within reach."""
+    dev = rasters.dev
+    C, R, K = c_to - c_from, grid.nr, len(grid.offsets)
+    short = np.nonzero(~grid.is_long)[0]
+    E = torch.full((C, R, K), INF, device=dev)
+    E[:, :, short] = _edge_block(compiled, grid, p, rasters, c_from, c_to, short, n_samples, False)
+    long_ = np.nonzero(grid.is_long)[0]
+    if len(long_) and rasters.river_cols is not None and rasters.river_cols[c_from:c_to].any():
+        n_long = int(math.ceil(p.river_max_span_m / (compiled.frame.res_m / 2))) + 1
+        sub = 8
+        for c0 in range(c_from, c_to, sub):
+            c1 = min(c_to, c0 + sub)
+            if not rasters.river_cols[c0:c1].any():
+                continue
+            E[c0 - c_from:c1 - c_from, :, long_] = _edge_block(compiled, grid, p, rasters, c0, c1, long_, n_long, True)
+    return E
+
+
+def site_costs(compiled: Compiled, grid: Grid, p: SolverParams) -> tuple[np.ndarray, np.ndarray]:
+    """(S, angle_only): S[c, r] ₹ type-independent tower cost (inf if forbidden);
+    angle_only[c, r] True where only type A towers may stand."""
+    f = compiled.frame
+    cc, rr = np.meshgrid(np.arange(grid.nc + 1), np.arange(grid.nr), indexing="ij")
+    fx, fy = grid.site_xy(cc, rr)
+    px, py = f.frame_to_pixel(fx, fy)
+    col = np.clip(px.astype(int), 0, f.width - 1)
+    row = np.clip(py.astype(int), 0, f.height - 1)
+    S = compiled.site_cost[row, col].astype(np.float64)
+    S = S + p.lateral_penalty_rs_per_m * np.abs(fy)
+    S[compiled.tower_forbidden[row, col]] = INF
+    return S.astype(np.float32), compiled.angle_forbidden[row, col]
+
+
+def transition_matrix(grid: Grid, p: SolverParams) -> tuple[np.ndarray, np.ndarray]:
+    """T[k, k'] ₹ tower cost by deflection type; TA: same but only type A allowed."""
+    h = grid.heading_deg
+    defl = np.abs(h[:, None] - h[None, :])
+    K = len(h)
+    T = np.full((K, K), INF, np.float32)
+    TA = np.full((K, K), INF, np.float32)
+    for i in range(K):
+        for j in range(K):
+            d = defl[i, j]
+            if d > p.max_dev_deg + 1e-9:
+                continue
+            t = tower_type_for(d, p.type_bands)
+            if t is None:
+                continue
+            c = p.tower_cost_rs[t]
+            if t != "A":
+                c += p.angle_tower_penalty_rs
+            T[i, j] = c
+            if t == "A":
+                TA[i, j] = c
+    return T, TA
+
+
+def gantry_seeds(compiled: Compiled, grid: Grid, p: SolverParams, S_np: np.ndarray, strip_np: np.ndarray,
+                 at_end: bool, dead_end_rs: float) -> np.ndarray:
+    """Cost of gantry -> first (or last -> gantry) dead-end tower at every site, inf if not allowed.
+
+    The gantry is A (or B). The slack span may run over the terminal yard, so its reach is the
+    max span plus the yard's extent around the gantry. The span must keep clear of conductor
+    no-go cells and must not cross a controlled feature."""
+    f = compiled.frame
+    ex = f.length_m if at_end else 0.0
+    yard_extent = 0.0
+    if compiled.terminal_yards is not None:
+        ep = Point(ex, 0.0)
+        for y in getattr(compiled.terminal_yards, "geoms", [compiled.terminal_yards]):
+            if y.distance(ep) < 1.0:
+                minx, miny, maxx, maxy = y.bounds
+                yard_extent = max(yard_extent, max(abs(minx - ex), abs(maxx - ex), abs(miny), abs(maxy)) * math.sqrt(2))
+    reach = min(3000.0, p.span_max_m + yard_extent)
+    seeds = np.full(S_np.shape, INF, np.float32)
+    cs = np.arange(grid.nc + 1)
+    xs = cs * grid.sx
+    col_sel = np.nonzero(np.abs(xs - ex) <= reach)[0]
+    rs = np.arange(grid.nr)
+    ys = (rs - grid.r0) * grid.sy
+    row_sel = np.nonzero(np.abs(ys) <= reach)[0]
+    cross = [np.nan_to_num(cr.angle, nan=-1.0) for cr in compiled.crossings]
+    for c in col_sel:
+        for r in row_sel:
+            if not np.isfinite(S_np[c, r]):
+                continue
+            x, y = xs[c], ys[r]
+            L = math.hypot(x - ex, y)
+            if L < 30.0 or L > reach:
+                continue
+            n = max(2, int(math.ceil(L / (f.res_m / 2))) + 1)
+            t = np.linspace(0, 1, n)
+            fx = ex + t * (x - ex)
+            fy = t * y
+            col = np.clip(((fx - f.x0) / f.res_m).astype(int), 0, f.width - 1)
+            row = np.clip(((f.y_top - fy) / f.res_m).astype(int), 0, f.height - 1)
+            if compiled.conductor_forbidden[row, col].any():
+                continue
+            if any((a[row, col] >= 0).any() for a in cross):
+                continue
+            seeds[c, r] = S_np[c, r] + dead_end_rs + L * (compiled.conductor_rs_per_m + float(strip_np[row, col].mean()))
+    return seeds
+
+
+def solve(compiled: Compiled, p: SolverParams, cancel_check=None, progress=None) -> SolveOutcome:
+    """A and B are gantries. The route is gantry A -> dead-end tower -> ... -> dead-end tower -> gantry B."""
+    t0 = time.time()
+    dev = _device()
+    grid = make_grid(compiled, p)
+    R, K = grid.nr, len(grid.offsets)
+    nc = grid.nc
+    S_np, angle_only_np = site_costs(compiled, grid, p)
+    T_np, TA_np = transition_matrix(grid, p)
+    strip_np = prepare_strip(compiled, p)
+    dead_end = p.tower_cost_rs["D60"]
+    seedA = gantry_seeds(compiled, grid, p, S_np, strip_np, at_end=False, dead_end_rs=dead_end)
+    seedB = gantry_seeds(compiled, grid, p, S_np, strip_np, at_end=True, dead_end_rs=dead_end)
+    if not np.isfinite(seedA).any() or not np.isfinite(seedB).any():
+        side = 0.0 if not np.isfinite(seedA).any() else compiled.frame.length_m
+        return SolveOutcome(False, INF, [], [], grid, side, time.time() - t0)
+    S = torch.as_tensor(S_np, device=dev)
+    angle_only = torch.as_tensor(angle_only_np, device=dev)
+    T = torch.as_tensor(T_np, device=dev)
+    TA = torch.as_tensor(TA_np, device=dev)
+    SA = torch.as_tensor(seedA, device=dev)
+    SB = torch.as_tensor(seedB, device=dev)
+    rasters = _Rasters(compiled, p, dev, strip_np)
+    rasters.set_river_cols(compiled, grid, p)
+    n_samples = int(math.ceil(p.span_max_m / (compiled.frame.res_m / 2))) + 1
+
+    dcs = torch.as_tensor(grid.offsets[:, 0], device=dev)
+    drs = torch.as_tensor(grid.offsets[:, 1], device=dev)
+    dcmax = int(grid.offsets[:, 0].max())
+    ring = dcmax + 1
+    Wring = torch.full((ring, R, K), INF, device=dev)
+    arg = torch.zeros((nc + 1, R, K), dtype=torch.int16, device=dev)
+    rows = torch.arange(R, device=dev).view(R, 1)
+    src_rows = rows - drs.view(1, K)                 # (R, K)
+    row_ok = (src_rows >= 0) & (src_rows < R)
+    src_rows_c = src_rows.clamp(0, R - 1)
+    kidx = torch.arange(K, device=dev).view(1, K).expand(R, K)
+    reach = torch.zeros(nc + 1, dtype=torch.bool, device=dev)
+    reach_map = torch.zeros((nc + 1, R), dtype=torch.bool, device=dev)
+    end_tot = torch.full((nc + 1, R), INF, device=dev)
+    end_k = torch.zeros((nc + 1, R), dtype=torch.int64, device=dev)
+    end_cols = set(np.nonzero(np.isfinite(seedB).any(axis=1))[0].tolist())
+    start_marker = torch.tensor(-1, dtype=torch.int16, device=dev)
+
+    chunk = max(1, min(32, int(2.5e8 // max(1, R * K * n_samples))))
+    E_chunk, E_start = None, -1
+    for c in range(nc + 1):
+        if cancel_check and c % 64 == 0:
+            cancel_check()
+        # arrivals at column c
+        if c == 0:
+            V = torch.full((R, K), INF, device=dev)
+        else:
+            src_c = c - dcs
+            ok_c = src_c >= 0
+            ring_idx = torch.remainder(src_c, ring).view(1, K).expand(R, K)
+            V = Wring[ring_idx, src_rows_c, kidx]
+            V = torch.where(row_ok & ok_c.view(1, K), V, torch.full_like(V, INF))
+            reach[c] = torch.isfinite(V).any()
+        if c in end_cols:
+            vmin, vk = V.min(dim=1)
+            end_tot[c] = vmin + SB[c]
+            end_k[c] = vk
+        if c == nc:
+            break
+        # tower at column c: from an arrival (type by deflection) or as the first dead-end
+        tot = V.unsqueeze(2) + T.unsqueeze(0)             # (R, K, K)
+        totA = V.unsqueeze(2) + TA.unsqueeze(0)
+        tot = torch.where(angle_only[c].view(R, 1, 1), totA, tot)
+        mval, am = tot.min(dim=1)
+        M = mval + S[c].view(R, 1)
+        am = am.to(torch.int16)
+        del tot, totA
+        seed = SA[c].view(R, 1).expand(R, K)
+        use_seed = seed < M
+        M = torch.where(use_seed, seed, M)
+        am = torch.where(use_seed, start_marker, am)
+        arg[c] = am
+        reach_map[c] = torch.isfinite(M).any(dim=1)
+        if E_chunk is None or c >= E_start + E_chunk.shape[0]:
+            E_start = c
+            E_chunk = edge_costs(compiled, grid, p, rasters, c, min(nc, c + chunk), n_samples)
+        E = E_chunk[c - E_start]
+        Wring[c % ring] = M + E
+        if progress and c % 100 == 0:
+            progress(c / nc)
+
+    best = float(end_tot.min().item())
+    reach_np = reach.cpu().numpy()
+    reach_idx = int(np.nonzero(reach_np)[0].max()) if reach_np.any() else 0
+    if not math.isfinite(best):
+        rm = reach_map.cpu().numpy()
+        cols = np.nonzero(rm.any(axis=1))[0]
+        reach_m = float(cols.max() * grid.sx) if len(cols) else 0.0
+        return SolveOutcome(False, INF, [], [], grid, reach_m, time.time() - t0, rm)
+    flat = int(end_tot.argmin().item())
+    c, r = divmod(flat, R)
+    k = int(end_k[c, r].item())
+    sites = [(c, r)]
+    heads = []
+    guard = 0
+    while True:
+        guard += 1
+        if guard > 100000:
+            raise RuntimeError("backtrack did not terminate")
+        heads.append(k)
+        dc, dr = grid.offsets[k]
+        pc, pr = c - int(dc), r - int(dr)
+        sites.append((pc, pr))
+        k_prev = int(arg[pc, pr, k].item())
+        if k_prev == -1:
+            break
+        c, r, k = pc, pr, k_prev
+    sites.reverse()
+    heads.reverse()
+    return SolveOutcome(True, best, sites, heads, grid, compiled.frame.length_m, time.time() - t0)
+
+
+def tower_type_cost(costs: dict, kv: int) -> dict[str, float]:
+    """₹ per tower by type: steel + insulators. Foundation, land, earthing are site costs."""
+    rate = float(costs["tower"]["rate_per_tonne_rs"])
+    n_circ = costs["n_circuits"]
+    sets = costs["insulator_sets_per_circuit"]
+    out = {}
+    for t in TOWER_TYPES:
+        steel = costs["tonnage"][t] * rate
+        if t == "A":
+            ins = sets["suspension"] * n_circ * float(costs["tower"]["insulator_susp_rs"])
+        else:
+            ins = sets["tension"] * n_circ * float(costs["tower"]["insulator_tension_rs"])
+        out[t] = steel + ins
+    return out

@@ -1,0 +1,371 @@
+# Default rule set — 29 rules, five groups (the prototype's Rules screen).
+#
+# Every value tagged best_guess: true is a placeholder pending AESL confirmation.
+# A parameter value is either a scalar or a per-voltage map {765, 400, 220, 132}.
+# Per-voltage maps may also be keyed "<kV>_<circuit>" (sc, dc, qc) for circuit-specific values;
+# lookup order is "<kV>_<circuit>", then "<kV>", then "default".
+#
+# mechanism tells the engine how to compile the rule (beeline_engine/rules.py):
+#   conductor_clearance  conductor-forbidden buffer around features
+#   airport_prohibition  tower + conductor forbidden within a distance of airport features
+#   flag_radius          no geometry effect; emits an event for towers inside the radius
+#   tower_setback        tower-forbidden buffer around features
+#   crossing             crossing checks on spans (angle window, max span, tower type)
+#   nogo                 tower and/or conductor forbidden buffers
+#   wetland              tower forbidden band; conductor optionally forbidden
+#   landclass            LULC/forest class: Allowed (priced) or No-Go
+#   geometry             span, deviation, tower-type and section parameters (no layer)
+
+version: "AESL-2026.10-default"
+
+groups:
+  - key: lock
+    title: "Statutory minimums"
+    desc: "Legal floors. Editable, but a change is flagged on every export."
+    statutory: true
+    rules:
+      - id: building_clearance
+        name: "Clearance from buildings"
+        note: "CEA 2023 Reg. 63 — measured at maximum sag and maximum wind deflection"
+        layer: buildings
+        mechanism: conductor_clearance
+        params:
+          - {key: vertical_m, label: "Vertical", type: num, unit: m, value: {765: 10.6, 400: 5.6, 220: 4.6, 132: 4.0}, best_guess: true}
+          - {key: horizontal_m, label: "Horizontal", type: num, unit: m, value: {765: 8.9, 400: 5.6, 220: 3.8, 132: 2.9}, best_guess: true}
+          - {key: increment_per_33kv_m, label: "Increment per 33 kV", type: num, unit: m, value: 0.3}
+
+      - id: airport_prohibition
+        name: "Airport — EHT line prohibition"
+        note: "MoCA Height Restriction Rules 2015, Schedule I ¶1.2"
+        layer: aviation
+        mechanism: airport_prohibition
+        params:
+          - {key: distance_m, label: "From approach surface inner edge", type: num, unit: m, value: 1500}
+          - {key: applies_to, label: "Applies to", type: sel, value: "EHT and HT", options: ["EHT and HT", "EHT only", "All lines"]}
+
+      - id: airport_noc
+        name: "Airport — NOC radius"
+        note: "Rule 4(1) — height governed by the AAI colour-coded zoning map"
+        layer: aviation
+        mechanism: flag_radius
+        params:
+          - {key: radius_km, label: "Radius from ARP", type: num, unit: km, value: 20}
+          - {key: height_source, label: "Height source", type: sel, value: "CCZM", options: ["CCZM", "Fixed cap", "Obstacle surfaces"]}
+
+      - id: pipeline_footing
+        name: "Pipeline — tower footing"
+        note: "CEA 2023 Reg. 60(4), measured from the pipeline right-of-way edge"
+        layer: pipelines
+        mechanism: tower_setback
+        params:
+          - {key: setback_m, label: "Setback", type: num, unit: m, value: 25}
+          - {key: mitigation, label: "Mitigation allowed below", type: sel, value: "No", options: ["No", "Yes, with grounding"]}
+
+      - id: pipeline_crossing
+        name: "Pipeline — crossing angle"
+        note: "CEA 2023 Reg. 60(5) — right angles preferred, never below the minimum"
+        layer: pipelines
+        mechanism: crossing
+        crossing_cost: pipeline
+        params:
+          - {key: min_angle_deg, label: "Minimum angle", type: num, unit: "°", value: 75}
+          - {key: preferred_angle_deg, label: "Preferred angle", type: num, unit: "°", value: 90}
+
+      - id: wetland
+        name: "Notified wetland — foundation"
+        note: "Wetlands Rules 2017 r.4(2) — permanent construction"
+        layer: wetlands
+        mechanism: wetland
+        params:
+          - {key: tower_placement, label: "Tower placement", type: sel, value: "Prohibited", options: ["Prohibited", "Allowed"]}
+          - {key: band_m, label: "Band from 10-year MHFL", type: num, unit: m, value: 50}
+          - {key: conductor_may_span, label: "Conductor may span", type: sel, value: "Yes", options: ["Yes", "No"]}
+
+  - key: nogo
+    title: "No-Go zones"
+    desc: "The route may not enter."
+    rules:
+      - id: buildings
+        name: "Buildings / manmade structure"
+        note: "Includes any compound wall built around the structure"
+        layer: buildings
+        mechanism: nogo
+        params:
+          - {key: tower_setback_m, label: "Tower setback", type: num, unit: m, value: 100}
+          - {key: conductor_buffer, label: "Conductor buffer", type: sel, value: "Corridor half-width", options: ["Corridor half-width", "Fixed", "None"]}
+          - {key: conductor_buffer_m, label: "Fixed conductor buffer", type: num, unit: m, value: 30, best_guess: true}
+          - {key: applies_to, label: "Applies to", type: sel, value: "Angular towers", options: ["Angular towers", "All towers"]}
+
+      - id: clusters
+        name: "Built-up cluster (village)"
+        note: "Cluster detection threshold is an AESL assumption, not a regulation"
+        layer: clusters
+        mechanism: nogo
+        params:
+          - {key: tower_setback_m, label: "Tower buffer", type: num, unit: m, value: 120}
+          - {key: conductor_buffer_m, label: "Conductor buffer", type: num, unit: m, value: 120}
+          - {key: max_spacing_m, label: "Max spacing between buildings", type: num, unit: m, value: 50}
+          - {key: min_area_m2, label: "Minimum cluster area", type: num, unit: "m²", value: 9000}
+
+      - id: substations
+        name: "Sub-station"
+        note: "The gantry is carved out and carries its own buffers"
+        layer: substations
+        mechanism: nogo
+        params:
+          - {key: tower_setback_m, label: "Tower buffer", type: num, unit: m, value: 100}
+          - {key: conductor_buffer_m, label: "Conductor buffer", type: num, unit: m, value: 100}
+          - {key: gantry_buffer_m, label: "Gantry substation buffer", type: num, unit: m, value: 10}
+          - {key: gantry_go_radius_m, label: "Gantry go-zone radius", type: num, unit: m, value: 150}
+
+      - id: dams
+        name: "Dams"
+        note: "Placement, crossing and passing alike"
+        layer: water
+        classes: [dam]
+        mechanism: nogo
+        params:
+          - {key: tower_setback_m, label: "Buffer", type: num, unit: m, value: 400}
+          - {key: crossing, label: "Crossing", type: sel, value: "Prohibited", options: ["Prohibited", "Allowed"]}
+
+      - id: solar
+        name: "Solar park"
+        note: "Reduced from 300 m by the change of 17 May 2024"
+        layer: solar
+        mechanism: nogo
+        params:
+          - {key: tower_setback_m, label: "Tower buffer", type: num, unit: m, value: 150}
+          - {key: conductor_buffer_m, label: "Conductor buffer", type: num, unit: m, value: 150}
+
+      - id: creek
+        name: "Creek area"
+        note: "Sandy coastal strip — largest ground-level buffer in the set"
+        layer: water
+        classes: [creek]
+        mechanism: nogo
+        params:
+          - {key: tower_setback_m, label: "Buffer", type: num, unit: m, value: 2000}
+          - {key: treatment, label: "Treatment", type: sel, value: "No-Go", options: ["No-Go", "Allowed"]}
+
+      # Not in the prototype's 29; added because Vivek set "avoid entry" for wildlife areas
+      # (5 Oct 2026). Counted as rule 30 — switchable like any other.
+      - id: protected_areas
+        name: "Protected areas and ESZ"
+        note: "Wildlife sanctuary, national park and eco-sensitive zone — avoid entry"
+        layer: protected
+        mechanism: nogo
+        params:
+          - {key: tower_setback_m, label: "Tower buffer", type: num, unit: m, value: 0}
+          - {key: conductor_buffer_m, label: "Conductor buffer", type: num, unit: m, value: 0}
+          - {key: treatment, label: "Treatment", type: sel, value: "No-Go", options: ["No-Go", "Allowed"]}
+
+  - key: cross
+    title: "Crossings"
+    desc: "Crossable, with the angle, span and tower type all set here."
+    rules:
+      - id: railway
+        name: "Railway line"
+        note: "Setback follows structure height plus the railway allowance"
+        layer: rail
+        mechanism: crossing
+        crossing_cost: railway
+        params:
+          - {key: tower_setback_m, label: "Tower setback", type: num, unit: m, value: 86}
+          - {key: height_allowance_m, label: "Structure height allowance", type: num, unit: m, value: 6}
+          - {key: angle_deg, label: "Crossing angle", type: rng, unit: "°", value: [70, 110]}
+          - {key: max_span_m, label: "Max crossing span", type: num, unit: m, value: 300}
+          - {key: tower_type, label: "Crossing tower type", type: sel, value: "D", options: ["A", "B", "C", "D", "A/B/C", "B/C/D"]}
+          - {key: pct_design_span, label: "Or % of design span", type: num, unit: "%", value: 80}
+
+      - id: national_highway
+        name: "National highway"
+        note: "Tension-type towers required at all national highways"
+        layer: roads
+        classes: [nh]
+        mechanism: crossing
+        crossing_cost: national_highway
+        params:
+          - {key: tower_setback_m, label: "Tower setback", type: num, unit: m, value: 80}
+          - {key: parallel_setback_m, label: "Parallel-run setback", type: num, unit: m, value: 300}
+          - {key: angle_deg, label: "Crossing angle", type: rng, unit: "°", value: [80, 100]}
+          - {key: max_span_m, label: "Max crossing span", type: num, unit: m, value: 250}
+          - {key: tower_type, label: "Crossing tower type", type: sel, value: "B/C/D", options: ["A", "B", "C", "D", "A/B/C", "B/C/D"]}
+
+      - id: river
+        name: "River"
+        note: "Major and minor crossings take different tower types"
+        layer: water
+        classes: [river]
+        mechanism: crossing
+        crossing_cost: major_river
+        params:
+          - {key: tower_setback_m, label: "Bank buffer, each side", type: num, unit: m, value: 150}
+          - {key: angle_deg, label: "Crossing angle", type: num, unit: "°", value: 90}
+          - {key: major_threshold_m, label: "Major crossing threshold", type: num, unit: m, value: 600}
+          - {key: major_tower_type, label: "Major tower type", type: sel, value: "D", options: ["A", "B", "C", "D", "A/B/C"]}
+          - {key: tower_type, label: "Minor tower type", type: sel, value: "A/B/C", options: ["A", "B", "C", "D", "A/B/C"]}
+
+      - id: canal
+        name: "Canal"
+        note: "Raised from 30 m pending AESL confirmation"
+        layer: water
+        classes: [canal]
+        mechanism: crossing
+        params:
+          - {key: tower_setback_m, label: "Tower buffer", type: num, unit: m, value: 150}
+          - {key: parallel_setback_m, label: "Conductor buffer", type: num, unit: m, value: 150}
+          - {key: angle_deg, label: "Crossing angle", type: sel, value: "Any", options: ["Any", "90°", "75–90°", "80–100°"]}
+          - {key: tower_type, label: "Tower type", type: sel, value: "A/B/C", options: ["A", "B", "C", "D", "A/B/C"]}
+
+      - id: power_line
+        name: "Power line"
+        note: "Crossed at the null point, clear of the existing towers"
+        layer: power
+        classes: [power_line, power_tower]
+        mechanism: crossing
+        crossing_cost: power_line
+        params:
+          - {key: tower_setback_m, label: "Tower to existing tower", type: num, unit: m, value: 100}
+          - {key: null_point_radius_m, label: "Null-point clear radius", type: num, unit: m, value: 100}
+          - {key: angle_deg, label: "Crossing angle", type: rng, unit: "°", value: [60, 120]}
+          - {key: max_span_m, label: "Max crossing span", type: num, unit: m, value: 250}
+          - {key: tower_type, label: "Tower type", type: sel, value: "B/C/D", options: ["B", "C", "D", "B/C/D"]}
+          - {key: max_dev_adjacent_deg, label: "Max deviation at n±1", type: num, unit: "°", value: 45}
+
+  - key: gng
+    title: "Land classes — go or no-go"
+    desc: "Each class is either routable or not. No weights: how strongly the engine prefers one class is internal, not a business input."
+    rules:
+      - id: forest
+        name: "Reserve and protected forest"
+        note: "Routable by default — diversion approval is required in every case. Set to No-Go to keep the route out entirely."
+        layer: forest
+        also_lulc_classes: [reserve_forest]
+        mechanism: landclass
+        cost_class: forest
+        params:
+          - {key: treatment, label: "Treatment", type: sel, value: "Allowed", options: ["Allowed", "No-Go"]}
+          - {key: buffer, label: "Buffer", type: sel, value: "Corridor half-width", options: ["Corridor half-width", "Fixed", "None"]}
+          - {key: buffer_m, label: "Fixed buffer", type: num, unit: m, value: 0}
+          - {key: ro_threshold_ha, label: "Regional Office threshold", type: num, unit: ha, value: 5}
+          - {key: conservator_threshold_ha, label: "Conservator inspection threshold", type: num, unit: ha, value: 40}
+
+      - id: agriculture
+        name: "Agricultural land"
+        note: "Compensation cost applies across the corridor and is set on the Costs screen"
+        layer: lulc
+        classes: [agriculture, agriculture_fallow]
+        mechanism: landclass
+        cost_class: agriculture
+        params:
+          - {key: treatment, label: "Treatment", type: sel, value: "Allowed", options: ["Allowed", "No-Go"]}
+          - {key: buffer, label: "Buffer", type: sel, value: "Corridor half-width", options: ["Corridor half-width", "Fixed", "None"]}
+          - {key: buffer_m, label: "Fixed buffer", type: num, unit: m, value: 0}
+
+      - id: orchard
+        name: "Orchard and plantation"
+        note: "Compensated per tree, so the cost rate carries the difference — not a weight here"
+        layer: lulc
+        classes: [orchard]
+        mechanism: landclass
+        cost_class: orchard
+        params:
+          - {key: treatment, label: "Treatment", type: sel, value: "Allowed", options: ["Allowed", "No-Go"]}
+          - {key: buffer, label: "Buffer", type: sel, value: "Corridor half-width", options: ["Corridor half-width", "Fixed", "None"]}
+          - {key: buffer_m, label: "Fixed buffer", type: num, unit: m, value: 0}
+
+      - id: marsh
+        name: "Marshy land"
+        note: "Construction cost and long-term settlement risk"
+        layer: lulc
+        classes: [marsh, salt_pan]
+        mechanism: landclass
+        cost_class: barren
+        params:
+          - {key: treatment, label: "Treatment", type: sel, value: "Allowed", options: ["Allowed", "No-Go"]}
+          - {key: buffer, label: "Buffer", type: sel, value: "Fixed", options: ["Corridor half-width", "Fixed", "None"]}
+          - {key: buffer_m, label: "Buffer", type: num, unit: m, value: 50}
+
+      - id: social_forest
+        name: "Social forest"
+        note: "Planted strip alongside road, canal or railway"
+        layer: lulc
+        classes: [social_forest]
+        mechanism: landclass
+        cost_class: social_forest
+        params:
+          - {key: treatment, label: "Treatment", type: sel, value: "Allowed", options: ["Allowed", "No-Go"]}
+          - {key: buffer, label: "Buffer", type: sel, value: "Fixed", options: ["Corridor half-width", "Fixed", "None"]}
+          - {key: buffer_m, label: "Buffer", type: num, unit: m, value: 0}
+          - {key: strip_width_m, label: "Strip width from infrastructure", type: num, unit: m, value: 100}
+
+      - id: barren
+        name: "Shrubs, barren and hard rock"
+        note: "Cheapest ground on any corridor; hard rock is dearer to excavate, which the foundation rate handles"
+        layer: lulc
+        classes: [shrub, barren, hard_rock, sand_dunes, unclassified]
+        mechanism: landclass
+        cost_class: barren
+        params:
+          - {key: treatment, label: "Treatment", type: sel, value: "Allowed", options: ["Allowed", "No-Go"]}
+          - {key: buffer, label: "Buffer", type: sel, value: "Fixed", options: ["Corridor half-width", "Fixed", "None"]}
+          - {key: buffer_m, label: "Buffer", type: num, unit: m, value: 0}
+
+  - key: geo
+    title: "Geometry and towers"
+    desc: "Span, deviation and tower selection. No layer needed."
+    rules:
+      - id: max_deviation
+        name: "Maximum angular deviation"
+        note: "Top of the largest tower class available"
+        mechanism: geometry
+        params:
+          - {key: limit_deg, label: "Limit", type: num, unit: "°", value: 60}
+
+      - id: design_span
+        name: "Design span"
+        note: "Per voltage, plain terrain governs the solve; hilly applies where the DEM slope class says so"
+        mechanism: geometry
+        params:
+          - {key: plain_m, label: "Plain terrain", type: num, unit: m, value: {765: 400, 400: 400, 220: 350, 132: 320}, best_guess: true}
+          - {key: hilly_m, label: "Hilly terrain", type: num, unit: m, value: {765: 300, 400: 300, 220: 275, 132: 250}, best_guess: true}
+          - {key: urban_m, label: "Urban / populated", type: num, unit: m, value: {765: 250, 400: 250, 220: 225, 132: 200}, best_guess: true}
+
+      - id: section_interval
+        name: "Section point interval"
+        note: "Tension point using a B/DB, C/DC or D/DD tower"
+        mechanism: geometry
+        params:
+          - {key: plain_km, label: "Plain terrain", type: num, unit: km, value: 5}
+          - {key: hilly_km, label: "Hilly terrain", type: num, unit: km, value: 3}
+
+      - id: corridor_half_width
+        name: "Corridor half-width"
+        note: "Half the notified right of way for the line voltage (MoP RoW guidelines 2015)"
+        mechanism: geometry
+        params:
+          - {key: half_width_m, label: "Half-width for this line", type: num, unit: m,
+             value: {765_dc: 33.5, 765_sc: 32, 765_qc: 38, 400_dc: 23, 400_sc: 23, 400_qc: 27, 220_dc: 17.5, 220_sc: 17.5, 220_qc: 21, 132_dc: 13.5, 132_sc: 13.5, 132_qc: 16},
+             best_guess: true}
+          - {key: urban_half_width_m, label: "Urban half-width", type: num, unit: m, value: {765: 27, 400: 20, 220: 15, 132: 12}, best_guess: true}
+
+      - id: tower_type_bands
+        name: "Tower type by deviation"
+        note: "Band boundaries in degrees — the band a deviation falls in picks the tower"
+        mechanism: geometry
+        params:
+          - {key: A, label: "A up to", type: num, unit: "°", value: 1}
+          - {key: B1, label: "B1 up to", type: num, unit: "°", value: 7}
+          - {key: B2, label: "B2 up to", type: num, unit: "°", value: 15}
+          - {key: C1, label: "C1 up to", type: num, unit: "°", value: 22}
+          - {key: C2, label: "C2 up to", type: num, unit: "°", value: 30}
+          - {key: D45, label: "D45 up to", type: num, unit: "°", value: 45}
+          - {key: D60, label: "D60 up to", type: num, unit: "°", value: 60}
+
+      - id: crossing_span_limits
+        name: "Span limits at a crossing"
+        note: "Minimum stands in for the falling-tower distance"
+        mechanism: geometry
+        params:
+          - {key: min_span_m, label: "Minimum span", type: num, unit: m, value: 100}
+          - {key: angle_point_shift_m, label: "Angle point shift allowance", type: num, unit: m, value: 100}
