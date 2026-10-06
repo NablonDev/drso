@@ -73,7 +73,7 @@ function ServedPill({ served }: { served: string }) {
 function VoltageLegend({ counts }: { counts: Record<string, number> }) {
   return (
     <span style={{ display: "flex", flexWrap: "wrap", gap: "2px 8px", marginTop: 3 }} data-testid="voltage-legend">
-      {VOLTAGE_COLOURS.map((v) => (
+      {VOLTAGE_COLOURS.filter((v) => `line_${v.kv}` in counts || `tower_${v.kv}` in counts).map((v) => (
         <span key={v.kv} className="mono" style={{ fontSize: 10.5, color: "var(--ink-3, #777)" }}>
           <i style={{ display: "inline-block", width: 10, height: 3, background: v.colour, verticalAlign: "middle", marginRight: 3 }} />
           {v.kv} kV {int(counts[`line_${v.kv}`] ?? 0)}/{int(counts[`tower_${v.kv}`] ?? 0)}
@@ -473,7 +473,7 @@ function Body({ L }: { L: LayersResponse }) {
                           {l.extracted ? `${int(l.feature_count ?? 0)} features` : "not extracted"}
                           {l.extracted && l.confidence !== null && l.confidence !== undefined ? ` · ${l.confidence.toFixed(2)}` : ""}
                         </em>
-                        {l.key === "power" && l.stats?.by_voltage ? <VoltageLegend counts={l.stats.by_voltage} /> : null}
+                        {(l.key === "power" || l.key === "power_lt") && l.stats?.by_voltage ? <VoltageLegend counts={l.stats.by_voltage} /> : null}
                         {l.key === "roads" && l.stats?.by_class ? <HighwayLegend counts={l.stats.by_class} /> : null}
                         {l.stats?.by_structure && Object.keys(l.stats.by_structure).length ? <StructureCounts counts={l.stats.by_structure} /> : null}
                       </span>

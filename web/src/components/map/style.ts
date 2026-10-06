@@ -32,6 +32,7 @@ export const LAYER_COLOURS: Record<string, string> = {
   roads: "#8C8274",
   rail: "#46596A",
   power: "#7A5EA8",
+  power_lt: "#6BBF59",
   telecom: "#2BB0A6",
   pipelines: "#B07A2A",
   crz: "#2E6FB0",
@@ -49,6 +50,8 @@ export const VOLTAGE_COLOURS: { kv: number; colour: string }[] = [
   { kv: 400, colour: "#F28C28" },
   { kv: 220, colour: "#3FA7D6" },
   { kv: 132, colour: "#B28DFF" },
+  { kv: 66, colour: "#6BBF59" },
+  { kv: 33, colour: "#C9B458" },
 ];
 
 /** Highway class colours (OSM highways, the roads layer). */
@@ -124,6 +127,7 @@ export const LAYER_ORDER = [
   "rail",
   "pipelines",
   "power",
+  "power_lt",
   "telecom",
   "wind_turbines",
   "monuments",
@@ -157,6 +161,7 @@ export const DEFAULT_ON = new Set([
   "roads",
   "rail",
   "power",
+  "power_lt",
   "telecom",
   "crz",
   "aviation",
@@ -255,7 +260,7 @@ export function addRunLayers(map: maplibregl.Map, runId: string, opts: { before?
         filter: IS_LINE,
         layout: { "line-cap": "round", "line-join": "round" },
         paint: {
-          "line-color": key === "power" ? voltageColour(c) : key === "roads" ? highwayColour(c) : c,
+          "line-color": (key === "power" || key === "power_lt") ? voltageColour(c) : key === "roads" ? highwayColour(c) : c,
           "line-width": ["case", ["boolean", ["feature-state", "sel"], false], 5, key === "river" || key === "canal" || key === "nalla" ? 3 : key === "rail" ? 2.4 : key === "roads" ? ["match", ["get", "class"], "nh", 3.2, 2.2] : 2.2],
           "line-opacity": 0.95,
           ...(key === "rail" ? { "line-dasharray": [3, 2] } : key === "pipelines" ? { "line-dasharray": [1, 2] } : {}),
@@ -270,7 +275,7 @@ export function addRunLayers(map: maplibregl.Map, runId: string, opts: { before?
         ...common,
         filter: IS_POINT,
         paint: {
-          "circle-color": key === "power" ? voltageColour(c) : c,
+          "circle-color": (key === "power" || key === "power_lt") ? voltageColour(c) : c,
           "circle-radius": ["interpolate", ["linear"], ["zoom"], 8, 1.6, 13, 3.2, 16, 5],
           "circle-stroke-color": ["case", ["boolean", ["feature-state", "sel"], false], "#ffffff", "rgba(255,255,255,.7)"],
           "circle-stroke-width": ["case", ["boolean", ["feature-state", "sel"], false], 2.5, 0.8],

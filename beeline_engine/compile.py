@@ -423,7 +423,7 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
         elif m == "crossing":
             td = float(p.get("tower_setback_m", 0))
             classes = r.classes
-            if r.id == "power_line":
+            if r.id in ("power_line", "power_line_lt"):
                 # towers keep clear of existing towers and of the existing conductors;
                 # the new conductor keeps the null-point radius from existing towers
                 # "Tower to existing tower" applies to towers. Existing conductors: a new tower

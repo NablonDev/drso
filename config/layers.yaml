@@ -186,14 +186,28 @@ layers:
     foundation_class: wet_submerged
     classes: [marsh]
 
+  # Split 6 Oct 2026 (Vivek): high tension 765/400/220/132 kV and low tension 66/33 kV, one OSM
+  # store, separate layers and rules (same values for now). Key `power` kept for high tension.
   - key: power
-    name: "Power lines and towers"
+    name: "High tension power lines and towers"
     kind: any
     producer: osm
-    desc: "OpenStreetMap power=line / power=tower · 765, 400, 220, 132 kV only"
+    desc: "OpenStreetMap power lines and towers · 765, 400, 220, 132 kV"
     minutes_per_km2: 0.002
     default_confidence: 0.85
     voltages: [765, 400, 220, 132]
+    refreshable: true
+    refresh_label: OSM
+    classes: [power_line, power_tower]
+
+  - key: power_lt
+    name: "Low tension power lines and towers"
+    kind: any
+    producer: osm
+    desc: "OpenStreetMap power lines (incl. minor_line) and towers / poles · 66, 33 kV"
+    minutes_per_km2: 0.002
+    default_confidence: 0.70
+    voltages: [66, 33]
     refreshable: true
     refresh_label: OSM
     classes: [power_line, power_tower]

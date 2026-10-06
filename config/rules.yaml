@@ -287,9 +287,26 @@ groups:
           - {key: tower_type, label: "Tower type", type: sel, value: "A/B/C", options: ["A", "B", "C", "D", "A/B/C"]}
 
       - id: power_line
-        name: "Power line"
-        note: "Crossed at the null point, clear of the existing towers"
+        name: "High tension power line"
+        note: "765 / 400 / 220 / 132 kV — crossed at the null point, clear of the existing towers"
         layer: power
+        classes: [power_line, power_tower]
+        mechanism: crossing
+        crossing_cost: power_line
+        params:
+          - {key: tower_setback_m, label: "Tower to existing tower", type: num, unit: m, value: 100}
+          - {key: null_point_radius_m, label: "Null-point clear radius", type: num, unit: m, value: 100}
+          - {key: angle_deg, label: "Crossing angle", type: rng, unit: "°", value: [60, 120]}
+          - {key: max_span_m, label: "Max crossing span", type: num, unit: m, value: 250}
+          - {key: tower_type, label: "Tower type", type: sel, value: "B/C/D", options: ["B", "C", "D", "B/C/D"]}
+          - {key: max_dev_adjacent_deg, label: "Max deviation at n±1", type: num, unit: "°", value: 45}
+
+      # Added 6 Oct 2026 with the HT / LT split (Vivek): same values as the high tension rule for
+      # now, set independently. Same shutdown crossing cost.
+      - id: power_line_lt
+        name: "Low tension power line"
+        note: "66 / 33 kV — crossed at the null point, clear of the existing towers / poles"
+        layer: power_lt
         classes: [power_line, power_tower]
         mechanism: crossing
         crossing_cost: power_line

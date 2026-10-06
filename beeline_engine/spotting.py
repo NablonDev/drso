@@ -43,7 +43,8 @@ class SpotParams:
     lowest_attachment_m: float
     sag_at_design_m: float
     go_radius_m: float
-    max_dev_adjacent_power_deg: float = 45.0
+    # power-line crossing rule id -> max deviation at n±1 (high and low tension rules, 6 Oct 2026)
+    max_dev_adjacent_power_deg: dict[str, float] = field(default_factory=dict)
     river_max_span_m: float = 0.0
     nudge_radius_m: float = 30.0
 
@@ -323,10 +324,11 @@ def build_route(chk: Checker, pts: list[tuple[float, float]], angle_set: set[int
                     if nt != t.type:
                         t.type = nt
                     t.reasons.append(f"crossing:{c['rule']}")
-            if c["rule"] == "power_line":
+            if c["rule"] in sp.max_dev_adjacent_power_deg:
+                lim = sp.max_dev_adjacent_power_deg[c["rule"]]
                 for ti in (s.a - 1, s.b + 1):
-                    if 0 < ti < len(towers) - 1 and towers[ti].deflection_deg > sp.max_dev_adjacent_power_deg:
-                        towers[ti].warnings.append("power_adjacent_deviation")
+                    if 0 < ti < len(towers) - 1 and towers[ti].deflection_deg > lim:
+                        towers[ti].warnings.append(f"power_adjacent_deviation:{c['rule']}")
     # section points
     last_tension = 0.0
     run = 0.0

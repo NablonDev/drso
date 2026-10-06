@@ -1,16 +1,17 @@
 """OpenStreetMap transmission lines and towers for India, stored by voltage.
 
-Only 765, 400, 220 and 132 kV are kept (Vivek, 5 Oct 2026). Objects: power=line ways and
-power=tower nodes. A tower carries the voltage(s) of the line(s) it supports — OSM rarely tags
+Kept: 765, 400, 220, 132 kV (high tension, layer `power`) and 66, 33 kV (low tension, layer
+`power_lt`) (Vivek, 5 and 6 Oct 2026). Objects: power=line and power=minor_line ways, power=tower
+and power=pole nodes (33 kV is mostly mapped as minor_line on poles). A tower carries the voltage(s) of the line(s) it supports — OSM rarely tags
 voltage on towers. A line or tower with several voltages (e.g. "400000;220000") is stored once
 per voltage.
 
 Store: PostGIS table `osm_power`, list-partitioned by voltage_kv (osm_power_765 / _400 / _220 /
-_132). Every load is logged in `osm_power_loads` with its OSM data timestamp.
+_132 / _66 / _33). Every load is logged in `osm_power_loads` with its OSM data timestamp.
 
   India load   python -m beeline_api.osm_power load-india [--pbf PATH]   (Geofabrik extract)
-  AOI refresh  refresh_aoi(bbox)  — Overpass; replaces the lines and towers of that bbox in one
-               transaction. Triggered from the UI ("Refresh from OSM") as an extraction job.
+  AOI refresh  refresh_aoi(bbox, voltages)  — Overpass; replaces the lines and towers of those
+               voltages in that bbox in one transaction. Triggered from the UI ("Refresh from OSM") as an extraction job.
 """
 from __future__ import annotations
 
@@ -30,7 +31,12 @@ from shapely.geometry import LineString, Point, box
 from . import db, settings
 
 log = logging.getLogger(__name__)
-VOLTAGES = (765, 400, 220, 132)
+HT_VOLTAGES = (765, 400, 220, 132)
+LT_VOLTAGES = (66, 33)
+VOLTAGES = HT_VOLTAGES + LT_VOLTAGES
+GROUPS = {"ht": HT_VOLTAGES, "lt": LT_VOLTAGES}
+LINE_TAGS = ("line", "minor_line")
+TOWER_TAGS = ("tower", "pole")
 KEEP_TAGS = ("name", "ref", "operator", "owner", "circuits", "cables", "voltage", "frequency", "line", "location",
              "design", "material", "structure", "start_date", "wires")
 GEOFABRIK_URL = "https://download.geofabrik.de/asia/india-latest.osm.pbf"
@@ -55,6 +61,8 @@ create table if not exists osm_power_765 partition of osm_power for values in (7
 create table if not exists osm_power_400 partition of osm_power for values in (400);
 create table if not exists osm_power_220 partition of osm_power for values in (220);
 create table if not exists osm_power_132 partition of osm_power for values in (132);
+create table if not exists osm_power_66 partition of osm_power for values in (66);
+create table if not exists osm_power_33 partition of osm_power for values in (33);
 create index if not exists osm_power_geom on osm_power using gist (geom);
 create index if not exists osm_power_osm on osm_power (osm_type, osm_id);
 
@@ -71,6 +79,7 @@ create table if not exists osm_power_loads (
   counts jsonb not null default '{}'::jsonb,
   error text
 );
+alter table osm_power_loads add column if not exists voltages int[];   -- aoi refresh: voltages replaced
 """
 
 
@@ -86,7 +95,7 @@ _NUM = re.compile(r"(\d+(?:\.\d+)?)\s*(k?v)?", re.I)
 
 
 def parse_voltages(tag: str | None) -> list[int]:
-    """'400000;220000' -> [400, 220]; '400 kV' -> [400]; anything outside the four levels dropped."""
+    """'400000;220000' -> [400, 220]; '400 kV' -> [400]; anything outside VOLTAGES dropped."""
     if not tag:
         return []
     out = []
@@ -104,7 +113,7 @@ def parse_voltages(tag: str | None) -> list[int]:
 
 
 def _is_line(tags: dict) -> bool:
-    return tags.get("power") == "line" and tags.get("line") not in ("busbar", "bay")
+    return tags.get("power") in LINE_TAGS and tags.get("line") not in ("busbar", "bay")
 
 
 def _keep(tags: dict) -> dict:
@@ -189,7 +198,7 @@ def load_india(pbf: Path | None = None, progress=None) -> dict:
     pbf = ensure_india_pbf(pbf)
     ts = india_timestamp(pbf)
     filtered = OSM_DIR / "india-power.osm.pbf"
-    subprocess.run(["osmium", "tags-filter", str(pbf), "w/power=line", "n/power=tower", "-o", str(filtered),
+    subprocess.run(["osmium", "tags-filter", str(pbf), "w/power=line,minor_line", "n/power=tower,pole", "-o", str(filtered),
                     "--overwrite"], check=True)
     load = db.one("insert into osm_power_loads (kind, source, osm_timestamp) values ('india', %s, %s) returning id",
                   (f"Geofabrik India extract ({pbf.name})", ts))
@@ -200,7 +209,7 @@ def load_india(pbf: Path | None = None, progress=None) -> dict:
 
     class H(osmium.SimpleHandler):
         def node(self, n):
-            if n.tags.get("power") == "tower":
+            if n.tags.get("power") in TOWER_TAGS:
                 towers[n.id] = (n.location.lon, n.location.lat, dict(n.tags))
 
         def way(self, w):
@@ -265,19 +274,22 @@ def overpass_query(query: str, timeout: int = 300) -> dict:
     raise RuntimeError(f"Overpass unavailable ({last})")
 
 
-def refresh_aoi(bbox: tuple[float, float, float, float], run_id: str | None = None, progress=None) -> dict:
-    """Re-pull lines and towers intersecting bbox (minx, miny, maxx, maxy) and replace them."""
+def refresh_aoi(bbox: tuple[float, float, float, float], run_id: str | None = None, progress=None,
+                voltages: tuple[int, ...] = VOLTAGES) -> dict:
+    """Re-pull lines and towers intersecting bbox (minx, miny, maxx, maxy) and replace those of
+    `voltages` (one layer's voltage group); other voltages in the bbox are left as they are."""
     init_schema()
+    voltages = [int(v) for v in voltages]
     minx, miny, maxx, maxy = bbox
     aoi = box(minx, miny, maxx, maxy)
-    load = db.one("""insert into osm_power_loads (kind, source, aoi, run_id)
-                     values ('aoi', 'OpenStreetMap Overpass', ST_GeomFromText(%s, 4326), %s) returning id""",
-                  (aoi.wkt, run_id))
+    load = db.one("""insert into osm_power_loads (kind, source, aoi, run_id, voltages)
+                     values ('aoi', 'OpenStreetMap Overpass', ST_GeomFromText(%s, 4326), %s, %s) returning id""",
+                  (aoi.wkt, run_id, voltages))
     lid = load["id"]
     try:
         if progress:
             progress(0.1, "Querying OpenStreetMap (Overpass)")
-        q = (f'[out:json][timeout:300];(way["power"="line"]({miny},{minx},{maxy},{maxx}););'
+        q = (f'[out:json][timeout:300];(way["power"~"^(line|minor_line)$"]({miny},{minx},{maxy},{maxx}););'
              f'(._;>;);out body;')
         data = _overpass(q)
         ts = data.get("osm3s", {}).get("timestamp_osm_base")
@@ -286,7 +298,7 @@ def refresh_aoi(bbox: tuple[float, float, float, float], run_id: str | None = No
         for el in data.get("elements", []):
             if el["type"] == "node":
                 nodes[el["id"]] = (el["lon"], el["lat"])
-                if el.get("tags", {}).get("power") == "tower":
+                if el.get("tags", {}).get("power") in TOWER_TAGS:
                     towers[el["id"]] = (el["lon"], el["lat"], el["tags"])
         for el in data.get("elements", []):
             if el["type"] == "way" and _is_line(el.get("tags", {})):
@@ -294,7 +306,7 @@ def refresh_aoi(bbox: tuple[float, float, float, float], run_id: str | None = No
                 lines.append((el["id"], el["tags"], coords, el["nodes"]))
         rows, counts = _rows_from(lines, towers)
         # towers outside the bbox stay as they are (not deleted, so not re-inserted)
-        rows = [r for r in rows if r[1] == "line" or aoi.contains(r[5])]
+        rows = [r for r in rows if r[0] in voltages and (r[1] == "line" or aoi.contains(r[5]))]
         counts = {}
         for kv, kind, *_ in rows:
             counts[f"{kind}_{kv}"] = counts.get(f"{kind}_{kv}", 0) + 1
@@ -303,10 +315,11 @@ def refresh_aoi(bbox: tuple[float, float, float, float], run_id: str | None = No
             progress(0.7, "Replacing lines and towers in the store")
         with db.conn() as c:
             with c.transaction():
-                before = c.execute("""select count(*) as n from osm_power
-                                      where ST_Intersects(geom, ST_GeomFromText(%s, 4326))""", (aoi.wkt,)).fetchone()["n"]
-                c.execute("""delete from osm_power where ST_Intersects(geom, ST_GeomFromText(%s, 4326))
-                             or (kind='line' and osm_id = any(%s))""", (aoi.wkt, line_ids))
+                before = c.execute("""select count(*) as n from osm_power where voltage_kv = any(%s)
+                                      and ST_Intersects(geom, ST_GeomFromText(%s, 4326))""", (voltages, aoi.wkt)).fetchone()["n"]
+                c.execute("""delete from osm_power where voltage_kv = any(%s) and
+                             (ST_Intersects(geom, ST_GeomFromText(%s, 4326)) or (kind='line' and osm_id = any(%s)))""",
+                          (voltages, aoi.wkt, line_ids))
                 with c.cursor() as cur:
                     _copy_rows(cur, rows, lid)
                 counts["replaced"] = int(before)
@@ -320,16 +333,20 @@ def refresh_aoi(bbox: tuple[float, float, float, float], run_id: str | None = No
 
 
 # ---- reading ----------------------------------------------------------------------------
-def read_band(band_lonlat) -> tuple[gpd.GeoDataFrame, dict]:
-    """Lines and towers intersecting the band, as layer features (class power_line / power_tower)."""
+def read_band(band_lonlat, voltages: tuple[int, ...] = VOLTAGES) -> tuple[gpd.GeoDataFrame, dict]:
+    """Lines and towers of `voltages` intersecting the band, as layer features (class power_line /
+    power_tower; poles count as towers)."""
     init_schema()
     wkt = band_lonlat.wkt
+    voltages = [int(v) for v in voltages]
     with db.conn() as c:
         rows = c.execute("""select voltage_kv, kind, osm_type, osm_id, tags, ST_AsBinary(geom) as wkb
-                            from osm_power where ST_Intersects(geom, ST_GeomFromText(%s, 4326))""", (wkt,)).fetchall()
+                            from osm_power where voltage_kv = any(%s)
+                            and ST_Intersects(geom, ST_GeomFromText(%s, 4326))""", (voltages, wkt)).fetchall()
         loads = c.execute("""select id, kind, source, osm_timestamp, finished_at from osm_power_loads
-                             where status='done' and (kind='india' or ST_Intersects(aoi, ST_GeomFromText(%s, 4326)))
-                             order by finished_at desc""", (wkt,)).fetchall()
+                             where status='done' and (kind='india' or (ST_Intersects(aoi, ST_GeomFromText(%s, 4326))
+                                   and (voltages is null or voltages && %s::int[])))
+                             order by finished_at desc""", (wkt, voltages)).fetchall()
     geoms = shapely.from_wkb([bytes(r["wkb"]) for r in rows]) if rows else []
     gdf = gpd.GeoDataFrame({
         "class": ["power_line" if r["kind"] == "line" else "power_tower" for r in rows],
@@ -345,7 +362,7 @@ def read_band(band_lonlat) -> tuple[gpd.GeoDataFrame, dict]:
     india = next((l for l in loads if l["kind"] == "india"), None)
     aoi = next((l for l in loads if l["kind"] == "aoi"), None)
     newest = max([l["osm_timestamp"] for l in loads if l["osm_timestamp"]], default=None)
-    src = "OpenStreetMap power=line / power=tower, 765/400/220/132 kV"
+    src = f"OpenStreetMap power=line / minor_line, tower / pole, {'/'.join(map(str, voltages))} kV"
     if india:
         src += f" · India extract {india['osm_timestamp']:%d %b %Y}" if india["osm_timestamp"] else " · India extract"
     if aoi:

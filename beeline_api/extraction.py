@@ -144,12 +144,13 @@ def _extract_one(run, k, lay, mode, src, band, img, rules, progress, rep):
                         model="cluster-derive", model_version="1.0", confidence=lay.get("default_confidence"),
                         image_source=(bmeta or {}).get("image_source"), image_date=(bmeta or {}).get("image_date"))
         elif lay["producer"] == "osm":
+            kvs = tuple(lay.get("voltages") or osm_power.VOLTAGES)     # power: HT, power_lt: LT
             if _refresh_requested(rep):
                 minx, miny, maxx, maxy = band.bounds
                 res = osm_power.refresh_aoi((minx, miny, maxx, maxy), run_id=run["id"],
-                                            progress=lambda f, st: progress(0.8 * f))
+                                            progress=lambda f, st: progress(0.8 * f), voltages=kvs)
                 meta["refresh"] = res
-            auto_gdf, om = osm_power.read_band(band)
+            auto_gdf, om = osm_power.read_band(band, kvs)
             auto_cov = None
             if not om["india_loaded"] and not om["last_refresh"]:
                 raise FileNotFoundError("OSM power store is empty — load India (python -m beeline_api.osm_power "

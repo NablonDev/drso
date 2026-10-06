@@ -25,7 +25,8 @@ from .spotting import SpotParams, spot
 log = logging.getLogger(__name__)
 
 
-CROSSING_RULES = {"railway", "national_highway", "river", "canal", "power_line", "pipeline_crossing"}
+POWER_LINE_RULES = ("power_line", "power_line_lt")          # high / low tension (6 Oct 2026)
+CROSSING_RULES = {"railway", "national_highway", "river", "canal", *POWER_LINE_RULES, "pipeline_crossing"}
 
 
 class Cancelled(Exception):
@@ -188,7 +189,8 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
                     lowest_attachment_m=float(eng["spotting"]["lowest_attachment_m"][inp.kv]),
                     sag_at_design_m=float(eng["spotting"]["sag_at_design_span_m"][inp.kv]),
                     go_radius_m=go_radius,
-                    max_dev_adjacent_power_deg=float(rules["power_line"].params.get("max_dev_adjacent_deg", 45)),
+                    max_dev_adjacent_power_deg={rid: float(rules[rid].params.get("max_dev_adjacent_deg", 45))
+                                                for rid in POWER_LINE_RULES if rid in rules},
                     river_max_span_m=float(eng["spans"].get("river_crossing_max_span_m", 0)),
                     nudge_radius_m=float(eng["grid"].get("nudge_radius_m", 30)))
 
@@ -533,8 +535,10 @@ def _route_events(sr, frame, comp, findex, rules, sp, layer_names, inp, dem, blo
                 evs.append(event("CLEARANCE_SHORT", {"tower_a": t.no, "clearance_m": sp_i.min_clearance_m if sp_i else 0,
                                                      "clearance_req": sp.ground_clearance_m, "dem": demmod.SOURCE},
                                  chainage_km=round(t.x / 1000, 2), severity="warn"))
-            elif w == "power_adjacent_deviation":
-                evs.append(event("RULE_WARNING", {"tower": t.no, "what": f"deviates {t.deflection_deg:.0f}° next to a power-line crossing; the rule allows {sp.max_dev_adjacent_power_deg:g}° at n±1",
+            elif w.startswith("power_adjacent_deviation"):
+                rid = w.partition(":")[2] or "power_line"
+                kind = "low tension" if rid == "power_line_lt" else "high tension"
+                evs.append(event("RULE_WARNING", {"tower": t.no, "what": f"deviates {t.deflection_deg:.0f}° next to a {kind} power-line crossing; the rule allows {sp.max_dev_adjacent_power_deg.get(rid, 45):g}° at n±1",
                                                   "code": w}, chainage_km=round(t.x / 1000, 2), severity="warn"))
         for v in t.violations:
             what = {"tower_buffer": "tower stands inside a no-go buffer",
