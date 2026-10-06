@@ -93,6 +93,10 @@ export const LULC_CLASSES: { key: string; label: string; colour: string }[] = [
   { key: "unclassified", label: "Unclassified", colour: "#CFCFC6" },
 ];
 
+/** Layers the tile server leaves out below z12 (beeline_api/app.py DENSE_LAYERS): shown from z12. */
+export const DENSE_LAYERS = ["buildings", "village_roads"];
+export const DENSE_MINZOOM = 12;
+
 /** Bottom-to-top drawing order. */
 export const LAYER_ORDER = [
   "lulc",
@@ -226,7 +230,7 @@ export function addRunLayers(map: maplibregl.Map, runId: string, opts: { before?
   for (const key of LAYER_ORDER) {
     const c = LAYER_COLOURS[key] ?? "#888";
     const fillColour = key === "lulc" ? lulcColour() : c;
-    const minzoom = key === "buildings" ? 12 : 6;
+    const minzoom = DENSE_LAYERS.includes(key) ? DENSE_MINZOOM : 6;
     const common = { source: "run", "source-layer": key, minzoom } as const;
     map.addLayer(
       {

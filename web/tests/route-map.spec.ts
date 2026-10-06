@@ -16,6 +16,16 @@ test("route map renders the map canvas and four routes in the comparison table",
   await rows.nth(2).click();
   await expect(rows.nth(2)).toHaveClass(/selrow/);
   await expect(page.getByTestId("route-cards").locator(".routecard").nth(2)).toHaveAttribute("aria-pressed", "true");
+  // every run layer can be shown under the routes
+  const lp = page.getByTestId("route-layers");
+  await expect(lp.locator(".lrow").first()).toBeVisible();
+  const n = await lp.locator(".lrow").count();
+  await lp.getByRole("button", { name: "All", exact: true }).click();
+  await expect(lp).toContainText(`${n} of ${n} shown`);
+  await lp.getByRole("button", { name: "None", exact: true }).click();
+  await expect(lp).toContainText(`0 of ${n} shown`);
+  await lp.getByRole("checkbox").first().check();
+  await expect(lp).toContainText(`1 of ${n} shown`);
   // zoom readout never exceeds the native ceiling
   await expect(page.getByTestId("zoombar")).toContainText(/z\d/);
   expect(appErrors(errors)).toEqual([]);

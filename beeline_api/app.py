@@ -270,7 +270,9 @@ def _reuse(rid: str, src_id: str):
     old = _run(src_id)
     nb, f = geo.band_polygon((new["a_lon"], new["a_lat"]), (new["b_lon"], new["b_lat"]), new["band_km"])
     ob, _ = geo.band_polygon((old["a_lon"], old["a_lat"]), (old["b_lon"], old["b_lat"]), old["band_km"])
-    if not ob.buffer(1e-6).contains(nb):
+    # compared in the new band's metric frame: in degrees the long band edges bend, and a ±5 km band
+    # stuck out of a ±25 km band on the same A-B by ~3 ha, so wider runs could never be reused
+    if not f.geom_to_utm(ob).buffer(5.0).contains(f.geom_to_utm(nb)):
         raise HTTPException(400, f"{src_id} does not cover this band; only full-cover reuse is supported in v1")
     db.exec_("""insert into run_layers (run_id, layer_key, layer_version_id, carried, stale)
                 select %s, layer_key, layer_version_id, true, false from run_layers where run_id=%s
@@ -881,6 +883,10 @@ def feature(run_id: str, fid: int):
 
 
 _MVT_NATIVE: bool | None = None   # PostGIS built with protobuf-c? decided on first tile
+# Left out of tiles below z12: too many small features to see or to encode at overview scale (a z9
+# tile of a ±25 km band held 79k village-road segments: 50 s, 2.8 MB). The map style hides them
+# below z12 too (web/src/components/map/style.ts DENSE_MINZOOM).
+DENSE_LAYERS = ("buildings", "village_roads")
 
 
 def _tile_native(run_id, z, x, y, skip_dense) -> bytes:
@@ -888,14 +894,14 @@ def _tile_native(run_id, z, x, y, skip_dense) -> bytes:
         rows = c.execute("""
           with env as (select ST_TileEnvelope(%s, %s, %s) as e),
                lv as (select layer_key, layer_version_id from run_layers where run_id=%s
-                      and (not %s or layer_key not in ('buildings')))
+                      and (not %s or layer_key <> all(%s)))
           select q.layer_key, ST_AsMVT(q, q.layer_key, 4096, 'geom', 'id') as tile from (
             select lv.layer_key, f.id, f.class, f.name, f.confidence, f.origin,
                    (f.attrs->>'voltage_kv')::int as voltage_kv,
                    ST_AsMVTGeom(ST_Transform(f.geom, 3857), env.e, 4096, 64, true) as geom
             from features f join lv on f.layer_version_id = lv.layer_version_id, env
             where f.geom && ST_Transform(env.e, 4326)
-          ) q where q.geom is not null group by q.layer_key""", (z, x, y, run_id, skip_dense)).fetchall()
+          ) q where q.geom is not null group by q.layer_key""", (z, x, y, run_id, skip_dense, list(DENSE_LAYERS))).fetchall()
     return b"".join(bytes(r["tile"]) for r in rows if r["tile"])
 
 
@@ -907,15 +913,17 @@ def _tile_python(run_id, z, x, y, skip_dense) -> bytes:
         rows = c.execute("""
           with env as (select ST_TileEnvelope(%s, %s, %s) as e),
                lv as (select layer_key, layer_version_id from run_layers where run_id=%s
-                      and (not %s or layer_key not in ('buildings')))
+                      and (not %s or layer_key <> all(%s)))
           select lv.layer_key, f.id, f.class, f.name, f.confidence, f.origin,
                  (f.attrs->>'voltage_kv')::int as voltage_kv,
-                 ST_AsBinary(ST_SimplifyPreserveTopology(ST_ClipByBox2D(ST_Transform(f.geom, 3857),
+                 -- ST_Simplify drops rings below a tile pixel (preserveCollapsed false); the topology-
+                 -- preserving variant kept every ring of the pixel-traced solar parks: 8.3 MB, 17 s per z9 tile
+                 ST_AsBinary(ST_Simplify(ST_ClipByBox2D(ST_Transform(f.geom, 3857),
                      ST_Expand(env.e, (ST_XMax(env.e) - ST_XMin(env.e)) * 64 / 4096)),
-                     (ST_XMax(env.e) - ST_XMin(env.e)) / 4096)) as wkb,
+                     (ST_XMax(env.e) - ST_XMin(env.e)) / 4096, false)) as wkb,
                  ST_XMin(env.e) as x0, ST_YMin(env.e) as y0, ST_XMax(env.e) as x1, ST_YMax(env.e) as y1
           from features f join lv on f.layer_version_id = lv.layer_version_id, env
-          where f.geom && ST_Transform(env.e, 4326)""", (z, x, y, run_id, skip_dense)).fetchall()
+          where f.geom && ST_Transform(env.e, 4326)""", (z, x, y, run_id, skip_dense, list(DENSE_LAYERS))).fetchall()
     if not rows:
         return b""
     bounds = (rows[0]["x0"], rows[0]["y0"], rows[0]["x1"], rows[0]["y1"])

@@ -9,7 +9,10 @@ import CopyDialog from "../components/CopyDialog";
 import TowerLayer from "../components/map/TowerLayer";
 import {
   bboxOf,
+  DEFAULT_ON,
   geomCoords,
+  LAYER_COLOURS,
+  LAYER_ORDER,
   NOGO_LAYERS,
   routeColour,
   setLowConfVisible,
@@ -26,7 +29,7 @@ import { useUi } from "../store/ui";
 import { useSelectedRoute } from "../store/selection";
 import { useStartSolve } from "./Solve";
 
-type Toggles = { lulc: boolean; constraints: boolean; towers: boolean; beeline: boolean; lowconf: boolean; prev: boolean };
+type Toggles = { towers: boolean; beeline: boolean; lowconf: boolean; prev: boolean };
 
 export default function Results() {
   const run = useRunCtx();
@@ -58,7 +61,9 @@ function Body({ s }: { s: Solve }) {
   const loadTowers = useTowers((x) => x.load);
   const focus = useUi((x) => x.focus);
   const setFocus = useUi((x) => x.setFocus);
-  const [t, setT] = useState<Toggles>({ lulc: false, constraints: true, towers: true, beeline: false, lowconf: false, prev: false });
+  const [t, setT] = useState<Toggles>({ towers: true, beeline: false, lowconf: false, prev: false });
+  // every run layer can be shown under the routes (6 Oct 2026); starts as on Review the layers
+  const [on, setOn] = useState<Record<string, boolean>>(() => Object.fromEntries(LAYER_ORDER.map((k) => [k, DEFAULT_ON.has(k)])));
   const [widen, setWiden] = useState(false);
   const routes = s.result.routes;
   const feasible = s.result.feasible && routes.length > 0;
@@ -83,9 +88,9 @@ function Body({ s }: { s: Solve }) {
   const map = useMapLibre(mapRef, { bounds });
   useFitBounds(map, bounds);
   const ceiling = useCeiling(map);
-  const wantTiles = t.lulc || t.constraints || t.lowconf;
+  const wantTiles = t.lowconf || Object.values(on).some(Boolean);
   const applyTiles = (m: maplibregl.Map) => {
-    setRunLayerVisibility(m, (k) => (k === "lulc" ? t.lulc : t.constraints && NOGO_LAYERS.includes(k)));
+    setRunLayerVisibility(m, (k) => Boolean(on[k]));
     setRunLayerOpacity(m, 0.55);
     setLowConfVisible(m, t.lowconf);
   };
@@ -94,7 +99,7 @@ function Body({ s }: { s: Solve }) {
   const tiles = useRunTiles(map, run.id, wantTiles, (m) => applyRef.current(m));
   useEffect(() => {
     if (map && map.getSource("run")) applyRef.current(map);
-  }, [map, t.lulc, t.constraints, t.lowconf]);
+  }, [map, on, t.lowconf]);
 
   // static overlays: band, bee-line, previous revision, routes, end points
   useEffect(() => {
@@ -231,8 +236,6 @@ function Body({ s }: { s: Solve }) {
       <div className="withnotes" style={{ gridTemplateColumns: "minmax(0,1fr) 288px" }}>
         <div>
           <div className="maptools">
-            <button aria-pressed={t.lulc} onClick={() => tog("lulc")}>LULC overlay</button>
-            <button aria-pressed={t.constraints} onClick={() => tog("constraints")}>No-Go features</button>
             <button aria-pressed={t.towers} onClick={() => tog("towers")} disabled={!feasible}>Towers</button>
             <button aria-pressed={t.beeline} onClick={() => tog("beeline")}>Bee-line</button>
             <button aria-pressed={t.lowconf} onClick={() => tog("lowconf")}>Low-confidence</button>
@@ -252,14 +255,13 @@ function Body({ s }: { s: Solve }) {
           {tiles.error && wantTiles ? (
             <div className="note n-stop" style={{ marginTop: 8 }} role="alert" data-testid="tile-error">
               <div style={{ flex: 1 }}>
-                <b>{tiles.error}</b> Routes, towers and the bee-line are drawn from the solve and are unaffected; the LULC, No-Go and
+                <b>{tiles.error}</b> Routes, towers and the bee-line are drawn from the solve and are unaffected; the layer and
                 low-confidence overlays are unavailable until the tile server is fixed.
               </div>
               <button className="mini" onClick={tiles.retry}>Try again</button>
             </div>
           ) : null}
           <div className="legend">
-            <div><i style={{ background: "#A33A31" }} />No-Go features</div>
             {routes.map((r) => (
               <div key={r.id}><i style={{ background: routeColour(r.id) }} />Route {r.id}</div>
             ))}
@@ -294,6 +296,7 @@ function Body({ s }: { s: Solve }) {
               </div>
             </>
           ) : null}
+          <RouteLayers layers={layersQ.data?.layers ?? []} on={on} setOn={setOn} />
           <div className="card" style={{ marginTop: 10 }}>
             <div className="cb stack">
               <div className="eyebrow">Where the data came from</div>
@@ -573,3 +576,47 @@ function Failure({ s, onWiden }: { s: Solve; onWiden: () => void }) {
   );
 }
 
+
+
+/** Every layer of the run, toggled under the routes. Presets: as on Review the layers, No-Go only, all, none. */
+function RouteLayers({ layers, on, setOn }: {
+  layers: { key: string; name: string; extracted?: boolean; feature_count?: number | null }[];
+  on: Record<string, boolean>;
+  setOn: (f: (o: Record<string, boolean>) => Record<string, boolean>) => void;
+}) {
+  const ordered = [...layers].sort((a, b) => LAYER_ORDER.indexOf(a.key) - LAYER_ORDER.indexOf(b.key));
+  const set = (pick: (k: string) => boolean) => setOn(() => Object.fromEntries(LAYER_ORDER.map((k) => [k, pick(k)])));
+  const nOn = ordered.filter((l) => on[l.key]).length;
+  return (
+    <div className="card" style={{ marginTop: 10 }} data-testid="route-layers">
+      <div className="ch">
+        <h3 style={{ fontSize: 13 }}>Layers</h3>
+        <span className="hint" style={{ marginLeft: "auto" }}>{nOn} of {ordered.length} shown</span>
+      </div>
+      <div className="row" style={{ gap: 4, padding: "6px 9px", flexWrap: "wrap" }}>
+        <button className="mini" onClick={() => set((k) => DEFAULT_ON.has(k))}>Default</button>
+        <button className="mini" onClick={() => set((k) => NOGO_LAYERS.includes(k))}>No-Go only</button>
+        <button className="mini" onClick={() => set(() => true)}>All</button>
+        <button className="mini" onClick={() => set(() => false)}>None</button>
+      </div>
+      <div style={{ maxHeight: 340, overflowY: "auto" }}>
+        {ordered.map((l) => {
+          const v = Boolean(on[l.key]);
+          const empty = l.extracted && (l.feature_count ?? 0) === 0;
+          return (
+            <div key={l.key} className={`lrow ${v ? "" : "loff"}`}>
+              <label className="ln">
+                <input type="checkbox" checked={v} onChange={() => setOn((o) => ({ ...o, [l.key]: !o[l.key] }))} aria-label={`Show ${l.name}`} />
+                <i className="sw" style={{ background: LAYER_COLOURS[l.key] ?? "#888" }} />
+                <span>
+                  <b>{l.name}</b>
+                  <em>{!l.extracted ? "not extracted" : empty ? "nothing in the band" : `${(l.feature_count ?? 0).toLocaleString("en-IN")} features`}{NOGO_LAYERS.includes(l.key) ? " · No-Go" : ""}</em>
+                </span>
+              </label>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
