@@ -132,6 +132,16 @@ Verified on the dev VM (5 Oct 2026): fresh-database boot of db + api (4 processe
 `tests/e2e_api.py` end to end against the containers (imagery checks, DEM fetch, extraction, 4-route
 solve on GPU, exports, copy, re-solve, compare), native PostGIS vector tiles, SPA deep links.
 
+**Water layers (8).** Pond, River, Lake, Canal, Reservoir, Nalla (empty until a source exists), Wet Land
+and Other water come from the Gujarat water-bodies package (NWIA 2019 + OSM + GatiShakti):
+
+    python scripts/ingest_water_features.py "<incoming>/transfers/water_features/gujarat_water_bodies_by_type.zip"
+
+Rules: River and Canal crossing rules; Reservoir 150 m bank buffer (rule 35); Wet Land treated as Marshy
+land; every Other-water body No-Go (rule 36, switchable) — note this includes the Rann mud flats and the
+25 km marine screening buffer; the creek rule (2 km) reads Other water's creeks. No tower stands in pond,
+lake, river, canal, reservoir or nalla water. The Dams rule has no data until a dam-structure layer exists.
+
 ## Behaviour worth knowing
 
 - **One GPU, one job.** Extraction and solve never queue behind each other: a second job of either

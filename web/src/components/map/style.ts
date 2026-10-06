@@ -8,7 +8,14 @@ export const LAYER_COLOURS: Record<string, string> = {
   lulc: "#8FA36B",
   buildings: "#9A8574",
   clusters: "#A33A31",
-  water: "#6E93AC",
+  pond: "#7FB3D5",
+  river: "#3E7CB1",
+  lake: "#5DA9E9",
+  canal: "#2F9C95",
+  reservoir: "#1F5F8B",
+  nalla: "#8FB8C9",
+  wet_land: "#6FA88E",
+  other_water: "#5B8FA8",
   forest: "#3B7350",
   soil: "#A08B5B",
   hard_rock: "#8A7F74",
@@ -102,7 +109,14 @@ export const LAYER_ORDER = [
   "plotted",
   "clusters",
   "buildings",
-  "water",
+  "other_water",
+  "wet_land",
+  "reservoir",
+  "lake",
+  "pond",
+  "river",
+  "canal",
+  "nalla",
   "village_roads",
   "roads",
   "rail",
@@ -124,7 +138,14 @@ export const DEFAULT_ON = new Set([
   "wind_turbines",
   "buildings",
   "clusters",
-  "water",
+  "pond",
+  "river",
+  "lake",
+  "canal",
+  "reservoir",
+  "nalla",
+  "wet_land",
+  "other_water",
   "forest",
   "plotted",
   "roads",
@@ -140,7 +161,7 @@ export const DEFAULT_ON = new Set([
 ]);
 
 /** Layers the route map shows under "No-Go features". */
-export const NOGO_LAYERS = ["clusters", "buildings", "protected", "wetlands", "crz", "defence", "aviation", "approach", "substations", "solar", "monuments"];
+export const NOGO_LAYERS = ["clusters", "buildings", "protected", "wetlands", "crz", "other_water", "defence", "aviation", "approach", "substations", "solar", "monuments"];
 
 /** Route colours: the prototype's four hues, lifted for contrast over satellite imagery. */
 export const ROUTE_COLOURS = ["#4FA3CF", "#9C82D6", "#E3AA45", "#6CC08A"];
@@ -230,7 +251,7 @@ export function addRunLayers(map: maplibregl.Map, runId: string, opts: { before?
         layout: { "line-cap": "round", "line-join": "round" },
         paint: {
           "line-color": key === "power" ? voltageColour(c) : key === "roads" ? highwayColour(c) : c,
-          "line-width": ["case", ["boolean", ["feature-state", "sel"], false], 5, key === "water" ? 3 : key === "rail" ? 2.4 : key === "roads" ? ["match", ["get", "class"], "nh", 3.2, 2.2] : 2.2],
+          "line-width": ["case", ["boolean", ["feature-state", "sel"], false], 5, key === "river" || key === "canal" || key === "nalla" ? 3 : key === "rail" ? 2.4 : key === "roads" ? ["match", ["get", "class"], "nh", 3.2, 2.2] : 2.2],
           "line-opacity": 0.95,
           ...(key === "rail" ? { "line-dasharray": [3, 2] } : key === "pipelines" ? { "line-dasharray": [1, 2] } : {}),
         },

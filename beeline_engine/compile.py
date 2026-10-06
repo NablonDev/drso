@@ -456,7 +456,8 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
                     parallels.append(ParallelRaster(rule_id=r.id, angle=pa))
 
     # Implicit engineering constraint: no tower stands in open water.
-    for lyr, cls in (("water", ["pond", "river", "canal", "dam", "creek", "nalla"]), ("lulc", ["water_body"])):
+    for lyr, cls in (("pond", None), ("lake", None), ("river", None), ("canal", None), ("reservoir", None),
+                     ("nalla", None), ("lulc", ["water_body"])):
         mk = R.mask(lyr, cls)
         if mk is not None:
             g = R.subset(lyr, cls)

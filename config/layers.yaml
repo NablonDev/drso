@@ -54,16 +54,80 @@ layers:
     default_confidence: 0.91
     classes: [builtup_cluster]
 
-  - key: water
-    name: "Water — river, canal, nalla, pond"
+  # Water: eight layers from the Gujarat water-bodies package (NWIA 2019 + OSM + GatiShakti,
+  # 31 Aug 2026), replacing the single "water" layer (Vivek, 6 Oct 2026). Inventory, not
+  # notification: each feature keeps its legal_status and positional precision.
+  - key: pond
+    name: "Pond"
+    kind: polygon
+    producer: reference
+    desc: "Tanks, ponds and aquaculture ponds — NWIA 2019 + GatiShakti + OSM"
+    minutes_per_km2: 0.002
+    default_confidence: 0.85
+    classes: [pond, aquaculture_pond]
+
+  - key: river
+    name: "River"
+    kind: polygon
+    producer: reference
+    desc: "River and stream areas — NWIA 2019 + GatiShakti + OSM"
+    minutes_per_km2: 0.002
+    default_confidence: 0.85
+    classes: [river]
+
+  - key: lake
+    name: "Lake"
+    kind: polygon
+    producer: reference
+    desc: "Natural lakes and ponds, ox-bows — OSM + NWIA 2019"
+    minutes_per_km2: 0.002
+    default_confidence: 0.85
+    classes: [lake]
+
+  - key: canal
+    name: "Canal"
     kind: any
-    producer: model
-    model: water_stub
-    imagery: sentinel2
-    desc: "Water index model + India-WRIS"
-    minutes_per_km2: 0.058
-    default_confidence: 0.93
-    classes: [pond, river, canal, nalla, dam, creek]
+    producer: reference
+    desc: "Canal water areas (OSM) + canal centrelines (GatiShakti, ~110 m precision)"
+    minutes_per_km2: 0.002
+    default_confidence: 0.80
+    classes: [canal]
+
+  - key: reservoir
+    name: "Reservoir"
+    kind: polygon
+    producer: reference
+    desc: "Reservoirs and barrages (water extent) — OSM + NWIA 2019"
+    minutes_per_km2: 0.002
+    default_confidence: 0.85
+    classes: [reservoir]
+
+  - key: nalla
+    name: "Nalla"
+    kind: any
+    producer: reference
+    desc: "Nallas and small drains — no source yet"
+    minutes_per_km2: 0.002
+    default_confidence: 0.80
+    classes: [nalla]
+
+  - key: wet_land
+    name: "Wet Land"
+    kind: polygon
+    producer: reference
+    desc: "Unclassified wetland and waterlogged land — NWIA 2019 + OSM (not notified)"
+    minutes_per_km2: 0.002
+    default_confidence: 0.80
+    classes: [wetland, waterlogged]
+
+  - key: other_water
+    name: "Other water"
+    kind: polygon
+    producer: reference
+    desc: "Creeks, beach, coral reef, lagoons, mud flats, salt marsh, salt pans, mangroves, recent detected water, 25 km marine buffer"
+    minutes_per_km2: 0.002
+    default_confidence: 0.85
+    classes: [creek, beach, coral_reef, lagoon, mud_flat, salt_marsh, salt_pan, mangrove, detected_water, marine_buffer]
 
   - key: soil
     name: "Soil — marsh, salt pan, dunes, rock"

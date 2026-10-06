@@ -123,8 +123,8 @@ groups:
 
       - id: dams
         name: "Dams"
-        note: "Placement, crossing and passing alike"
-        layer: water
+        note: "Placement, crossing and passing alike — no dam-structure layer yet, so this rule has no data (reservoir water is its own rule)"
+        layer: dams
         classes: [dam]
         mechanism: nogo
         params:
@@ -143,11 +143,31 @@ groups:
       - id: creek
         name: "Creek area"
         note: "Sandy coastal strip — largest ground-level buffer in the set"
-        layer: water
+        layer: other_water
         classes: [creek]
         mechanism: nogo
         params:
           - {key: tower_setback_m, label: "Buffer", type: num, unit: m, value: 2000}
+          - {key: treatment, label: "Treatment", type: sel, value: "No-Go", options: ["No-Go", "Allowed"]}
+
+      # Rules 35-36, added 6 Oct 2026 with the water layers (Vivek): reservoir keeps towers 150 m
+      # off the water (spans may cross); every "Other water" body is No-Go (switchable).
+      - id: reservoir
+        name: "Reservoir"
+        note: "Bank buffer like a river; the conductor may span the water"
+        layer: reservoir
+        mechanism: tower_setback
+        params:
+          - {key: setback_m, label: "Bank buffer", type: num, unit: m, value: 150}
+
+      - id: other_water
+        name: "Other water bodies"
+        note: "Creeks, beach, coral reef, lagoons, mud flats, salt marsh, salt pans, mangroves, detected water, 25 km marine buffer — all No-Go by default"
+        layer: other_water
+        mechanism: nogo
+        params:
+          - {key: tower_setback_m, label: "Tower buffer", type: num, unit: m, value: 0}
+          - {key: conductor_buffer_m, label: "Conductor buffer", type: num, unit: m, value: 0}
           - {key: treatment, label: "Treatment", type: sel, value: "No-Go", options: ["No-Go", "Allowed"]}
 
       # Not in the prototype's 29; added because Vivek set "avoid entry" for wildlife areas
@@ -241,8 +261,7 @@ groups:
       - id: river
         name: "River"
         note: "Major and minor crossings take different tower types"
-        layer: water
-        classes: [river]
+        layer: river
         mechanism: crossing
         crossing_cost: major_river
         params:
@@ -255,8 +274,7 @@ groups:
       - id: canal
         name: "Canal"
         note: "Raised from 30 m pending AESL confirmation"
-        layer: water
-        classes: [canal]
+        layer: canal
         mechanism: crossing
         params:
           - {key: tower_setback_m, label: "Tower buffer", type: num, unit: m, value: 150}
@@ -326,7 +344,7 @@ groups:
         note: "Construction cost and long-term settlement risk"
         layer: lulc
         classes: [marsh, salt_pan]
-        also_layers: [marshy_land, salt_pans]      # the soil-type layers, whole
+        also_layers: [marshy_land, salt_pans, wet_land]   # soil-type layers + Wet Land (Vivek, 6 Oct 2026)
         mechanism: landclass
         cost_class: barren
         params:
