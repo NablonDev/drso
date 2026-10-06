@@ -4,9 +4,13 @@
    as every leg passes the exact (vector) conductor checks and its towers can be spotted.
 2. Spot suspension towers along each leg at equal spans (design span or shorter).
 3. Section points: upgrade a suspension tower to B1 where tension towers are further apart
-   than the section interval.
+   than the section interval (the hilly interval once the stretch includes a hilly span).
+   Hilly: the DEM slope reaches hilly_slope_deg over 90 m somewhere on the span / leg; hilly legs
+   are spotted at the hilly design span (Vivek, 6 Oct 2026).
 4. Forced crossing tower types at both ends of every controlled crossing span.
-5. Ground clearance on the DEM; a short tower gets the +18 m extension if that clears it.
+5. Ground clearance on the DEM: a span that the +18 m extension on both towers cannot clear gets
+   an extra suspension tower at its worst point (the ridge), repeated as needed; otherwise a
+   short tower gets the +18 m extension if that clears it.
 6. True cost and statistics of the route.
 
 The DP alignment is costed the same way and kept if the pulled one is not cheaper.
@@ -47,6 +51,10 @@ class SpotParams:
     max_dev_adjacent_power_deg: dict[str, float] = field(default_factory=dict)
     river_max_span_m: float = 0.0
     nudge_radius_m: float = 30.0
+    # hilly terrain (rules design_span.hilly_m, section_interval.hilly_km; engine hilly_slope_deg)
+    hilly_design_span_m: float | None = None
+    hilly_section_km: float | None = None
+    hilly_slope_deg: float | None = None
 
 
 @dataclass
@@ -72,6 +80,7 @@ class Span:
     length_m: float
     crossings: list[dict] = field(default_factory=list)
     min_clearance_m: float | None = None
+    hilly: bool = False
 
 
 @dataclass
@@ -97,6 +106,34 @@ class Checker:
         self.tower_rules = comp.tower_nogo
         self.angle_rules = comp.angle_nogo
         self.cond_rules = comp.conductor_nogo
+        self.dem = None                    # set by spot(): hilly legs and clearance re-spotting
+
+    def profile(self, p, q, step=30.0):
+        """(t in 0..1, ground z) along p->q on the DEM, or None without a DEM."""
+        if self.dem is None or not self.dem.ok:
+            return None
+        L = math.hypot(q[0] - p[0], q[1] - p[1])
+        n = max(3, int(L // step) + 1)
+        t = np.linspace(0, 1, n)
+        lon, lat = self.c.frame.frame_to_lonlat(p[0] + t * (q[0] - p[0]), p[1] + t * (q[1] - p[1]))
+        return t, self.dem.sample(lon, lat), L
+
+    def is_hilly(self, p, q) -> bool:
+        if self.sp.hilly_slope_deg is None:
+            return False
+        pr = self.profile(p, q)
+        if pr is None:
+            return False
+        t, z, L = pr
+        if len(z) < 4 or L <= 0:
+            return False
+        step = L / (len(z) - 1)
+        k = max(1, int(round(90.0 / step)))
+        if len(z) <= k:
+            k = len(z) - 1
+        dz = np.abs(z[k:] - z[:-k])
+        slope = np.degrees(np.arctan(dz / (k * step)))
+        return bool(np.nanmax(slope) >= self.sp.hilly_slope_deg) if np.isfinite(slope).any() else False
 
     def in_go_zone(self, p: Point) -> bool:
         return self.go.contains(p)
@@ -186,7 +223,10 @@ def _spot_leg(chk: Checker, p, q, sp: SpotParams):
     if not chk.conductor_ok(p, q):
         return None
     d = math.hypot(q[0] - p[0], q[1] - p[1])
-    n0 = max(1, math.ceil(d / sp.design_span_m - 1e-9), math.ceil(d / sp.span_max_m - 1e-9))
+    design = sp.design_span_m
+    if sp.hilly_design_span_m and chk.is_hilly(p, q):
+        design = min(design, sp.hilly_design_span_m)
+    n0 = max(1, math.ceil(d / design - 1e-9), math.ceil(d / sp.span_max_m - 1e-9))
     cands = list(range(n0, n0 + 5))
     if n0 > 1 and d <= sp.river_max_span_m:
         cands = [1] + cands       # a single long span across a river
@@ -287,6 +327,10 @@ def build_route(chk: Checker, pts: list[tuple[float, float]], angle_set: set[int
                 sp: SpotParams, dem=None) -> SpottedRoute:
     """Tower list from points; angle_set = indices that are angle points (None = all with deflection)."""
     comp = chk.c
+    added = set()
+    if dem is not None and dem.ok:
+        pts = _split_hilly(chk, pts, sp)
+        pts, added = _respot_for_clearance(chk, pts, sp)
     towers: list[Tower] = []
     n = len(pts)
     for i, (x, y) in enumerate(pts):
@@ -305,7 +349,7 @@ def build_route(chk: Checker, pts: list[tuple[float, float]], angle_set: set[int
         L = math.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1])
         gantry_span = i == 0 or i == n - 2
         cr = [] if gantry_span else chk.span_crossings(pts[i], pts[i + 1])[1]
-        s = Span(i, i + 1, L, cr)
+        s = Span(i, i + 1, L, cr, hilly=(not gantry_span) and chk.is_hilly(pts[i], pts[i + 1]))
         spans.append(s)
         for c in cr:
             if c.get("violation"):
@@ -329,20 +373,27 @@ def build_route(chk: Checker, pts: list[tuple[float, float]], angle_set: set[int
                 for ti in (s.a - 1, s.b + 1):
                     if 0 < ti < len(towers) - 1 and towers[ti].deflection_deg > lim:
                         towers[ti].warnings.append(f"power_adjacent_deviation:{c['rule']}")
-    # section points
-    last_tension = 0.0
+    for i in added:
+        towers[i].reasons.append("clearance")
+    # section points (hilly interval once the stretch since the last tension tower has a hilly span)
     run = 0.0
+    hilly_run = False
     for i in range(1, len(towers)):
         run += spans[i - 1].length_m
+        hilly_run = hilly_run or spans[i - 1].hilly
         t = towers[i]
         if t.type != "A":
             run = 0.0
+            hilly_run = False
             continue
         nxt = spans[i].length_m if i < len(spans) else 0
-        if run + nxt > sp.section_km * 1000.0:
+        limit = sp.hilly_section_km if (sp.hilly_section_km and (hilly_run or (i < len(spans) and spans[i].hilly))) \
+            else sp.section_km
+        if run + nxt > limit * 1000.0:
             t.type = "B1"
-            t.reasons.append("section")
+            t.reasons.append("section_hilly" if limit != sp.section_km else "section")
             run = 0.0
+            hilly_run = False
     # exact tower checks
     for i, t in enumerate(towers):
         if i in (0, len(towers) - 1):
@@ -361,6 +412,80 @@ def build_route(chk: Checker, pts: list[tuple[float, float]], angle_set: set[int
             _clearance(comp, dem, towers, s, sp)
     cost, stats = route_cost(comp, towers, spans, sp)
     return SpottedRoute(towers, spans, cost, stats, "pulled" if angle_set is None else "grid")
+
+
+def _span_clearance(chk: Checker, p, q, sp: SpotParams, ext_a=0.0, ext_b=0.0):
+    """(min clearance m, t at the worst point) of the conductor over the DEM for a straight span."""
+    pr = chk.profile(p, q, step=15.0)
+    if pr is None:
+        return None, None
+    t, ground, L = pr
+    if not np.isfinite(ground[0]) or not np.isfinite(ground[-1]):
+        return None, None
+    sag = sp.sag_at_design_m * (L / sp.design_span_m) ** 2
+    za = ground[0] + sp.lowest_attachment_m + ext_a
+    zb = ground[-1] + sp.lowest_attachment_m + ext_b
+    c = (1 - t) * za + t * zb - 4 * sag * t * (1 - t) - ground
+    if not np.isfinite(c).any():
+        return None, None
+    k = int(np.nanargmin(c))
+    return float(c[k]), float(t[k])
+
+
+def _split_hilly(chk: Checker, pts, sp: SpotParams):
+    """Hilly spans longer than the hilly design span are split into equal spans (each new suspension
+    tower nudged along the span if its spot is not allowed). Gantry spans and long single crossing
+    spans (over span_max) are left alone."""
+    if not sp.hilly_design_span_m:
+        return pts
+    out = [pts[0]]
+    n = len(pts)
+    for i in range(n - 1):
+        p, q = pts[i], pts[i + 1]
+        L = math.hypot(q[0] - p[0], q[1] - p[1])
+        if 0 < i < n - 2 and sp.hilly_design_span_m < L <= sp.span_max_m + 1e-3 and chk.is_hilly(p, q):
+            k = math.ceil(L / sp.hilly_design_span_m - 1e-9)
+            for j in range(1, k):
+                base = j / k
+                for dt in (0.0, 0.03, -0.03, 0.06, -0.06):
+                    tt = base + dt
+                    x, y = p[0] + tt * (q[0] - p[0]), p[1] + tt * (q[1] - p[1])
+                    if chk.tower_ok(x, y, angle_tower=False):
+                        out.append((x, y))
+                        break
+        out.append(q)
+    return out
+
+
+def _respot_for_clearance(chk: Checker, pts, sp: SpotParams, max_new: int = 200):
+    """Insert suspension towers where a span cannot clear the ground even with the +18 m extension
+    on both towers: at the worst point (a ridge), or the nearest allowed spot along the span.
+    Gantry spans and long single crossing spans are left alone. Returns (points, inserted indices)."""
+    pts = list(pts)
+    flags = [False] * len(pts)
+    i, new = 1, 0                      # span pts[i] -> pts[i+1]; skip the gantry spans
+    while i < len(pts) - 2 and new < max_new:
+        p, q = pts[i], pts[i + 1]
+        L = math.hypot(q[0] - p[0], q[1] - p[1])
+        c, tw = _span_clearance(chk, p, q, sp, EXTENSION_M, EXTENSION_M)
+        if c is None or c >= sp.ground_clearance_m or L < 2 * sp.min_span_m or L > sp.span_max_m + 1e-3:
+            i += 1
+            continue
+        placed = None
+        for dt in (0.0, 0.05, -0.05, 0.1, -0.1, 0.15, -0.15, 0.2, -0.2):
+            tt = min(1 - sp.min_span_m / L, max(sp.min_span_m / L, tw + dt))
+            x, y = p[0] + tt * (q[0] - p[0]), p[1] + tt * (q[1] - p[1])
+            if chk.tower_ok(x, y, angle_tower=False) and chk.span_crossings(p, (x, y))[0] \
+                    and chk.span_crossings((x, y), q)[0]:
+                placed = (x, y)
+                break
+        if placed is None:
+            i += 1                     # nothing allowed on this span: reported as a clearance warning
+            continue
+        pts.insert(i + 1, placed)
+        flags.insert(i + 1, True)
+        new += 1                       # re-check p -> new tower before moving on
+    return pts, {k for k, f in enumerate(flags) if f}
 
 
 def _clearance(comp, dem, towers, s: Span, sp: SpotParams):
@@ -393,8 +518,12 @@ def _clearance(comp, dem, towers, s: Span, sp: SpotParams):
         c = min_clear()
     if c < sp.ground_clearance_m:
         low = ta if (ta.ground_z + ta.extension_m) <= (tb.ground_z + tb.extension_m) else tb
+        high = tb if low is ta else ta
         if low.extension_m < EXTENSION_M:
             low.extension_m = EXTENSION_M
+            c = min_clear()
+        if c < sp.ground_clearance_m and high.extension_m < EXTENSION_M:
+            high.extension_m = EXTENSION_M        # both towers extended (the re-spotting assumed so)
             c = min_clear()
         if c < sp.ground_clearance_m:
             ta.warnings.append("ground_clearance")
@@ -497,6 +626,7 @@ def _frame_geom_to_utm(f, g):
 def spot(comp: Compiled, grid_pts: list[tuple[float, float]], sp: SpotParams, dem=None) -> SpottedRoute:
     """grid_pts: the solver's towers, first dead-end to last. Gantries A and B are added here."""
     chk = Checker(comp, sp)
+    chk.dem = dem
     A = (0.0, 0.0)
     B = (comp.frame.length_m, 0.0)
     grid_route = build_route(chk, [A] + grid_pts + [B], angle_set=set(), sp=sp, dem=dem)

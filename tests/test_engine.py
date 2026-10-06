@@ -174,6 +174,66 @@ def test_no_stretch_over_5_km_without_an_angle_tower():
     assert max(cum[b] - cum[a] for a, b in zip(idx, idx[1:])) <= 5000.0 + 1e-6
 
 
+class _FakeDem:
+    """DEM stand-in: height (m) as a function of frame x along A->B."""
+    ok = True
+
+    def __init__(self, f: Frame, zfun):
+        self.f, self.zfun = f, zfun
+
+    def sample(self, lon, lat):
+        ux, uy = self.f.lonlat_to_utm(np.asarray(lon, float), np.asarray(lat, float))
+        fx, _ = self.f.utm_to_frame(ux, uy)
+        return self.zfun(np.asarray(fx, float)).astype(float)
+
+
+def _solve_on_dem(monkeypatch, zfun, layers=None, overrides=None):
+    from beeline_engine import pipeline as pl
+    holder = {}
+
+    def fake_sampler(tiles, bb):
+        holder["dem"] = _FakeDem(frame(), zfun)
+        return holder["dem"]
+    monkeypatch.setattr(pl.demmod, "ensure_tiles", lambda bb, d: [])
+    monkeypatch.setattr(pl.demmod, "DemSampler", fake_sampler)
+    inp = solve_input(layers or {}, overrides=overrides)
+    inp.dem_dir = "unused"
+    return run_solve(inp)
+
+
+def test_ridge_gets_a_tower_instead_of_a_short_clearance(monkeypatch):
+    """A 70 m knife-edge ridge mid-span: +18 m extensions cannot clear it, so a tower goes on it."""
+    f = frame()
+    c = f.length_m / 2 + 225.0          # between two grid towers (~450 m spans on the flat)
+    # hilly span limit lifted so only the clearance re-spotting can put a tower on the ridge
+    res = _solve_on_dem(monkeypatch, lambda x: np.clip(70.0 - np.abs(x - c) * 0.9, 0, None),
+                        overrides={"design_span": {"params": {"hilly_m": 500}}})
+    r = res["routes"][0]
+    assert all((s["min_clearance_m"] is None or s["min_clearance_m"] >= 15.0 - 1e-6) for s in r["spans"]), \
+        min(s["min_clearance_m"] for s in r["spans"] if s["min_clearance_m"] is not None)
+    added = [t for t in r["towers"] if "clearance" in t["reasons"]]
+    assert added and any(abs(t["chainage_km"] * 1000 - c) < 120 for t in added)
+    assert any(e["type"] == "CLEARANCE_TOWER" for e in r["events"])
+
+
+def test_hilly_ground_takes_hilly_spans_and_sections(monkeypatch):
+    """Rolling hills steeper than 10°: spans at most the hilly design span (300 m at 765 kV) and
+    tension towers at most 3 km apart there; flat ground keeps 5 km."""
+    f = frame()
+    hills = lambda x: np.where(x > f.length_m / 2, 40.0 * np.abs(np.sin(x / 150.0)), 0.0)    # ~15° slopes
+    res = _solve_on_dem(monkeypatch, hills)
+    r = res["routes"][0]
+    cum = [0.0]
+    for s in r["spans"]:
+        cum.append(cum[-1] + s["length_m"])
+    half = f.length_m / 2
+    hilly_spans = [s for i, s in enumerate(r["spans"][1:-1], 1) if cum[i] > half + 500]
+    assert hilly_spans and max(s["length_m"] for s in hilly_spans) <= 300.0 + 1e-6
+    idx = [i for i, t in enumerate(r["towers"]) if t["type"] != "A"]
+    gaps = [(cum[a], cum[b] - cum[a]) for a, b in zip(idx, idx[1:])]
+    assert max(g for start, g in gaps if start > half + 500) <= 3000.0 + 1e-6
+
+
 def test_band_fully_blocked_is_reported():
     f = frame()
     c = f.length_m / 2

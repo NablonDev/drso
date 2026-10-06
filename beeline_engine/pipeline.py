@@ -193,7 +193,10 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
                     max_dev_adjacent_power_deg={rid: float(rules[rid].params.get("max_dev_adjacent_deg", 45))
                                                 for rid in POWER_LINE_RULES if rid in rules},
                     river_max_span_m=float(eng["spans"].get("river_crossing_max_span_m", 0)),
-                    nudge_radius_m=float(eng["grid"].get("nudge_radius_m", 30)))
+                    nudge_radius_m=float(eng["grid"].get("nudge_radius_m", 30)),
+                    hilly_design_span_m=float(rules["design_span"].params["hilly_m"]),
+                    hilly_section_km=float(rules["section_interval"].params["hilly_km"]),
+                    hilly_slope_deg=float(eng["spotting"].get("hilly_slope_deg", 10)))
 
     findex = FeatureIndex(frame, inp.layers, layer_names)
     rule_layer = {r.id: r.layer for r in rules.values()}
@@ -517,8 +520,12 @@ def _route_events(sr, frame, comp, findex, rules, sp, layer_names, inp, dem, blo
                                           "rule_id": c["rule"], "chainage_km": round(mid.x / 1000, 2)},
                              chainage_km=round(mid.x / 1000, 2), source=_source(it, inp.layers)))
     for t in T:
-        if "section" in t.reasons:
-            evs.append(event("SECTION_POINT", {"tower": t.no, "type": t.type, "section_km": sp.section_km},
+        if "section" in t.reasons or "section_hilly" in t.reasons:
+            km = sp.hilly_section_km if "section_hilly" in t.reasons else sp.section_km
+            evs.append(event("SECTION_POINT", {"tower": t.no, "type": t.type, "section_km": km},
+                             chainage_km=round(t.x / 1000, 2)))
+        if "clearance" in t.reasons:
+            evs.append(event("CLEARANCE_TOWER", {"tower": t.no, "clearance_req": sp.ground_clearance_m, "dem": demmod.SOURCE},
                              chainage_km=round(t.x / 1000, 2)))
         if t.extension_m > 0 and "crossing_tower" in t.reasons:
             s_long = next((s for s in sr.spans if s.a == t.no and s.length_m > sp.span_max_m), None)

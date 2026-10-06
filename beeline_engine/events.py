@@ -15,6 +15,7 @@ TEMPLATES = {
     "TURN": "At km {chainage_km:.1f}, the route turns {deflection:.0f}° {dir} at tower {tower} ({type}) — the cheapest line through the cost surface here, no single feature forces it.",
     "CROSSING": "Crosses {feature} at {angle_deg:.0f}° on a {span_m:.0f} m span between towers {tower_a} and {tower_b} (Type {type_a} / {type_b}).",
     "SECTION_POINT": "Tower {tower} at km {chainage_km:.1f} is a section point (Type {type}) — tension towers may not be more than {section_km:g} km apart.",
+    "CLEARANCE_TOWER": "Tower {tower} at km {chainage_km:.1f} was added on the ridge: the span could not keep {clearance_req:g} m ground clearance even with +18 m extensions (DEM: {dem}).",
     "EXTENSION": "Tower {tower} at km {chainage_km:.1f} carries a +{extension_m:.0f} m extension to keep {clearance_req:g} m ground clearance (DEM: {dem}).",
     "CROSSING_TOWERS": "The {span_m:.0f} m crossing span between towers {tower_a} and {tower_b} needs crossing towers +{extension_m:.0f} m taller to keep {clearance_req:g} m ground clearance at mid-span sag (DEM: {dem}).",
     "CLEARANCE_SHORT": "Span from tower {tower_a} at km {chainage_km:.1f} has {clearance_m:.1f} m ground clearance against {clearance_req:g} m required on the {dem}. Check on site.",
