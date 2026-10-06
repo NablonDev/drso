@@ -35,6 +35,7 @@ groups:
           - {key: vertical_m, label: "Vertical", type: num, unit: m, value: {765: 10.6, 400: 5.6, 220: 4.6, 132: 4.0}, best_guess: true}
           - {key: horizontal_m, label: "Horizontal", type: num, unit: m, value: {765: 8.9, 400: 5.6, 220: 3.8, 132: 2.9}, best_guess: true}
           - {key: increment_per_33kv_m, label: "Increment per 33 kV", type: num, unit: m, value: 0.3}
+          - {key: min_area_m2, label: "Ignore structures smaller than", type: num, unit: "m²", value: 0}
 
       - id: airport_prohibition
         name: "Airport — EHT line prohibition"
@@ -89,6 +90,7 @@ groups:
           - {key: conductor_buffer, label: "Conductor buffer", type: sel, value: "Corridor half-width", options: ["Corridor half-width", "Fixed", "None"]}
           - {key: conductor_buffer_m, label: "Fixed conductor buffer", type: num, unit: m, value: 30, best_guess: true}
           - {key: applies_to, label: "Applies to", type: sel, value: "Angular towers", options: ["Angular towers", "All towers"]}
+          - {key: min_area_m2, label: "Ignore structures smaller than", type: num, unit: "m²", value: 0}
 
       - id: clusters
         name: "Built-up cluster (village)"

@@ -149,6 +149,25 @@ class _Rasterizer:
         self._mask: dict = {}
         self._dist: dict = {}
         self._frame_geoms: dict = {}
+        self.base_layer: dict = {}        # filtered key -> source layer key
+
+    def filtered(self, layer: str | None, min_area_m2: float) -> str | None:
+        """Key of a copy of `layer` without polygons smaller than min_area_m2 (UTM m²); registered
+        on first use. Rules with a `min_area_m2` param read this copy (e.g. buildings: a field hut
+        is spanned, not avoided)."""
+        if layer is None or layer not in self.layers or not min_area_m2:
+            return layer
+        key = f"{layer}|min{min_area_m2:g}"
+        if key not in self.layers:
+            g = self.layers[layer]
+            if g is None or not len(g):
+                self.layers[key] = g
+            else:
+                poly = g.geometry.geom_type.isin(["Polygon", "MultiPolygon"])
+                area = g.geometry.to_crs(self.frame.epsg).area
+                self.layers[key] = g[~poly | (area >= min_area_m2)]
+            self.base_layer[key] = layer
+        return key
 
     def subset(self, layer: str | None, classes: list[str] | None) -> gpd.GeoDataFrame | None:
         if layer is None or layer not in self.layers:
@@ -368,7 +387,8 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
     def vec(lst, rule_id, layer, classes, d):
         fg = R.frame_geoms(layer, classes)
         if fg is not None and len(fg):
-            lst.append(VecRule(rule_id, layer, [g for g in fg if g is not None and not g.is_empty], d))
+            lst.append(VecRule(rule_id, R.base_layer.get(layer, layer),
+                               [g for g in fg if g is not None and not g.is_empty], d))
 
     hw = half_width_m
 
@@ -391,6 +411,9 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
         if not r.enabled:
             continue
         p = r.params
+        if p.get("min_area_m2"):
+            from dataclasses import replace as _replace
+            r = _replace(r, layer=R.filtered(r.layer, float(p["min_area_m2"])))
         m = r.mechanism
         if m == "conductor_clearance":
             extra = p.get("increment_per_33kv_m", 0) * max(0, (spec_kv - 33) / 33.0) if spec_kv > 400 else 0
