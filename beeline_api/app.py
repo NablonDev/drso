@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import shutil
 from pathlib import Path
 from typing import Any, Literal
@@ -42,10 +43,11 @@ class Pt(BaseModel):
 
 
 class RunCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=80)          # corridor name, shown on every page
     a: Pt
     b: Pt
     kv: int
-    circuit: Literal["sc", "dc", "qc"] = "dc"
+    circuit: Literal["sc", "dc", "qc"] = "dc"                # the UI always sends dc (double circuit)
     band_km: float = Field(gt=0.4, le=25)
     routes_wanted: int = Field(4, ge=1, le=4)
     note: str | None = None
@@ -58,8 +60,17 @@ class RunCreate(BaseModel):
             raise ValueError(f"voltage must be one of {VOLTAGES}")
         return v
 
+    @field_validator("name")
+    @classmethod
+    def _name(cls, v):
+        v = " ".join(v.split())
+        if not v:
+            raise ValueError("corridor name is required")
+        return v
+
 
 class RunPatch(BaseModel):
+    name: str | None = Field(None, min_length=1, max_length=80)
     a: Pt | None = None
     b: Pt | None = None
     kv: int | None = None
@@ -142,10 +153,15 @@ def _ensure_idle_for(run_id: str):
         raise HTTPException(409, "This run has a job in progress; wait for it to finish or cancel it.")
 
 
-def _family(a_name, b_name) -> str:
+def _family(name, a_name=None, b_name=None) -> str:
+    """Run-id prefix: the first two words of the corridor name ("Bhuj–Lakadia" -> BHU-LAK), else the
+    point names, else RUN."""
     def code(n):
         s = "".join(ch for ch in (n or "") if ch.isalpha()).upper()
         return (s[:3] or "XXX").ljust(3, "X")
+    words = [w for w in re.split(r"[^A-Za-z]+", name or "") if w]
+    if words:
+        return f"{code(words[0])}-{code(words[1])}" if len(words) > 1 else code(words[0])
     return f"{code(a_name)}-{code(b_name)}" if (a_name or b_name) else "RUN"
 
 
@@ -234,15 +250,15 @@ def create_run(req: RunCreate):
         Frame((req.a.lon, req.a.lat), (req.b.lon, req.b.lat), req.band_km * 1000, 0, 100)
     except ValueError as e:
         raise HTTPException(400, str(e))
-    fam = _family(req.a.name, req.b.name)
+    fam = _family(req.name, req.a.name, req.b.name)
     seq = db.one("select nextval('run_seq') as n")["n"]
     rid = f"{fam}-{seq:04d}"
     gv = geo.validate((req.a.lon, req.a.lat), (req.b.lon, req.b.lat))
-    db.exec_("""insert into runs (id, family, rev, note, a_lon, a_lat, a_name, b_lon, b_lat, b_name, kv, circuit, band_km,
+    db.exec_("""insert into runs (id, family, rev, name, note, a_lon, a_lat, a_name, b_lon, b_lat, b_name, kv, circuit, band_km,
                                   routes_wanted, status, geo)
-                values (%s,%s,1,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'draft',%s)""",
-             (rid, fam, req.note, req.a.lon, req.a.lat, req.a.name, req.b.lon, req.b.lat, req.b.name, req.kv, req.circuit,
-              req.band_km, req.routes_wanted, db.J(gv)))
+                values (%s,%s,1,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'draft',%s)""",
+             (rid, fam, req.name, req.note, req.a.lon, req.a.lat, req.a.name, req.b.lon, req.b.lat, req.b.name, req.kv,
+              req.circuit, req.band_km, req.routes_wanted, db.J(gv)))
     if req.reuse_from:
         _reuse(rid, req.reuse_from)
     return get_run(rid)
@@ -295,6 +311,12 @@ def patch_run(run_id: str, req: RunPatch):
     if req.b:
         sets += ["b_lat=%s", "b_lon=%s", "b_name=%s"]
         vals += [req.b.lat, req.b.lon, req.b.name]
+    if req.name is not None:                     # renaming is allowed on a locked run
+        nm = " ".join(req.name.split())
+        if not nm:
+            raise HTTPException(400, "corridor name is required")
+        sets.append("name=%s")
+        vals.append(nm)
     for k in ("kv", "circuit", "band_km", "routes_wanted", "note", "accept_partial"):
         v = getattr(req, k)
         if v is not None:
@@ -333,10 +355,10 @@ def copy_run(run_id: str, req: CopyReq):
     r = _run(run_id)
     seq = db.one("select nextval('run_seq') as n")["n"]
     nid = f"{r['family']}-{seq:04d}"
-    db.exec_("""insert into runs (id, family, rev, parent_id, note, a_lon, a_lat, a_name, b_lon, b_lat, b_name, kv, circuit,
-                                  band_km, routes_wanted, sources, rule_overrides, cost_overrides, imagery, accept_partial,
-                                  status, geo)
-                select %s, family, rev+1, id, %s, a_lon, a_lat, a_name, b_lon, b_lat, b_name, kv, circuit, band_km,
+    db.exec_("""insert into runs (id, family, rev, parent_id, name, note, a_lon, a_lat, a_name, b_lon, b_lat, b_name, kv,
+                                  circuit, band_km, routes_wanted, sources, rule_overrides, cost_overrides, imagery,
+                                  accept_partial, status, geo)
+                select %s, family, rev+1, id, name, %s, a_lon, a_lat, a_name, b_lon, b_lat, b_name, kv, circuit, band_km,
                        routes_wanted, sources, rule_overrides, cost_overrides, imagery, accept_partial,
                        case when exists (select 1 from run_layers where run_id=%s) then 'review' else 'draft' end, geo
                 from runs where id=%s""", (nid, req.note, run_id, run_id))

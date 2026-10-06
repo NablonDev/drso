@@ -108,6 +108,9 @@ create table if not exists features (
   geom geometry(Geometry, 4326) not null
 );
 alter table features add column if not exists attrs jsonb;
+-- corridor name (mandatory from 6 Oct 2026); older runs get "A – B" from their point names, else their id
+alter table runs add column if not exists name text;
+update runs set name = coalesce(nullif(concat_ws(' – ', nullif(a_name, ''), nullif(b_name, '')), ''), id) where name is null;
 create index if not exists features_geom on features using gist (geom);
 create index if not exists features_lv on features (layer_version_id);
 

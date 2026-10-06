@@ -164,8 +164,8 @@ function Body({ s }: { s: Solve }) {
           : "width:15px;height:15px;background:#fff;border:3px solid #14202A;box-shadow:0 0 0 2px rgba(255,255,255,.6)";
       return el;
     };
-    const a = new maplibregl.Marker({ element: mk("a", `A · ${run.a_name ?? ""}`) }).setLngLat(ends.a).addTo(map);
-    const b = new maplibregl.Marker({ element: mk("b", `B · ${run.b_name ?? ""}`) }).setLngLat(ends.b).addTo(map);
+    const a = new maplibregl.Marker({ element: mk("a", run.a_name ? `A · ${run.a_name}` : "A") }).setLngLat(ends.a).addTo(map);
+    const b = new maplibregl.Marker({ element: mk("b", run.b_name ? `B · ${run.b_name}` : "B") }).setLngLat(ends.b).addTo(map);
     return () => {
       a.remove();
       b.remove();

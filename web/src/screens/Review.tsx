@@ -5,7 +5,7 @@ import { useRunCtx } from "../App";
 import { apiCalls, qk, useApiMutation, useCosts, useLayers, useRules } from "../api/hooks";
 import type { Job, RunDetail } from "../api/types";
 import { Btn, ErrorNote, Head, Loading, Note } from "../components/ui";
-import { clock, date, fmtLatLon, hm, int, lineSpec, num, seconds } from "../lib/format";
+import { clock, corridorName, date, fmtLatLon, hm, int, lineSpec, num, seconds } from "../lib/format";
 import { useUi } from "../store/ui";
 
 export default function Review() {
@@ -68,6 +68,7 @@ export default function Review() {
             <div className="tw">
               <table className="kv">
                 <tbody>
+                  <tr><td>Corridor</td><td><b>{corridorName(run)}</b></td></tr>
                   <tr><td>From</td><td>{run.a_name || "Point A"}<div className="hint mono">{fmtLatLon(run.a_lat, run.a_lon)}</div></td></tr>
                   <tr><td>To</td><td>{run.b_name || "Point B"}<div className="hint mono">{fmtLatLon(run.b_lat, run.b_lon)}</div></td></tr>
                   <tr><td>Line</td><td>{lineSpec(run.kv, run.circuit)}</td></tr>

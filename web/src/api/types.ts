@@ -140,6 +140,8 @@ export interface Run {
   family: string;
   rev: number;
   parent_id: string | null;
+  /** corridor name — mandatory on create, the run's reference on every page */
+  name: string | null;
   note: string | null;
   created_at: string;
   updated_at: string;

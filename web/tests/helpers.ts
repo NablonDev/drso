@@ -1,6 +1,7 @@
 import { expect, type APIRequestContext, type Page } from "@playwright/test";
 
 export const TEST_CORRIDOR = {
+  name: "PW test corridor",
   a: { lat: 23.4525, lon: 69.5924, name: "PW test A" },
   b: { lat: 23.3932, lon: 70.5955, name: "PW test B" },
   kv: 400,

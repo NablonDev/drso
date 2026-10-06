@@ -220,10 +220,12 @@ export function useInvalidateRun() {
 }
 
 export interface RunCreateBody {
+  name: string;
   a: Pt;
   b: Pt;
   kv: number;
-  circuit: string;
+  /** always "dc" from the UI (double circuit); the server defaults to it too */
+  circuit?: string;
   band_km: number;
   routes_wanted?: number;
   note?: string | null;

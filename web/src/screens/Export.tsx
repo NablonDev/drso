@@ -4,7 +4,7 @@ import { fileUrl, useSolve } from "../api/hooks";
 import type { Solve } from "../api/types";
 import CopyDialog from "../components/CopyDialog";
 import { ErrorNote, Head, Loading } from "../components/ui";
-import { int, num } from "../lib/format";
+import { corridorName, int, num } from "../lib/format";
 import { useSelectedRoute } from "../store/selection";
 
 const PER_ROUTE: { suffix: string; label: string; desc: string; group: 1 | 2 }[] = [
@@ -83,7 +83,7 @@ function Body({ s }: { s: Solve }) {
     <section>
       <Head title="Export">
         {r ? `Route ${r.id} · ` : ""}
-        {run.a_name || "A"} → {run.b_name || "B"} · rev {run.rev}
+        {corridorName(run)} · rev {run.rev}
         {r ? ` · ${num(r.stats.length_km, 1)} km · ${int(r.stats.towers)} towers` : ""}.
       </Head>
 

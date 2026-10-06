@@ -4,7 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { api } from "../api/client";
 import { qk, useActiveJob, useCosts, useLayers, useRun } from "../api/hooks";
 import type { Job, RunDetail } from "../api/types";
-import { lineSpec } from "../lib/format";
+import { corridorName, lineSpec } from "../lib/format";
 import { toggleTheme, useUi } from "../store/ui";
 import { Prog } from "./ui";
 import ErrorBoundary from "./ErrorBoundary";
@@ -257,7 +257,8 @@ export default function Shell() {
         </Link>
         {run ? (
           <div className="runchip" data-testid="runchip">
-            Run <b>{run.id}</b> · <b className="mono">rev {run.rev}</b> · <span className="mono">{lineSpec(run.kv, run.circuit)}</span>
+            <b data-testid="corridor-name">{corridorName(run)}</b> · <span className="mono">{run.id}</span> ·{" "}
+            <b className="mono">rev {run.rev}</b> · <span className="mono">{lineSpec(run.kv, run.circuit)}</span>
           </div>
         ) : null}
         <BusyChip />

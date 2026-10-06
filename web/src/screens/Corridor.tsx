@@ -2,38 +2,37 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { apiCalls, qk, useApiMutation, useConfig, useGeoBand, useGeoValidate, useHealth, useRun, type RunCreateBody } from "../api/hooks";
-import type { Circuit, Pt, RunDetail } from "../api/types";
+import type { Pt, RunDetail } from "../api/types";
 import { hasLayers } from "../components/Shell";
 import { Btn, ErrorNote, Head, Kpi, Loading, Note, Spinner } from "../components/ui";
 import { fmtDec, parseCoord, parsePair } from "../lib/dms";
-import { CIRCUIT_LONG, date, fold, hm, int, num } from "../lib/format";
+import { date, fold, hm, int, num } from "../lib/format";
 import { useDebounced } from "../lib/useDebounced";
 
 interface Form {
+  name: string;
   lat1: string;
   lon1: string;
-  nm1: string;
   lat2: string;
   lon2: string;
-  nm2: string;
   kv: number;
-  circuit: Circuit;
   band: number;
 }
 
-const EMPTY: Form = { lat1: "", lon1: "", nm1: "", lat2: "", lon2: "", nm2: "", kv: 765, circuit: "dc", band: 5 };
+/** Every line is double circuit (Vivek, 6 Oct 2026); the band defaults to ± 25 km. */
+const CIRCUIT = "dc";
+const BAND_MAX = 25;
+const EMPTY: Form = { name: "", lat1: "", lon1: "", lat2: "", lon2: "", kv: 765, band: BAND_MAX };
 
 function fromRun(r: RunDetail): Form {
   return {
+    name: r.name ?? "",
     lat1: fmtDec(r.a_lat),
     lon1: fmtDec(r.a_lon),
-    nm1: r.a_name ?? "",
     lat2: fmtDec(r.b_lat),
     lon2: fmtDec(r.b_lon),
-    nm2: r.b_name ?? "",
     kv: r.kv,
-    circuit: r.circuit,
-    band: Math.min(15, Math.max(1, Math.round(r.band_km))),
+    band: Math.min(BAND_MAX, Math.max(1, Math.round(r.band_km))),
   };
 }
 
@@ -45,11 +44,11 @@ function coordErr(v: string, max: number): string | null {
   return null;
 }
 
-function toPt(lat: string, lon: string, name: string): Pt | null {
+function toPt(lat: string, lon: string, name: string | null | undefined): Pt | null {
   const la = parseCoord(lat);
   const lo = parseCoord(lon);
   if (la === null || lo === null || Math.abs(la) > 90 || Math.abs(lo) > 180) return null;
-  return { lat: la, lon: lo, name: name.trim() || null };
+  return { lat: la, lon: lo, name: name?.trim() || null };
 }
 
 function CoordInput({
@@ -113,6 +112,7 @@ export default function Corridor() {
   const [reuse, setReuse] = useState<string | null>(null);
   const reuseTouched = useRef(false);
   const loadedFor = useRef<string | null>(null);
+  const [nameTouched, setNameTouched] = useState(false);
 
   useEffect(() => {
     if (run && loadedFor.current !== run.id) {
@@ -126,8 +126,10 @@ export default function Corridor() {
   }, [run, runId]);
 
   const set = <K extends keyof Form>(k: K, v: Form[K]) => setF((s) => ({ ...s, [k]: v }));
-  const a = useMemo(() => toPt(f.lat1, f.lon1, f.nm1), [f.lat1, f.lon1, f.nm1]);
-  const b = useMemo(() => toPt(f.lat2, f.lon2, f.nm2), [f.lat2, f.lon2, f.nm2]);
+  // point names are no longer asked for; an older run keeps the ones it has
+  const a = useMemo(() => toPt(f.lat1, f.lon1, run?.a_name), [f.lat1, f.lon1, run?.a_name]);
+  const b = useMemo(() => toPt(f.lat2, f.lon2, run?.b_name), [f.lat2, f.lon2, run?.b_name]);
+  const name = f.name.trim().replace(/\s+/g, " ");
   const da = useDebounced(a, 450);
   const db = useDebounced(b, 450);
   const dband = useDebounced(f.band, 250);
@@ -142,17 +144,20 @@ export default function Corridor() {
     setReuse(firstFull);
   }, [runId, firstFull]);
 
-  const dirty = useMemo(() => {
+  // the corridor proper (fixed once layers exist) vs. the name (always editable)
+  const corridorDirty = useMemo(() => {
     if (!run) return true;
     const o = fromRun(run);
     return (
-      (["nm1", "nm2", "kv", "circuit", "band"] as const).some((k) => o[k] !== f[k]) ||
+      (["kv", "band"] as const).some((k) => o[k] !== f[k]) ||
       parseCoord(o.lat1) !== parseCoord(f.lat1) ||
       parseCoord(o.lon1) !== parseCoord(f.lon1) ||
       parseCoord(o.lat2) !== parseCoord(f.lat2) ||
       parseCoord(o.lon2) !== parseCoord(f.lon2)
     );
   }, [run, f]);
+  const nameDirty = Boolean(run) && name !== (run?.name ?? "");
+  const dirty = corridorDirty || nameDirty;
 
   const create = useApiMutation<RunDetail, RunCreateBody>({
     mutationFn: (body) => apiCalls.createRun(body),
@@ -177,14 +182,17 @@ export default function Corridor() {
 
   if (runId && runQ.isPending) return <Loading />;
 
-  const canSubmit = Boolean(a && b && geo.data?.ok && !geo.isFetching);
+  const canSubmit = Boolean(name && a && b && geo.data?.ok && !geo.isFetching);
   const submit = () => {
-    if (!a || !b) return;
-    const body: RunCreateBody = { a, b, kv: f.kv, circuit: f.circuit, band_km: f.band };
+    setNameTouched(true);
+    if (!a || !b || !name) return;
     if (!runId) {
+      const body: RunCreateBody = { name, a, b, kv: f.kv, circuit: CIRCUIT, band_km: f.band };
       create.mutate({ ...body, routes_wanted: 4, reuse_from: reuse });
-    } else if (dirty) {
-      patch.mutate(body);
+    } else if (corridorDirty) {
+      patch.mutate({ ...(nameDirty ? { name } : {}), a, b, kv: f.kv, band_km: f.band });
+    } else if (nameDirty) {
+      patch.mutate({ name });                       // a rename is allowed even on a locked run
     } else {
       nav(`/runs/${runId}/images`);
     }
@@ -201,8 +209,8 @@ export default function Corridor() {
   return (
     <section>
       <Head title="Where does the line run?">
-        Two coordinates, the line spec, and how wide a band to examine. Extraction takes time on the GPU, so the band is the one
-        input worth thinking about.
+        A name for the corridor, two coordinates, the voltage, and how wide a band to examine. Every line is planned as double
+        circuit. Extraction takes time on the GPU, so the band is the one input worth thinking about.
       </Head>
 
       {locked ? (
@@ -217,6 +225,21 @@ export default function Corridor() {
         <div className="stack">
           <div className="card">
             <div className="ch">
+              <h3>Corridor</h3>
+            </div>
+            <div className="cb stack">
+              <label className="fld">
+                <span>Corridor name</span>
+                <input id="corridor-name" data-testid="corridor-name-input" type="text" required maxLength={80} value={f.name}
+                  aria-invalid={nameTouched && !name} onChange={(e) => set("name", e.target.value)}
+                  onBlur={() => setNameTouched(true)} placeholder="Bhuj – Lakadia 765 kV" />
+                {nameTouched && !name ? <div className="err">A corridor name is required</div> : null}
+              </label>
+              <div className="hint">Shown at the top of every page as this run's reference. It can be changed later.</div>
+            </div>
+          </div>
+          <div className="card">
+            <div className="ch">
               <h3>Start point</h3>
               <span className="pill p-acc">A</span>
             </div>
@@ -227,10 +250,6 @@ export default function Corridor() {
                 <CoordInput id="lon1" label="Longitude" value={f.lon1} max={180} onChange={(v) => set("lon1", v)}
                   onPair={(la, lo) => setF((s) => ({ ...s, lat1: fmtDec(la), lon1: fmtDec(lo) }))} />
               </div>
-              <label className="fld">
-                <span>Name (optional)</span>
-                <input id="nm1" type="text" value={f.nm1} onChange={(e) => set("nm1", e.target.value)} placeholder="Vadodara 400/220 kV S/S" />
-              </label>
               <div className="hint">
                 Decimal degrees, WGS 84. Paste <span className="mono">22°18'25.9"N 73°10'52.3"E</span> and it converts.
               </div>
@@ -248,10 +267,6 @@ export default function Corridor() {
                 <CoordInput id="lon2" label="Longitude" value={f.lon2} max={180} onChange={(v) => set("lon2", v)}
                   onPair={(la, lo) => setF((s) => ({ ...s, lat2: fmtDec(la), lon2: fmtDec(lo) }))} />
               </div>
-              <label className="fld">
-                <span>Name (optional)</span>
-                <input id="nm2" type="text" value={f.nm2} onChange={(e) => set("nm2", e.target.value)} placeholder="Halol 765 kV S/S" />
-              </label>
             </div>
           </div>
           <div className="card">
@@ -270,18 +285,10 @@ export default function Corridor() {
                     ))}
                   </select>
                 </label>
-                <label className="fld" style={{ flex: 1 }}>
-                  <span>Circuits</span>
-                  <select id="circuit" value={f.circuit} onChange={(e) => set("circuit", e.target.value as Circuit)}>
-                    {(["dc", "sc", "qc"] as Circuit[]).map((c) => (
-                      <option key={c} value={c}>
-                        {CIRCUIT_LONG[c]}
-                      </option>
-                    ))}
-                  </select>
-                </label>
               </div>
-              <div className="hint" style={{ marginTop: 6 }}>Rules and unit costs resolve per voltage and circuit on the server.</div>
+              <div className="hint" style={{ marginTop: 6 }}>
+                Double circuit. Rules and unit costs resolve per voltage on the server.
+              </div>
             </div>
           </div>
         </div>
@@ -356,7 +363,7 @@ export default function Corridor() {
                 <label htmlFor="band" style={{ fontSize: 13 }}>Search corridor</label>
                 <span className="mono" style={{ fontWeight: 500 }} id="bandLbl">± {f.band} km</span>
               </div>
-              <input type="range" id="band" min={1} max={15} step={1} value={f.band} style={{ width: "100%" }}
+              <input type="range" id="band" min={1} max={BAND_MAX} step={1} value={f.band} style={{ width: "100%" }}
                 aria-valuetext={`plus or minus ${f.band} kilometres`} onChange={(e) => set("band", Number(e.target.value))} />
               <div className="row" style={{ justifyContent: "space-between" }}>
                 <span className="hint">Tight — less GPU time, less room to deviate</span>
@@ -369,7 +376,7 @@ export default function Corridor() {
               {bandQ.isError ? <ErrorNote error={bandQ.error} /> : null}
               <Note kind="warn">
                 <b>The expensive decision on the page.</b> Widening the band later means running the vision models again. Too
-                tight, though, and the route is trapped against an obstacle with no room to go round. ± 5 km suits most corridors.
+                tight, though, and the route is trapped against an obstacle with no room to go round. The default is ± 25 km.
               </Note>
             </div>
           </div>

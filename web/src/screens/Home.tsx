@@ -5,11 +5,7 @@ import type { Job, RunListItem } from "../api/types";
 import CopyDialog from "../components/CopyDialog";
 import { jobPath } from "../components/Shell";
 import { ErrorNote, Head, Loading, Prog, StatusPill } from "../components/ui";
-import { clock, crore, km, lineSpec, when } from "../lib/format";
-
-function corridorName(r: { a_name: string | null; b_name: string | null }) {
-  return `${r.a_name || "A"} → ${r.b_name || "B"}`;
-}
+import { clock, corridorName, crore, km, lineSpec, when } from "../lib/format";
 
 function RunningCard({ job, run }: { job: Job; run?: RunListItem }) {
   const pct = Math.round((job.progress ?? 0) * 100);
@@ -151,10 +147,10 @@ export default function Home() {
                   <tr key={r.id} data-testid="run-row">
                     <td>
                       <Link to={`/runs/${r.id}`} style={{ textDecoration: "none" }}>
-                        <b>{r.id}</b>
+                        <b>{corridorName(r)}</b>
                       </Link>
                       <div className="hint">
-                        {when(r.created_at)}
+                        <span className="mono">{r.id}</span> · {when(r.created_at)}
                         {r.parent_id ? ` · copied from ${r.parent_id}` : ""}
                         {r.note ? ` · ${r.note}` : ""}
                       </div>
@@ -163,7 +159,9 @@ export default function Home() {
                     <td>
                       <span className={`pill ${r.rev > 1 ? "p-chg" : "p-go"}`}>r{r.rev}</span>
                     </td>
-                    <td>{corridorName(r)}</td>
+                    <td className="hint">
+                      {r.a_name || r.b_name ? `${r.a_name || "A"} → ${r.b_name || "B"}` : "A → B"}
+                    </td>
                     <td className="mono">{lineSpec(r.kv, r.circuit)}</td>
                     <td>
                       {r.custom_sources ? (

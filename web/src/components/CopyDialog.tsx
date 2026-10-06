@@ -4,6 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { apiCalls, qk, useApiMutation } from "../api/hooks";
 import type { Run, RunDetail } from "../api/types";
 import { Btn, Dialog, ErrorNote } from "./ui";
+import { corridorName } from "../lib/format";
 
 /**
  * "Copy and edit — make revision N". If `runs` is given (home screen, no run chosen yet) a picker
@@ -58,7 +59,7 @@ export default function CopyDialog({
           <select value={pick} onChange={(e) => setPick(e.target.value)}>
             {runs.map((r) => (
               <option key={r.id} value={r.id}>
-                {r.id} · rev {r.rev} · {r.a_name ?? "A"} → {r.b_name ?? "B"}
+                {corridorName(r)} · {r.id} · rev {r.rev}
               </option>
             ))}
           </select>

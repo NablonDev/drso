@@ -66,20 +66,26 @@ def run_next_job():
 
 
 def make_run(client, b=SHORT_B, band=5.0, kv=765) -> str:
-    r = client.post("/api/runs", json={"a": A, "b": b, "kv": kv, "circuit": "dc", "band_km": band, "note": "test"})
+    r = client.post("/api/runs", json={"name": "Test corridor", "a": A, "b": b, "kv": kv, "circuit": "dc", "band_km": band, "note": "test"})
     assert r.status_code == 201, r.text
     return r.json()["id"]
 
 
 # ---------------------------------------------------------------------------------------
 def test_validation_errors(client):
-    r = client.post("/api/runs", json={"a": A, "b": B, "kv": 500, "circuit": "dc", "band_km": 5})
+    r = client.post("/api/runs", json={"name": "Test corridor", "a": A, "b": B, "kv": 500, "circuit": "dc", "band_km": 5})
     assert r.status_code == 422
-    r = client.post("/api/runs", json={"a": A, "b": A, "kv": 765, "circuit": "dc", "band_km": 5})
+    r = client.post("/api/runs", json={"name": "   ", "a": A, "b": B, "kv": 765, "band_km": 25})
+    assert r.status_code == 422                                   # corridor name is mandatory
+    r = client.post("/api/runs", json={"name": "Bhuj – Lakadia", "a": A, "b": SHORT_B, "kv": 765, "band_km": 25})
+    assert r.status_code == 201 and r.json()["id"].startswith("BHU-LAK-") and r.json()["circuit"] == "dc"
+    assert r.json()["name"] == "Bhuj – Lakadia"
+    assert client.delete(f"/api/runs/{r.json()['id']}").status_code == 200
+    r = client.post("/api/runs", json={"name": "Test corridor", "a": A, "b": A, "kv": 765, "circuit": "dc", "band_km": 5})
     assert r.status_code == 400 and "1 km" in r.json()["detail"]
-    r = client.post("/api/runs", json={"a": A, "b": B, "kv": 765, "circuit": "xx", "band_km": 5})
+    r = client.post("/api/runs", json={"name": "Test corridor", "a": A, "b": B, "kv": 765, "circuit": "xx", "band_km": 5})
     assert r.status_code == 422
-    r = client.post("/api/runs", json={"a": {"lat": 95, "lon": 70}, "b": B, "kv": 765, "circuit": "dc", "band_km": 5})
+    r = client.post("/api/runs", json={"name": "Test corridor", "a": {"lat": 95, "lon": 70}, "b": B, "kv": 765, "circuit": "dc", "band_km": 5})
     assert r.status_code == 422
 
 

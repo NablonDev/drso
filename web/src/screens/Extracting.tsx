@@ -5,7 +5,7 @@ import { useRunCtx } from "../App";
 import { apiCalls, qk, useApiMutation, useLayers } from "../api/hooks";
 import type { Job, JobLayerStatus, RunLayer } from "../api/types";
 import { Btn, Dialog, ErrorNote, Head, Loading, Note, Prog } from "../components/ui";
-import { clock, elapsedMin, hm, int } from "../lib/format";
+import { clock, corridorName, elapsedMin, hm, int } from "../lib/format";
 import { useTicker } from "../lib/useDebounced";
 import { requestedLayers, useJobLayers } from "../store/jobs";
 import { useUi } from "../store/ui";
@@ -92,7 +92,7 @@ export default function Extracting() {
   return (
     <section>
       <Head title="Step 1 — extracting layers">
-        {run.a_name || "A"} → {run.b_name || "B"} · rev {run.rev} · started {clock(job.started_at ?? job.created_at)}
+        {corridorName(run)} · rev {run.rev} · started {clock(job.started_at ?? job.created_at)}
         {live && job.eta_text ? ` · about ${job.eta_text} left` : ""}. The route is not being solved yet.
       </Head>
 

@@ -78,6 +78,13 @@ export function elapsedMin(fromIso: string | null | undefined, toIso?: string | 
 export const CIRCUIT_SHORT: Record<string, string> = { sc: "S/C", dc: "D/C", qc: "Q/C" };
 export const CIRCUIT_LONG: Record<string, string> = { sc: "Single circuit", dc: "Double circuit", qc: "Quad circuit" };
 
+/** The corridor's name as the user gave it; older runs fall back to "A → B", then the run id. */
+export function corridorName(r: { name?: string | null; id: string; a_name?: string | null; b_name?: string | null }): string {
+  if (r.name && r.name.trim()) return r.name.trim();
+  if (r.a_name || r.b_name) return `${r.a_name || "A"} → ${r.b_name || "B"}`;
+  return r.id;
+}
+
 export function lineSpec(kv: number, circuit: string): string {
   return `${kv} kV ${CIRCUIT_SHORT[circuit] ?? circuit}`;
 }
