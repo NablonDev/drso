@@ -327,6 +327,7 @@ layers:
     classes: [runway]
 
   - key: monuments
+    hidden: true          # hidden 6 Oct 2026 (Vivek): only OSM test data so far; un-hide with ASI / notified defence data
     name: "Monuments"
     kind: any
     producer: reference
@@ -345,6 +346,7 @@ layers:
     classes: [gas_pipeline, oil_pipeline]
 
   - key: defence
+    hidden: true          # hidden 6 Oct 2026 (Vivek): only OSM test data so far; un-hide with ASI / notified defence data
     name: "Defence land"
     kind: polygon
     producer: reference

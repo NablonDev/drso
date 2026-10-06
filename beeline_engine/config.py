@@ -26,8 +26,13 @@ def _load(name: str) -> dict:
         return yaml.safe_load(f)
 
 
-def load_layers() -> dict:
-    return _load("layers.yaml")
+def load_layers(include_hidden: bool = False) -> dict:
+    """Layer registry. Entries with `hidden: true` are left out everywhere (sources, extraction,
+    review, solve readiness) unless include_hidden is set."""
+    reg = _load("layers.yaml")
+    if not include_hidden:
+        reg["layers"] = [l for l in reg["layers"] if not l.get("hidden")]
+    return reg
 
 
 def load_rules() -> dict:
