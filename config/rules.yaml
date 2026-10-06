@@ -100,9 +100,10 @@ groups:
           - {key: applies_to, label: "Applies to", type: sel, value: "Angular towers", options: ["Angular towers", "All towers"]}
 
       - id: clusters
-        name: "Built-up cluster (village)"
+        name: "Built-up cluster (village) and plotted land"
         note: "Cluster detection threshold is an AESL assumption, not a regulation"
         layer: clusters
+        also_layers: [plotted]      # plotted land gets the same buffers (Vivek, 6 Oct 2026)
         mechanism: nogo
         params:
           - {key: tower_setback_m, label: "Tower buffer", type: num, unit: m, value: 120}

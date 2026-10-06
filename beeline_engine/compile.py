@@ -370,6 +370,19 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
                 continue
             td = float(p.get("tower_setback_m", 0))
             dist = R.dist(r.layer, r.classes)
+            if r.also_layers and r.id not in ("buildings", "dams", "creek"):
+                # same buffers on further layers, read whole (e.g. plotted land under the
+                # built-up cluster rule — Vivek, 6 Oct 2026)
+                cd = float(p.get("conductor_buffer_m", 0))
+                for lyr, cls in ((r.layer, r.classes), *((extra, None) for extra in r.also_layers)):
+                    d_l = R.dist(lyr, cls)
+                    if d_l is None:
+                        continue
+                    add(_within(d_l, td), tower_forbidden, r.id)
+                    vec(tower_geoms, r.id, lyr, cls, td)
+                    add(_within(d_l, cd), conductor_forbidden, r.id)
+                    vec(cond_geoms, r.id, lyr, cls, cd)
+                continue
             if dist is None:
                 continue
             if r.id == "buildings":
