@@ -49,6 +49,12 @@ class SolverParams:
     lateral_penalty_rs_per_m: float = 0.0    # per tower, per metre of lateral offset
     sensitive_multiplier: float = 1.0
     extra_strip_rs_per_m: np.ndarray | None = None   # raster, ₹ per metre of line (diversity)
+    # Heading quantisation (6 Oct 2026): consecutive span vectors that differ by no more than the grid's
+    # own heading step (atan(site spacing / span length), 7.1° at 400 m) stand for a straight line at
+    # an in-between heading, which the spotting straightens into suspension towers. Pricing them as
+    # B1/B2 made every stretch not parallel to the bee-line ~₹0.3 Cr per tower too dear (the search
+    # ranked a hill route ₹22 Cr below a flat one that was ₹3 Cr cheaper once spotted).
+    heading_slack: bool = False
     # terrain in the search (6 Oct 2026): clearance per span, hilly span limit, hilly section towers
     terrain: bool = False
     ground_clearance_m: float = 0.0
@@ -313,6 +319,8 @@ def transition_matrix(grid: Grid, p: SolverParams) -> tuple[np.ndarray, np.ndarr
     h = grid.heading_deg
     defl = np.abs(h[:, None] - h[None, :])
     K = len(h)
+    step = np.degrees(np.arctan(grid.sy / np.maximum(grid.length_m, 1.0)))     # heading step per vector
+    slack = np.maximum(step[:, None], step[None, :]) + 0.5 if p.heading_slack else np.zeros((K, K))
     T = np.full((K, K), INF, np.float32)
     TA = np.full((K, K), INF, np.float32)
     for i in range(K):
@@ -320,7 +328,7 @@ def transition_matrix(grid: Grid, p: SolverParams) -> tuple[np.ndarray, np.ndarr
             d = defl[i, j]
             if d > p.max_dev_deg + 1e-9:
                 continue
-            t = tower_type_for(d, p.type_bands)
+            t = tower_type_for(0.0 if d <= slack[i, j] else d, p.type_bands)
             if t is None:
                 continue
             c = p.tower_cost_rs[t]

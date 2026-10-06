@@ -1,7 +1,10 @@
 """Tower spotting on the solved alignment, and the route's true cost.
 
 1. String-pulling: replace runs of grid towers by straight legs between angle points, as long
-   as every leg passes the exact (vector) conductor checks and its towers can be spotted.
+   as every leg passes the exact (vector) conductor checks, its towers can be spotted, and the
+   straight leg is not dearer than the grid towers it replaces (towers, foundations, land, RoW
+   strip incl. forest): a cost-blind straightening cut corners through forest and rock and made
+   a hill route ₹14 Cr dearer than the search had priced it (6 Oct 2026).
 2. Spot suspension towers along each leg at equal spans (design span or shorter).
 3. Section points: upgrade a suspension tower to B1 where tension towers are further apart
    than the section interval (the hilly interval once the stretch includes a hilly span).
@@ -55,6 +58,7 @@ class SpotParams:
     hilly_design_span_m: float | None = None
     hilly_section_km: float | None = None
     hilly_slope_deg: float | None = None
+    pull_cost_tol: float = 0.01          # a straightened leg may cost at most this much more than the grid towers it replaces
 
 
 @dataclass
@@ -249,6 +253,36 @@ def _spot_leg(chk: Checker, p, q, sp: SpotParams):
     return None
 
 
+def _chain_cost(comp: Compiled, sp: SpotParams, pts, inner_types) -> float:
+    """Approximate exact cost of a tower chain (frame coords): inner towers (steel, insulators,
+    earthing, foundation x soil, base land) + spans (conductor + RoW strip density incl. forest)."""
+    f = comp.frame
+    costs = comp.costs
+    fnd_base = float(costs["foundation"]["base_cr_tower"]) * RS_PER_CR
+    base_land = float(costs["base_area_m2"]) * costs["land"]["tower_base_pct"] / 100.0
+    earthing = float(costs["tower"]["earthing_rs"])
+    c = 0.0
+    for (x, y), t in zip(pts[1:-1], inner_types):
+        px = int(np.clip((x - f.x0) / f.res_m, 0, f.width - 1))
+        py = int(np.clip((f.y_top - y) / f.res_m, 0, f.height - 1))
+        c += sp.tower_cost_rs[t] + earthing + fnd_base * float(comp.soil_mult[py, px]) \
+            + base_land * float(comp.land_rate_m2[py, px])
+    width = 2 * comp.half_width_m
+    for (x0, y0), (x1, y1) in zip(pts[:-1], pts[1:]):
+        L = math.hypot(x1 - x0, y1 - y0)
+        n = max(2, int(L // (f.res_m / 2)) + 1)
+        t = np.linspace(0, 1, n)
+        fx = x0 + t * (x1 - x0)
+        fy = y0 + t * (y1 - y0)
+        dens = 0.0
+        for off in (-comp.half_width_m / 2, 0.0, comp.half_width_m / 2):     # three lanes across the RoW
+            col = np.clip(((fx - f.x0) / f.res_m).astype(int), 0, f.width - 1)
+            row = np.clip(((f.y_top - (fy + off)) / f.res_m).astype(int), 0, f.height - 1)
+            dens += float(comp.strip_density[row, col].mean()) / 3.0
+        c += L * (comp.conductor_rs_per_m + dens * width)
+    return c
+
+
 def pull_string(chk: Checker, grid_pts: list[tuple[float, float]], sp: SpotParams, window: int = 60):
     """Greedy farthest-reachable angle points over the solver's towers.
 
@@ -273,6 +307,13 @@ def pull_string(chk: Checker, grid_pts: list[tuple[float, float]], sp: SpotParam
                 continue
             inner = _spot_leg(chk, grid_pts[i], q, sp)
             if inner is None:
+                continue
+            # not dearer than the grid towers it replaces (their types from their own deflections)
+            seg = grid_pts[i:j + 1]
+            gtypes = [tower_type_for(_deflection(seg[m - 1], seg[m], seg[m + 1])[0], sp.type_bands) or "D60"
+                      for m in range(1, len(seg) - 1)]
+            if _chain_cost(chk.c, sp, [grid_pts[i]] + inner + [q], ["A"] * len(inner)) > \
+                    _chain_cost(chk.c, sp, seg, gtypes) * (1.0 + sp.pull_cost_tol) + 1.0:
                 continue
             chosen = (j, inner)
             pulled_any = True

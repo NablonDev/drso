@@ -7,6 +7,10 @@ grid:
   band_margin_m: 500          # extra length before A and after B in the chainage frame
   raster_margin_m: 0          # padding on raster buffers; spotting repairs grid/exact disagreements
   nudge_radius_m: 30          # how far spotting may move a grid tower to satisfy the exact check
+  # Pricing a bend no larger than the grid's own heading step (7.1° at 400 m spans) as a suspension
+  # tower made the search over-optimistic by ₹27-32 Cr on Bhuj–Lakadia (6 Oct 2026): off. The
+  # cost-aware string pulling in spotting is what closes the search-vs-final gap.
+  heading_slack: false
 
 spans:
   # min span comes from the rule "Span limits at a crossing — Minimum span" (100 m default)
