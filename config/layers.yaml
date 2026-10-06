@@ -37,9 +37,9 @@ layers:
     name: "Buildings"
     kind: polygon
     producer: lulc_model
-    pipeline: buildings     # stored corridor footprints; placeholder model elsewhere (6 Oct 2026)
+    pipeline: buildings     # stored corridor footprints; SamLoRA footprint model elsewhere (6 Oct 2026)
     imagery: esri
-    desc: "Building footprints · stored Bhuj–Lakadia output; footprint model placeholder elsewhere"
+    desc: "Building footprints · stored Bhuj–Lakadia output; SamLoRA footprint model elsewhere"
     minutes_per_km2: 0.214
     default_confidence: 0.94
     classes: [building]

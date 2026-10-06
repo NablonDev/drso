@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from beeline_api import settings  # noqa: E402
 
 SOURCES = {
+    "buildings/best.pth": "/home/vivek_jain/bhuj-lakadia/output/finetune_dataset/checkpoints/best.pth",
     "village_roads/HF_GG08_60.pkl": "/mnt/cog-data/roaddet/HF_GG08_60.pkl",
     "solar/epoch07.ckpt": "/mnt/drso-data/solar_lora/checkpoints/dinov3_lora_solar_v1/lightning_logs/version_1/checkpoints/epoch07.ckpt",
     "solar/hparams.yaml": "/mnt/drso-data/solar_lora/checkpoints/dinov3_lora_solar_v1/lightning_logs/version_1/hparams.yaml",

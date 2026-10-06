@@ -21,9 +21,14 @@ models:
     code: lulc_models/buildings
     env: "${ENV_ROOT}/terratorch/bin/python"
     imagery: [esri_wayback_z18]
-    gpu: false            # placeholder; set true with the real footprint model
-    timeout_h: 2
-    params: {}
+    # Esri India SamLoRA (ViT-L, LoRA r4) fine-tuned on Bhuj–Lakadia: epoch 5 = best.pth,
+    # lowest false-positive rate (bhuj-lakadia FINETUNE_REPORT.md) (Vivek, 6 Oct 2026)
+    weights: {checkpoint: models/buildings/best.pth}
+    gpu: true
+    vram_mb: 14000
+    timeout_h: 6          # ~31 ms/tile on an A100 in bf16; slower on the L4
+    params: {threshold: 0.5, min_area_m2: 4.0, simplify_m: 0.5, oversize_m2: 5000.0,
+             batch_tiles: 8, decode_workers: 6}
 
   village_roads:
     layer: village_roads
