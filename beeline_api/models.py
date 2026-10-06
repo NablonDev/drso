@@ -99,7 +99,6 @@ REGISTRY: dict[str, ModelPlugin] = {
     "lulc_stub": ReferenceStub("lulc_stub", "lulc", "sentinel2"),
     "buildings_stub": ReferenceStub("buildings_stub", "buildings", "esri"),
     "water_stub": ReferenceStub("water_stub", "water", "sentinel2"),
-    "soil_stub": ReferenceStub("soil_stub", "soil", "sentinel2"),
     "power_stub": ReferenceStub("power_stub", "power", "esri"),
     "plotted_stub": ReferenceStub("plotted_stub", "plotted", "esri"),
 }

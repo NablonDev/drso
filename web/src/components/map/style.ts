@@ -16,8 +16,11 @@ export const LAYER_COLOURS: Record<string, string> = {
   nalla: "#8FB8C9",
   wet_land: "#6FA88E",
   other_water: "#5B8FA8",
-  forest: "#3B7350",
-  soil: "#A08B5B",
+  reserve_forest: "#3B7350",
+  forest_in_pa: "#2E5E41",
+  social_forest: "#6E8A5E",
+  national_park: "#7D5BA6",
+  wildlife_sanctuary: "#9B6FB8",
   hard_rock: "#8A7F74",
   sand_dunes: "#E6C66A",
   sandy_plain: "#D9B98C",
@@ -31,13 +34,11 @@ export const LAYER_COLOURS: Record<string, string> = {
   power: "#7A5EA8",
   telecom: "#2BB0A6",
   pipelines: "#B07A2A",
-  wetlands: "#4E8C7A",
   crz: "#2E6FB0",
   aviation: "#9E6811",
   approach: "#E04F8C",
   defence: "#5B6B7A",
   monuments: "#8A7A9A",
-  protected: "#3B7350",
   substations: "#B5523B",
   solar: "#C9A227",
 };
@@ -91,15 +92,16 @@ export const LULC_CLASSES: { key: string; label: string; colour: string }[] = [
 /** Bottom-to-top drawing order. */
 export const LAYER_ORDER = [
   "lulc",
-  "soil",
   "hard_rock",
   "sandy_plain",
   "sand_dunes",
   "salt_pans",
   "marshy_land",
-  "forest",
-  "protected",
-  "wetlands",
+  "social_forest",
+  "reserve_forest",
+  "forest_in_pa",
+  "national_park",
+  "wildlife_sanctuary",
   "crz",
   "defence",
   "aviation",
@@ -146,13 +148,16 @@ export const DEFAULT_ON = new Set([
   "nalla",
   "wet_land",
   "other_water",
-  "forest",
+  "reserve_forest",
+  "forest_in_pa",
+  "social_forest",
+  "national_park",
+  "wildlife_sanctuary",
   "plotted",
   "roads",
   "rail",
   "power",
   "telecom",
-  "wetlands",
   "crz",
   "aviation",
   "approach",
@@ -161,7 +166,7 @@ export const DEFAULT_ON = new Set([
 ]);
 
 /** Layers the route map shows under "No-Go features". */
-export const NOGO_LAYERS = ["clusters", "buildings", "protected", "wetlands", "crz", "other_water", "defence", "aviation", "approach", "substations", "solar", "monuments"];
+export const NOGO_LAYERS = ["clusters", "buildings", "national_park", "wildlife_sanctuary", "forest_in_pa", "crz", "other_water", "defence", "aviation", "approach", "substations", "solar", "monuments"];
 
 /** Route colours: the prototype's four hues, lifted for contrast over satellite imagery. */
 export const ROUTE_COLOURS = ["#4FA3CF", "#9C82D6", "#E3AA45", "#6CC08A"];

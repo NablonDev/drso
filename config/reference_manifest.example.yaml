@@ -129,10 +129,6 @@ layers:
     - path: "waterbodies/gujarat_water_bodies_by_type.gpkg"
       class_field: null    # map pond / dam / creek
       source: "Water bodies by type"
-  soil:
-    path: "Soil_type/gujarat_soil_types_5_layers"
-    class_field: null      # map to normal_dry / wet_submerged / black_cotton / hard_rock / sandy_fissured
-    source: "Gujarat soil types"
   power:
     - path: "transmission_towers/high_voltage/lines_high_voltage.gpkg"
       const_class: power_line

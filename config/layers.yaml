@@ -21,7 +21,10 @@
 version: "2026.10-v1"
 
 layers:
+  # Hidden until a LULC delivery: with it out, all land is costed at the non-agricultural rate
+  # (Vivek, 6 Oct 2026).
   - key: lulc
+    hidden: true
     name: "Land use / land cover"
     kind: polygon
     producer: model
@@ -128,17 +131,6 @@ layers:
     minutes_per_km2: 0.002
     default_confidence: 0.85
     classes: [creek, beach, coral_reef, lagoon, mud_flat, salt_marsh, salt_pan, mangrove, detected_water, marine_buffer]
-
-  - key: soil
-    name: "Soil — marsh, salt pan, dunes, rock"
-    kind: polygon
-    producer: model
-    model: soil_stub
-    imagery: sentinel2
-    desc: "Spectral classifier + BHUKOSH lithology"
-    minutes_per_km2: 0.085
-    default_confidence: 0.74
-    classes: [normal_dry, wet_submerged, black_cotton, hard_rock, sandy_fissured]
 
   # Soil types (transfers/soil types/gujarat_soil_types_5_layers, Gujarat statewide). NGLM 1:50k
   # geomorphology (Resourcesat-1 LISS-III, 2005-06) cross-checked per feature against LD50K, JRC
@@ -260,32 +252,53 @@ layers:
     default_confidence: 0.96
     classes: [railway, metro]
 
-  - key: forest
-    name: "Forest boundaries"
+  # Forest package (transfers/Forests/gj_forest_delivery.gpkg, Gujarat statewide): five layers, no
+  # generic forest / protected layer (Vivek, 6 Oct 2026). OSM PA gap-fills left out; the notified-
+  # wetlands layer is retired (Ramsar sanctuaries sit in wildlife_sanctuary, NWIA wetlands in wet_land).
+  - key: reserve_forest
+    name: "Reserve forest"
     kind: polygon
     producer: reference
-    desc: "Cached — SOI toposheet"
+    desc: "Forest delivery · BharatMaps RFA, IFA 1927 s.20"
     minutes_per_km2: 0.002
-    default_confidence: 0.80
-    classes: [reserve_forest, protected_forest]
+    default_confidence: 0.90
+    classes: [reserve_forest]
 
-  - key: protected
-    name: "Protected areas and ESZ"
+  - key: forest_in_pa
+    name: "Reserve forest inside a PA"
     kind: polygon
     producer: reference
-    desc: "Cached — SOI legal boundaries"
+    desc: "Forest delivery · Reserved Forest within a National Park or Sanctuary"
     minutes_per_km2: 0.002
-    default_confidence: 0.99
-    classes: [sanctuary, national_park, esz]
+    default_confidence: 0.90
+    classes: [reserve_forest_in_pa]
 
-  - key: wetlands
-    name: "Notified wetlands"
+  - key: national_park
+    name: "National park"
     kind: polygon
     producer: reference
-    desc: "Cached — State Wetland Authority notification"
+    desc: "Forest delivery · GatiShakti / State Forest Dept, WLPA 1972 s.35"
     minutes_per_km2: 0.002
-    default_confidence: 0.99
-    classes: [notified_wetland]
+    default_confidence: 0.95
+    classes: [national_park]
+
+  - key: wildlife_sanctuary
+    name: "Wildlife sanctuary"
+    kind: polygon
+    producer: reference
+    desc: "Forest delivery · GatiShakti / State Forest Dept, WLPA 1972 s.18/26A"
+    minutes_per_km2: 0.002
+    default_confidence: 0.95
+    classes: [wildlife_sanctuary]
+
+  - key: social_forest
+    name: "Social forest"
+    kind: polygon
+    producer: reference
+    desc: "Forest delivery · FSI 2023 cover within 100 m of road / rail / canal"
+    minutes_per_km2: 0.002
+    default_confidence: 0.70
+    classes: [social_forest]
 
   # Coastal Regulation Zone. Delivered so far: the sea / Gulf water polygon only
   # (transfers/CRZ/crz_water_gujarat.geojson). HTL and CRZ I-IV zones will follow (Vivek, 6 Oct

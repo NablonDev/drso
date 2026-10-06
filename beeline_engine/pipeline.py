@@ -554,9 +554,7 @@ def _route_events(sr, frame, comp, findex, rules, sp, layer_names, inp, dem, blo
             note = f" Above the {ro:g} ha Regional Office threshold."
         it = None
         line = LineString([(t.x, t.y) for t in T])
-        it, _ = findex.nearest(line, layers={"forest"}, max_dist=comp.half_width_m + 50)
-        if it is None:
-            it, _ = findex.nearest(line, layers={"lulc"}, classes={"reserve_forest"}, max_dist=comp.half_width_m + 50)
+        it, _ = findex.nearest(line, layers={"reserve_forest", "forest_in_pa"}, max_dist=comp.half_width_m + 50)
         evs.append(event("FOREST_ENTRY", {"forest_ha": fha, "threshold_note": note}, source=_source(it, inp.layers)))
     # airport NOC
     noc = rules.get("airport_noc")

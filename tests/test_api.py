@@ -180,7 +180,7 @@ def test_rules_and_costs_validation(client):
     assert r.json()["n_off"] == 1
     assert client.delete(f"/api/runs/{rid}/rules").json()["n_off"] == 0
     rules = client.get(f"/api/runs/{rid}/rules").json()
-    assert rules["n_rules"] == 37          # 29 prototype + protected areas, cell towers, wind turbines, village roads, CRZ
+    assert rules["n_rules"] == 36          # 29 prototype + 8 added - notified wetland (retired 6 Oct 2026)
     r = client.put(f"/api/runs/{rid}/costs", json={"tower": {"rate_per_tonne_rs": "abc"}})
     assert r.status_code == 400
     r = client.put(f"/api/runs/{rid}/costs", json={"land": {"agri_land_cr_ha": -1}})

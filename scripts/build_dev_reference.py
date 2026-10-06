@@ -167,16 +167,8 @@ def main():
             return "canal"
         return "pond"
     put("water", wl, "OSM waterways and water polygons", cls_series=wl["tags"].map(water_cls), conf=0.9)
-    fo = osm_gdf(f'way["landuse"="forest"]{b};relation["landuse"="forest"]{b};way["boundary"="forest"]{b};', polygons=True)
-    fo = fo[fo.geom_type.isin(["Polygon", "MultiPolygon"])]
-    put("forest", fo, "OSM landuse=forest", const="reserve_forest", conf=0.7)
-    pa = osm_gdf(f'relation["boundary"="protected_area"]{b};way["boundary"="protected_area"]{b};'
-                 f'relation["leisure"="nature_reserve"]{b};way["leisure"="nature_reserve"]{b};', polygons=True)
-    pa = pa[pa.geom_type.isin(["Polygon", "MultiPolygon"])]
-    put("protected", pa, "OSM protected areas", const="sanctuary", conf=0.9)
-    wt = osm_gdf(f'way["natural"="wetland"]{b};relation["natural"="wetland"]{b};', polygons=True)
-    wt = wt[wt.geom_type.isin(["Polygon", "MultiPolygon"])]
-    put("wetlands", wt, "OSM natural=wetland (NOT a notified list)", const="notified_wetland", conf=0.6)
+    # forest, protected areas and wetlands: real statewide layers from the forest delivery
+    # (scripts/ingest_forest.py); no OSM stand-ins (6 Oct 2026)
     pl = osm_gdf(f'way["man_made"="pipeline"]{b};', polygons=False)
     put("pipelines", pl, "OSM man_made=pipeline", cls_series=pl["tags"].map(
         lambda t: "oil_pipeline" if t.get("substance") in ("oil", "crude") else "gas_pipeline"), conf=0.8)
@@ -193,7 +185,7 @@ def main():
     so = so[so.geom_type.isin(["Polygon", "MultiPolygon"])]
     put("solar", so, "OSM solar plants", const="solar_park", conf=0.85)
     # layers with no dev source: write empty versions so the run shows LAYER_EMPTY honestly
-    for key, cls in [("soil", "normal_dry"), ("plotted", "plotted_land")]:
+    for key, cls in [("plotted", "plotted_land")]:
         put(key, gpd.GeoDataFrame({"name": []}, geometry=[], crs=4326), "no dev source", const=cls, conf=None)
 
 

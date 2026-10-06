@@ -507,19 +507,30 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
                 sensitive[sel] = 1.0
             if cc in ("agriculture", "orchard"):
                 land_rate[sel] = costs["land"]["agri_land_cr_ha"] * RS_PER_CR / M2_PER_HA
-    fm = R.mask("forest", None)
+    # Delivered forest layers override the LULC classes (forest package, 6 Oct 2026): social forest
+    # first, reserve forest (incl. reserve forest inside a PA) over it.
+    sm = R.mask("social_forest", None)
+    if sm is not None:
+        strip_density[sm] = dens["social_forest"]
+        cost_class[sm] = COST_CLASS_CODES["social_forest"]
+        sensitive[sm] = 1.0
+    fm = None
+    for key in ("reserve_forest", "forest_in_pa"):
+        mk = R.mask(key, None)
+        if mk is not None:
+            fm = mk if fm is None else (fm | mk)
     if fm is not None:
         strip_density[fm] = dens["forest"]
         cost_class[fm] = COST_CLASS_CODES["forest"]
         sensitive[fm] = 1.0
         land_rate[fm] = costs["forest"]["rf_land_cr_ha"] * RS_PER_CR / M2_PER_HA
 
-    # Foundation multiplier: the `soil` layer's per-feature class, plus every layer whose registry
-    # entry names a foundation_class (the soil-type layers). Where two disagree the dearer wins.
+    # Foundation multiplier: every layer whose registry entry names a foundation_class (the
+    # soil-type layers). Where two disagree the dearer wins. (Generic `soil` layer removed, 6 Oct 2026.)
     soil_mult = np.ones(shape, np.float32)
     fnd = costs["foundation"]
-    soil_layers = [("soil", None)] + [(l["key"], l["foundation_class"]) for l in load_layers()["layers"]
-                                      if l.get("foundation_class") in SOIL_KEYS]
+    soil_layers = [(l["key"], l["foundation_class"]) for l in load_layers()["layers"]
+                   if l.get("foundation_class") in SOIL_KEYS]
     for key, fixed in soil_layers:
         soil = layers.get(key)
         if soil is None or not len(soil):

@@ -149,7 +149,7 @@ def test_band_fully_blocked_is_reported():
     f = frame()
     c = f.length_m / 2
     wall = frame_geom(f, box(c - 1500, -6000, c + 1500, 6000))
-    res = run_solve(solve_input({"protected": gdf([wall], "sanctuary", "Test WLS")}))
+    res = run_solve(solve_input({"wildlife_sanctuary": gdf([wall], "wildlife_sanctuary", "Test WLS")}))
     assert not res["feasible"]
     b = res["blocked"]
     assert b["blockers"] and b["blockers"][0]["rule_id"] == "protected_areas"

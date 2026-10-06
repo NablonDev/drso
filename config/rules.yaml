@@ -1,4 +1,5 @@
 # Default rule set — 29 prototype rules + 5 added (protected areas, cell towers, wind turbines, village roads, CRZ), five groups (the prototype's Rules screen).
+# Retired 6 Oct 2026: "Notified wetland — foundation" (its notified-wetlands layer was dropped; Vivek).
 #
 # Every value tagged best_guess: true is a placeholder pending AESL confirmation.
 # A parameter value is either a scalar or a per-voltage map {765, 400, 220, 132}.
@@ -73,16 +74,6 @@ groups:
         params:
           - {key: min_angle_deg, label: "Minimum angle", type: num, unit: "°", value: 75}
           - {key: preferred_angle_deg, label: "Preferred angle", type: num, unit: "°", value: 90}
-
-      - id: wetland
-        name: "Notified wetland — foundation"
-        note: "Wetlands Rules 2017 r.4(2) — permanent construction"
-        layer: wetlands
-        mechanism: wetland
-        params:
-          - {key: tower_placement, label: "Tower placement", type: sel, value: "Prohibited", options: ["Prohibited", "Allowed"]}
-          - {key: band_m, label: "Band from 10-year MHFL", type: num, unit: m, value: 50}
-          - {key: conductor_may_span, label: "Conductor may span", type: sel, value: "Yes", options: ["Yes", "No"]}
 
   - key: nogo
     title: "No-Go zones"
@@ -186,7 +177,9 @@ groups:
       - id: protected_areas
         name: "Protected areas and ESZ"
         note: "Wildlife sanctuary, national park and eco-sensitive zone — avoid entry"
-        layer: protected
+        # forest package: national parks + sanctuaries + reserve forest inside them; no ESZ delivered yet
+        layer: national_park
+        also_layers: [wildlife_sanctuary, forest_in_pa]
         mechanism: nogo
         params:
           - {key: tower_setback_m, label: "Tower buffer", type: num, unit: m, value: 0}
@@ -315,8 +308,8 @@ groups:
       - id: forest
         name: "Reserve and protected forest"
         note: "Routable by default — diversion approval is required in every case. Set to No-Go to keep the route out entirely."
-        layer: forest
-        also_lulc_classes: [reserve_forest]
+        layer: reserve_forest
+        also_layers: [forest_in_pa]
         mechanism: landclass
         cost_class: forest
         params:
@@ -366,8 +359,7 @@ groups:
       - id: social_forest
         name: "Social forest"
         note: "Planted strip alongside road, canal or railway"
-        layer: lulc
-        classes: [social_forest]
+        layer: social_forest
         mechanism: landclass
         cost_class: social_forest
         params:
