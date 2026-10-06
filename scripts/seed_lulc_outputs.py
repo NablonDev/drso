@@ -146,6 +146,32 @@ def seed_plotted_corridor(work_dir: str):
     print(f"plotted: {len(state):,} statewide + {len(c):,} corridor clusters", flush=True)
 
 
+# ---- buildings (build-up area package) ------------------------------------------------
+BUILDUP_ZIP = "LULC output/transfers/build-up area/corridor_footprints_buffered20m_updated 1.zip"
+
+
+def seed_buildings(package: str = BUILDUP_ZIP):
+    """94,045 corridor footprints (layer `buildings`) -> Buildings stored output. The package's
+    20 m merged blobs are not used: built-up clusters are derived from the footprints."""
+    import shutil
+    import tempfile
+    import zipfile
+    tmp = Path(tempfile.mkdtemp(prefix="buildup_"))
+    try:
+        with zipfile.ZipFile(package) as z:
+            z.extractall(tmp)
+        gpkg = next(tmp.glob("**/*.gpkg"))
+        g = pyogrio.read_dataframe(gpkg, layer="buildings")
+        out = _std(g, "building", src_prefix="bldg-", keep=("part", "area_m2"))
+        reference.write_version("buildings", out, VERSION + "-buildup", {
+            "source": f"Building footprints — Bhuj–Lakadia corridor ({Path(package).name}, layer buildings)",
+            "image_source": None, "source_date": None, "model": "corridor footprint delivery",
+            "model_version": Path(package).stem, "confidence": 0.94}, coverage=corridor_aoi())
+        print(f"buildings: {len(out):,} footprints", flush=True)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 # ---- solar -------------------------------------------------------------------------------
 def seed_solar():
     g = pyogrio.read_dataframe("/mnt/drso-data/solar_lora/data/FINAL_solar_v2.gpkg", layer="SOLAR_FINAL_all")
@@ -240,7 +266,7 @@ def seed_turbines():
     print(f"wind_turbines: {len(out)} (OSM-confirmed, deduplicated) from {len(scenes)} scenes", flush=True)
 
 
-SEEDERS = {"solar": seed_solar, "substations": seed_substations, "wind_turbines": seed_turbines,
+SEEDERS = {"buildings": seed_buildings, "solar": seed_solar, "substations": seed_substations, "wind_turbines": seed_turbines,
            "plotted": seed_plotted, "village_roads": seed_roads}
 
 

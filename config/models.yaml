@@ -16,6 +16,15 @@ shared:
   hf_home: models/hf_home          # Hugging Face cache holding facebook/dinov3-vitl16 (gated)
 
 models:
+  buildings:
+    layer: buildings
+    code: lulc_models/buildings
+    env: "${ENV_ROOT}/terratorch/bin/python"
+    imagery: [esri_wayback_z18]
+    gpu: false            # placeholder; set true with the real footprint model
+    timeout_h: 2
+    params: {}
+
   village_roads:
     layer: village_roads
     code: lulc_models/village_roads
