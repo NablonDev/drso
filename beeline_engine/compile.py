@@ -287,8 +287,8 @@ def _null_point_bans(lines, towers, epsg: int, tol: float) -> list:
             L = s1 - s0
             if L > NULL_POINT_MAX_SPAN_M or keep <= 0:
                 continue
-            out.append(substring(ln, s0, s0 + keep * L))
-            out.append(substring(ln, s1 - keep * L, s1))
+            out.append(substring(ln, s0, s0 + keep * L))             # tower -> window start
+            out.append(substring(ln, s1, s1 - keep * L))             # tower -> window end (reversed)
     return [g for g in out if g is not None and not g.is_empty and g.length > 0]
 
 
@@ -499,10 +499,17 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
                     bans = _null_point_bans(R.subset(r.layer, ["power_line"]), R.subset(r.layer, ["power_tower"]),
                                             frame.epsg, float(tol) / 100.0)
                     if bans:
-                        mk = rfeatures.rasterize([(g.buffer(frame.res_m / 2), 1) for g in bans], out_shape=shape,
-                                                 transform=frame.transform, fill=0, all_touched=True,
-                                                 dtype="uint8").astype(bool)
-                        add(mk, conductor_forbidden, r.id)
+                        # raster: permissive by one cell at the window ends (a 20 m raster cannot hold an
+                        # 80 m window exactly); the exact segments go to the spotting's vector check
+                        from shapely.ops import substring as _sub
+                        loose = [_sub(g, 0, max(0.0, g.length - frame.res_m)) if g.length > frame.res_m else None
+                                 for g in bans]
+                        loose = [g for g in loose if g is not None and not g.is_empty]
+                        if loose:
+                            mk = rfeatures.rasterize([(g, 1) for g in loose], out_shape=shape,
+                                                     transform=frame.transform, fill=0, all_touched=False,
+                                                     dtype="uint8").astype(bool)
+                            add(mk, conductor_forbidden, r.id)
                         cond_geoms.append(VecRule(r.id, r.layer, [frame.geom_utm_to_frame(g) for g in bans], 0.0))
                 line_classes = ["power_line"]
             else:
