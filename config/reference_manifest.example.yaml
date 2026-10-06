@@ -112,6 +112,18 @@ layers:
     path: "transfers/CRZ/crz_water_gujarat.geojson"
     const_class: crz_water
     source: "CRZ — sea / Gulf water polygon (Gujarat delivery)"
+  # Bridges: only the consolidated `structures` layer. The `_INTERNAL` HERE / Mappls layers and
+  # the Google-derived flyovers in the same file must not be ingested (licence / ToS).
+  bridges:
+    path: "transfers/bridges/OUTPUT.gpkg"
+    layer: "gujarat_structures_all_sources_1 — structures"
+    class_field: struct_type
+    class_map: {bridge: road_bridge, bridge_or_flyover: road_bridge, flyover: flyover, elevated: flyover,
+                rail_bridge: rail_bridge, underpass_embankment: underpass}
+    name_field: name
+    id_field: uid
+    keep_fields: [struct_type, status, road_class, ref_route, deck_width_m, length_m, "confidence:confidence_grade", sources, nhai_fow]
+    source: "Bridges — OSM (Overture 2026-08, Geofabrik 2026-09) + Bhuvan NHAI + SOI corroboration"
   # aviation / approach: now sourced from the aviation store (beeline_api/aviation; README step 8).
   # airport_boundary_merged.gpkg stacks Esri and OSM without de-duplication — do not ingest it.
   substations:

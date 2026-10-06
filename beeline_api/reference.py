@@ -56,7 +56,8 @@ def normalise(gdf: gpd.GeoDataFrame, key: str, class_field: str | None = None, c
               const_class: str | None = None, name_field: str | None = None, conf_field: str | None = None,
               id_field: str | None = None, keep_fields: list[str] | None = None) -> gpd.GeoDataFrame:
     """Source features -> the store's columns (class, name, confidence, src_id, geometry), 2D.
-    keep_fields: source columns carried along as extra columns (read_clip packs them into attrs)."""
+    keep_fields: source columns carried along as extra columns (read_clip packs them into attrs);
+    "src:dst" renames one, e.g. a text grade in a `confidence` column -> confidence_grade."""
     reg = {l["key"]: l for l in load_layers()["layers"]}[key]
     vocab = reg["classes"]
     if gdf.crs is None:
@@ -84,8 +85,10 @@ def normalise(gdf: gpd.GeoDataFrame, key: str, class_field: str | None = None, c
         "src_id": gdf[id_field].astype(str).values if id_field else gdf.index.astype(str),
     }, geometry=gdf.geometry.values, crs=4326)
     for f in keep_fields or []:
-        if f in gdf.columns and f not in out.columns:
-            out[f] = gdf[f].values
+        src, _, dst = f.partition(":")
+        dst = dst or src
+        if src in gdf.columns and dst not in out.columns:
+            out[dst] = gdf[src].values
     out.attrs["unknown_classes"] = unknown
     return out
 

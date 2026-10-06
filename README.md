@@ -52,6 +52,11 @@ tests/            test_engine.py (synthetic, incl. brute-force optimality), test
    polygon (no HTL, no CRZ I-IV zones). Rule 34 "Coastal regulation zone" (No-Go group) keeps
    towers and conductor out of the sea and 500 m back from its edge, which stands in for the HTL
    until that line is delivered. No CRZ clearance cost is applied. No refresh from the UI.
+   Bridges come from `transfers/bridges/OUTPUT.gpkg`, layer `structures` only — 24,681 deck
+   polygons (road bridge / rail bridge / flyover / underpass), OSM merged with Bhuvan NHAI and SOI.
+   The `_INTERNAL` HERE / Mappls layers and the Google-derived flyovers in that file are not used.
+   Rule "Bridges" (No-Go group) keeps towers off and conductors from crossing any deck; both
+   buffers start at 0 m. Mostly OSM-derived: ODbL share-alike applies to a delivered extract.
    Fetch hooks for AOIs that are not covered go in `config/reference_sources.yaml`.
 5. **OSM power lines and towers (all India)** — 765 / 400 / 220 / 132 kV only, stored by voltage
    (PostGIS table `osm_power`, one partition per voltage). Load once (downloads the ~1.7 GB Geofabrik

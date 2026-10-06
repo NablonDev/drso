@@ -1,4 +1,4 @@
-# Default rule set — 29 prototype rules + 5 added (protected areas, cell towers, wind turbines, village roads, CRZ), five groups (the prototype's Rules screen).
+# Default rule set — 29 prototype rules + additions (protected areas, cell towers, wind turbines, village roads, CRZ, bridges, …), five groups (the prototype's Rules screen).
 # Retired 6 Oct 2026: "Notified wetland — foundation" (its notified-wetlands layer was dropped; Vivek).
 #
 # Every value tagged best_guess: true is a placeholder pending AESL confirmation.
@@ -198,6 +198,19 @@ groups:
         params:
           - {key: tower_setback_m, label: "Tower buffer from the sea", type: num, unit: m, value: 500}
           - {key: conductor_buffer_m, label: "Conductor buffer from the sea", type: num, unit: m, value: 500}
+          - {key: treatment, label: "Treatment", type: sel, value: "No-Go", options: ["No-Go", "Allowed"]}
+
+      # Added 6 Oct 2026 with the Bridges layer (Vivek: No-Go for tower and conductor). Counted as
+      # rule 38. Buffers start at 0 m (the deck footprint); set a setback here if one is agreed.
+      - id: bridges
+        name: "Bridges"
+        note: "Road and rail bridges, flyovers and underpasses — no tower on the structure, no conductor over it"
+        layer: bridges
+        classes: [road_bridge, rail_bridge, flyover, underpass]
+        mechanism: nogo
+        params:
+          - {key: tower_setback_m, label: "Tower buffer", type: num, unit: m, value: 0}
+          - {key: conductor_buffer_m, label: "Conductor buffer", type: num, unit: m, value: 0}
           - {key: treatment, label: "Treatment", type: sel, value: "No-Go", options: ["No-Go", "Allowed"]}
 
       # Not in the prototype's 29; added 5 Oct 2026 with the Tarang Sanchar cell tower layer.
