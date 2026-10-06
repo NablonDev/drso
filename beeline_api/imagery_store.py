@@ -5,7 +5,8 @@ both recorded in the catalog table `imagery_items` with footprint, dates and ori
 
   acquire  — online fetch under the operator's licences (Images screen → "Fetch imagery"):
              esri_wayback_z18 (MBTiles), sentinel2_l2a (B04/B08/B11/B12 clipped GeoTIFFs),
-             sentinel1_rtc_vv (Planetary Computer, signed), worldcover (ESA, 10 m)
+             sentinel1_rtc_vv (Planetary Computer, signed)
+             (ESA WorldCover removed 6 Oct 2026: no model reads it)
   register — files already on the machine: Cartosat-3 PAN scene folders, MBTiles, NISAR
              coherence or any raster (`python -m beeline_api.imagery_store register-...`)
 
@@ -32,7 +33,7 @@ from shapely.ops import unary_union
 from . import db, settings
 
 log = logging.getLogger(__name__)
-PRODUCTS = ("esri_wayback_z18", "sentinel2_l2a", "sentinel1_rtc_vv", "cartosat3_pan", "worldcover", "nisar_coh")
+PRODUCTS = ("esri_wayback_z18", "sentinel2_l2a", "sentinel1_rtc_vv", "cartosat3_pan", "nisar_coh")
 ROOT = settings.IMAGERY_DIR
 
 SCHEMA = """
@@ -401,35 +402,8 @@ def acquire_sentinel1(aoi_lonlat, run_id: str, n_scenes: int = 8, months: int = 
     return {"scenes": len(got)}
 
 
-def acquire_worldcover(aoi_lonlat, run_id: str, progress=None, cancel=None) -> dict:
-    """ESA WorldCover 2021 v200 3x3° tiles intersecting the AOI, clipped to the AOI."""
-    minx, miny, maxx, maxy = aoi_lonlat.bounds
-    got = []
-    for lat in range(int(math.floor(miny / 3) * 3), int(math.floor(maxy / 3) * 3) + 1, 3):
-        for lon in range(int(math.floor(minx / 3) * 3), int(math.floor(maxx / 3) * 3) + 1, 3):
-            ns, ew = ("N" if lat >= 0 else "S"), ("E" if lon >= 0 else "W")
-            name = f"ESA_WorldCover_10m_2021_v200_{ns}{abs(lat):02d}{ew}{abs(lon):03d}_Map"
-            href = f"https://esa-worldcover.s3.eu-central-1.amazonaws.com/v200/2021/map/{name}.tif"
-            dst = ROOT / "worldcover" / run_id / f"{name}.tif"
-            try:
-                ok = dst.exists() or _window_to_file(href, aoi_lonlat, dst)
-            except Exception as e:
-                log.warning("WorldCover %s: %s", name, e)
-                ok = False
-            if ok:
-                key = f"{run_id}:{name}"
-                register_raster("worldcover", dst, acquired="2021-12-31", key=key,
-                                licence="ESA WorldCover 2021 (CC BY 4.0)", meta={"year": 2021})
-                db.exec_("update imagery_items set origin='fetched', run_id=%s where product='worldcover' and item_key=%s",
-                         (run_id, key))
-                got.append(name)
-    if progress:
-        progress(1.0, f"WorldCover tiles {len(got)}")
-    return {"tiles": got}
-
-
 ACQUIRERS = {"esri_wayback_z18": acquire_wayback, "sentinel2_l2a": acquire_sentinel2,
-             "sentinel1_rtc_vv": acquire_sentinel1, "worldcover": acquire_worldcover}
+             "sentinel1_rtc_vv": acquire_sentinel1}
 FETCHABLE = tuple(ACQUIRERS)
 
 

@@ -29,12 +29,11 @@ paths it is given; imagery acquisition (licensed, online) is a separate step
                           "footprint": {...}}],
     "sentinel1_rtc_vv": [{"scene_id": "...", "date": "...", "path": "...tif", "footprint": {...}}],
     "cartosat3_pan":    [{"scene_id": "2660409141", "path": ".../BAND.tif", "footprint": {...}}],
-    "worldcover":       [{"path": "...tif", "year": 2021, "footprint": {...}}],
     "nisar_coh":        [{"path": "...tif", "footprint": {...}}]
   },
   "inputs": {                                               // upstream layers of the same run
     "village_roads_gpkg": "...", "village_roads_prob": ["...tif"],
-    "buildings_gpkg": "...", "osm_solar_gpkg": "...", "osm_wind_gpkg": "...",
+    "buildings_gpkg": "...", "saltscape_gpkg": "...", "osm_solar_gpkg": "...", "osm_wind_gpkg": "...",
     "osm_substations_gpkg": "..."
   },
   "weights": {"checkpoint": "...", "hf_home": "...", "...": "..."},

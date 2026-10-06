@@ -226,7 +226,7 @@ layers:
     producer: lulc_model
     pipeline: plotted_land
     imagery: esri
-    desc: "Plot-layout geometry over village roads + buildings · WorldCover salt filter"
+    desc: "Plot-layout geometry over village roads + buildings · salt-pan filter"
     minutes_per_km2: 0.01
     default_confidence: 0.61
     classes: [plotted_land]

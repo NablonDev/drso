@@ -226,15 +226,15 @@ def test_model_layer_without_imagery_is_not_run(tmp_path, monkeypatch, run_row):
 def test_imagery_fetch_job_runs_acquirer(monkeypatch, run_row):
     from beeline_api import extraction
     seen = {}
-    monkeypatch.setitem(imagery_store.ACQUIRERS, "worldcover",
+    monkeypatch.setitem(imagery_store.ACQUIRERS, "sentinel1_rtc_vv",
                         lambda aoi, rid, progress=None, cancel=None: seen.update(rid=rid, area=aoi.area) or {"tiles": ["t"]})
-    j = jobs.start(run_row["id"], "extract", {"imagery_fetch": ["worldcover"]})
+    j = jobs.start(run_row["id"], "extract", {"imagery_fetch": ["sentinel1_rtc_vv"]})
     claimed = worker.claim()
     assert claimed["id"] == j["id"]
     worker.run_job(claimed)
     done = jobs.get(j["id"])
     assert done["status"] == "done", done["error"]
-    assert seen["rid"] == run_row["id"] and done["detail"]["result"]["imagery"]["worldcover"] == {"tiles": ["t"]}
+    assert seen["rid"] == run_row["id"] and done["detail"]["result"]["imagery"]["sentinel1_rtc_vv"] == {"tiles": ["t"]}
 
 
 def test_models_yaml_points_at_installed_weights():

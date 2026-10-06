@@ -96,6 +96,15 @@ def _wc(path, lon0, lat0, lon1, lat1, cls):
         d.write(np.full((1, h, w), int(cls), np.uint8))
 
 
+def _salt(path, lon0, lat0, lon1, lat1):
+    """synthetic salt-scape input: one salt_pan polygon over the whole box, with its coverage layer"""
+    import geopandas as gpd
+    from shapely.geometry import box
+    b = box(lon0, lat0, lon1, lat1)
+    gpd.GeoDataFrame({"class": ["salt_pan"], "layer": ["salt_pans"]}, geometry=[b], crs=4326).to_file(path, layer="features", driver="GPKG")
+    gpd.GeoDataFrame({"id": [1]}, geometry=[b], crs=4326).to_file(path, layer="coverage", driver="GPKG")
+
+
 def _lines(path, lon, lat):
     """three disjoint straight roads (no blocks can form) around lon/lat, EPSG:4326 layer features"""
     import geopandas as gpd
@@ -124,13 +133,14 @@ def aoi_box(lon0, lat0, lon1, lat1):
     return {"type": "Polygon", "coordinates": [[[lon0, lat0], [lon1, lat0], [lon1, lat1], [lon0, lat1], [lon0, lat0]]]}
 
 
-def make_request(wd, aoi, roads, prob, buildings=None, worldcover=None, params=None):
+def make_request(wd, aoi, roads, prob, buildings=None, saltscape=None, params=None):
     wd = Path(wd); wd.mkdir(parents=True, exist_ok=True)
     req = {"layer_key": "plotted", "aoi": aoi, "work_dir": str(wd), "out_gpkg": str(wd / "out.gpkg"),
            "result_json": str(wd / "result.json"),
-           "imagery": {"worldcover": [{"path": p, "year": 2021} for p in (worldcover or [])]},
+           "imagery": {},
            "inputs": {"village_roads_gpkg": str(roads), "village_roads_prob": list(prob),
-                      **({"buildings_gpkg": str(buildings)} if buildings else {})},
+                      **({"buildings_gpkg": str(buildings)} if buildings else {}),
+                      **({"saltscape_gpkg": str(saltscape)} if saltscape else {})},
            "weights": {}, "gpu": None,
            "params": {"ideal": 1, "salt_threshold": 0.60, "prob_accept": 0.20, "roads_overlap_m": 3000, **(params or {})}}
     p = wd / "request.json"; p.write_text(json.dumps(req)); return p
@@ -179,9 +189,9 @@ def test_check_mode(tmp_path_factory):
     r = subprocess.run([CLAY, str(PLUGIN), "--check", "--request", str(rq)], capture_output=True, text=True, timeout=300)
     rep = json.loads(r.stdout); assert r.returncode == 0 and rep["ok"], r.stdout
     names = {c["name"]: c for c in rep["checks"]}
-    assert names["village_roads_prob"]["ok"] and not names["worldcover"]["ok"]
+    assert names["village_roads_prob"]["ok"] and not names["saltscape_gpkg"]["ok"]
     assert not (tmp / "wd" / "out.gpkg").exists()                      # no processing
-    # a missing roads file and a non-3857 prob raster must fail the check
+    # a missing roads file and a non-3857 prob raster must fail the check (synthetic 4326 raster)
     wc = tmp / "wc.tif"; clay("wc", wc, *CLIP, 40)
     rq = make_request(tmp / "wd2", aoi_box(*CLIP), tmp / "nope.gpkg", [str(wc)])
     r = subprocess.run([CLAY, str(PLUGIN), "--check", "--request", str(rq)], capture_output=True, text=True, timeout=300)
@@ -207,23 +217,18 @@ def test_clip_matches_statewide(tmp_path_factory):
     assert s["features"]["built_null"] == 0
 
 
-def test_saltfilter_synthetic_worldcover(tmp_path_factory):
-    """WorldCover = water everywhere -> every ring is salt-scape -> all clusters move to removed_saltworks"""
+def test_saltfilter_synthetic_saltscape(tmp_path_factory):
+    """salt pan over the whole area -> every ring is salt-scape -> all clusters move to removed_saltworks"""
     need_data()
     d, info = fixture_clip(tmp_path_factory.getbasetemp())
     tmp = tmp_path_factory.mktemp("salt")
     lon0, lat0, lon1, lat1 = CLIP
-    wc = tmp / "wc_water.tif"; clay("wc", wc, lon0 - .03, lat0 - .03, lon1 + .03, lat1 + .03, 80)
-    rq = make_request(tmp / "wd", aoi_box(*CLIP), d / "roads.gpkg", info["prob"], d / "buildings.gpkg", worldcover=[str(wc)])
+    sg = tmp / "saltscape.gpkg"; clay("salt", sg, lon0 - .03, lat0 - .03, lon1 + .03, lat1 + .03)
+    rq = make_request(tmp / "wd", aoi_box(*CLIP), d / "roads.gpkg", info["prob"], d / "buildings.gpkg", saltscape=sg)
     res, s, _ = run_plugin(rq)
     check_layers(s)
     assert s["features"]["n"] == 0 and s["plots"]["n"] == 0 and s["removed_saltworks"]["n"] > 0
     assert not any("salt-works filter skipped" in w for w in res["warnings"])
-    # a remote WorldCover path is refused, never fetched
-    rq = make_request(tmp / "wd2", aoi_box(*CLIP), d / "roads.gpkg", info["prob"], d / "buildings.gpkg",
-                      worldcover=["/vsicurl/https://example.invalid/wc.tif"])
-    res, s, _ = run_plugin(rq)
-    assert any("remote" in w for w in res["warnings"]) and s["features"]["n"] > 0
 
 
 def test_no_roads_aoi(tmp_path_factory):
@@ -264,5 +269,6 @@ if __name__ == "__main__":
     elif cmd == "statewide": _statewide(*map(float, a[:4]))
     elif cmd == "summary": _summary(a[0])
     elif cmd == "wc": _wc(a[0], *map(float, a[1:5]), int(a[5]))
+    elif cmd == "salt": _salt(a[0], *map(float, a[1:5]))
     elif cmd == "lines": _lines(a[0], float(a[1]), float(a[2]))
     else: raise SystemExit("unknown command " + cmd)

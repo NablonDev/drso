@@ -10,7 +10,6 @@ const LABEL: Record<string, string> = {
   esri_wayback_z18: "Esri Wayback z18 (0.6 m)",
   sentinel2_l2a: "Sentinel-2 L2A (10 m, NIR/SWIR)",
   sentinel1_rtc_vv: "Sentinel-1 RTC VV (10 m)",
-  worldcover: "ESA WorldCover 2021 (10 m)",
   cartosat3_pan: "Cartosat-3 PAN (0.45 m)",
   nisar_coh: "NISAR coherence",
 };
