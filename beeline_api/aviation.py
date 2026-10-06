@@ -360,6 +360,9 @@ def parse_width(v) -> float | None:
 
 def runway_polygons(g: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     """OSM aeroway=runway features -> polygons with width_m / width_source; disused dropped."""
+    if not len(g):          # no runway in the area: pandas drops the geometry on the empty frame below
+        return gpd.GeoDataFrame({"src_id": [], "name": [], "width_m": [], "width_source": [], "tags": []},
+                                geometry=[], crs=4326)
     tags = g["all_tags"].map(lambda s: json.loads(s) if isinstance(s, str) else (s or {}))
     dead = tags.map(lambda t: t.get("disused") == "yes" or t.get("abandoned") == "yes" or "disused:aeroway" in t
                     or "abandoned:aeroway" in t)

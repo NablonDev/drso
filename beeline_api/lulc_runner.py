@@ -77,6 +77,9 @@ def offline_env(m: dict) -> dict:
                HF_HOME=m["hf_home"], GDAL_HTTP_TIMEOUT="5", CPL_VSIL_CURL_ALLOWED_EXTENSIONS="none",
                PYTHONUNBUFFERED="1", PYTHONPATH=str(settings.REPO / "lulc_models"),
                CUDA_VISIBLE_DEVICES=str(settings.MODEL_GPU_DEVICE), OMP_NUM_THREADS=env.get("OMP_NUM_THREADS", "4"))
+    # PATH: the model env's bin, then the system tools (gdal-bin), as in the worker image. The worker's
+    # own conda env must not lend its GDAL CLIs: they look for PROJ data the plugin env does not set.
+    env["PATH"] = ":".join([str(Path(m["python"]).parent), "/usr/local/bin", "/usr/bin", "/bin"])
     env.pop("BEELINE_ESRI_TOKEN", None)      # credentials never reach a model process
     env.pop("BEELINE_PC_SUBSCRIPTION_KEY", None)
     return env

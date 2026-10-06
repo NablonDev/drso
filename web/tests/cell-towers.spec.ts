@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { createDraft, deleteRun } from "./helpers";
+import { createDraft, deleteRun, reuseSource } from "./helpers";
 
 // Cell towers (Tarang Sanchar): extracted from the India store, shown on the review screen with
 // structure counts; "Refresh from Tarang Sanchar" is visible but disabled until a source exists.
@@ -12,7 +12,7 @@ test("cell towers layer extracts and shows a disabled Tarang Sanchar refresh", a
   test.setTimeout(6 * 60_000);
   const active = await (await request.get("/api/jobs/active")).json();
   test.skip(active.job !== null, "a GPU job is running — not starting an extraction");
-  runId = await createDraft(request, { reuse_from: "BHU-SHI-0003" });
+  runId = await createDraft(request, { reuse_from: await reuseSource(request) });
   const ex = await request.post(`/api/runs/${runId}/extract`, { data: { layers: ["telecom"] } });
   expect(ex.status(), await ex.text()).toBe(202);
   await expect.poll(async () => (await (await request.get("/api/jobs/active")).json()).job, { timeout: 5 * 60_000 }).toBeNull();

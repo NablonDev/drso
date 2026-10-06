@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { createDraft, deleteRun } from "./helpers";
+import { createDraft, deleteRun, reuseSource } from "./helpers";
 
 // Airports refresh from Esri Living Atlas + OSM; the approach path (runways) refreshes from OSM.
 let runId: string | null = null;
@@ -11,7 +11,7 @@ test("airports refresh from Living Atlas + OSM; runways refresh from OSM", async
   test.setTimeout(6 * 60_000);
   const active = await (await request.get("/api/jobs/active")).json();
   test.skip(active.job !== null, "a GPU job is running — not starting an extraction");
-  runId = await createDraft(request, { reuse_from: "BHU-SHI-0003" });
+  runId = await createDraft(request, { reuse_from: await reuseSource(request) });
   const ex = await request.post(`/api/runs/${runId}/extract`, { data: { layers: ["aviation", "approach"] } });
   expect(ex.status(), await ex.text()).toBe(202);
   await expect.poll(async () => (await (await request.get("/api/jobs/active")).json()).job, { timeout: 5 * 60_000 }).toBeNull();

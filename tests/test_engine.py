@@ -136,7 +136,7 @@ def test_wide_river_needs_long_span():
     c = f.length_m / 2
     river = frame_geom(f, box(c - 175, -3000, c + 175, 3000))     # 350 m of water + 150 m banks = 650 m
     line = frame_geom(f, LineString([(c, -3000), (c, 3000)]))
-    res = run_solve(solve_input({"water": gdf([river, line], "river", "Test river")}))
+    res = run_solve(solve_input({"river": gdf([river, line], "river", "Test river")}))
     assert res["feasible"]
     r = res["routes"][0]
     long_spans = [s for s in r["spans"] if s["length_m"] > 450]

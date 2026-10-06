@@ -33,6 +33,9 @@ VENV_PY = os.environ.get("VR_TEST_PY", os.path.join(os.environ.get("BEELINE_ROAD
 MB = "/mnt/drso-data/wayback/bhuj_lakadia_L18_2026-08-05.mbtiles"
 WEIGHTS = "/mnt/cog-data/roaddet/HF_GG08_60.pkl"
 GUJ = "/mnt/cog-data/guj"
+# same PATH as lulc_runner.offline_env gives the plugin: venv bin, then the system GDAL tools (the test
+# process may run from a conda env whose GDAL CLIs need PROJ data the plugin does not set)
+os.environ["PATH"] = ":".join([os.path.dirname(VENV_PY), "/usr/local/bin", "/usr/bin", "/bin", os.environ.get("PATH", "")])
 PARITY_BLOCK = (184480, 114032)       # all 8 neighbours present in guj/prob_u; 102 edges in guj/vec
 CORNER_FULL = (69.697265625, 23.463246331550348)    # block corner inside the corridor imagery
 CORNER_EDGE = (69.58740234374999, 23.463246331550348)  # west footprint edge: 2 of 4 blocks empty

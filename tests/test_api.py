@@ -114,9 +114,10 @@ def test_full_flow(client):
     L = client.get(f"/api/runs/{rid}/layers").json()
     keys = {l["key"]: l for l in L["layers"]}
     assert keys["buildings"]["feature_count"] > 0 and keys["clusters"]["feature_count"] > 0
-    assert keys["buildings"]["model"] == "buildings_stub" and keys["buildings"]["image_date"] == "2026-03-03"
-    assert keys["lulc"]["image_source"] == "Sentinel-2 L2A"
-    assert keys["buildings"]["model_run_at"]
+    # buildings: model layer served from the stored corridor output; lulc hidden (6 Oct 2026)
+    assert keys["buildings"]["model"] == "corridor footprint delivery"
+    assert keys["buildings"]["stats"]["lulc"]["served_from"] in ("stored", "stored_partial")   # test band leaves the corridor
+    assert "lulc" not in keys and "power_lt" in keys and "reserve_forest" in keys
     assert any(f["kind"] == "empty" for f in L["flags"])
     # corridor locked once layers exist
     r = client.patch(f"/api/runs/{rid}", json={"band_km": 3})
@@ -130,7 +131,7 @@ def test_full_flow(client):
     assert "buildings" in dec and dec["buildings"]["features"][0]["properties"]["class"] == "building"
     fid = dec["buildings"]["features"][0]["properties"]["id"]
     ft = client.get(f"/api/runs/{rid}/features/{fid}").json()
-    assert ft["layer_key"] == "buildings" and ft["model"] == "buildings_stub" and ft["chainage_km"]
+    assert ft["layer_key"] == "buildings" and ft["model"] == "corridor footprint delivery" and ft["chainage_km"]
     # solve
     assert client.post(f"/api/runs/{rid}/solve").status_code == 202
     j = run_next_job()
@@ -264,7 +265,7 @@ def test_tiles_and_delete(client):
 def test_voltage_parsing():
     p = osm_power.parse_voltages
     assert p("400000") == [400] and p("400000;220000") == [400, 220] and p("220 kV") == [220]
-    assert p("66000") == [] and p("230000") == [] and p(None) == [] and p("11000;132000") == [132]
+    assert p("66000") == [66] and p("33 kV") == [33] and p("230000") == [] and p(None) == [] and p("11000;132000") == [132]
 
 
 def test_osm_power_refresh_from_ui(client):

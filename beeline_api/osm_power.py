@@ -262,7 +262,15 @@ def overpass_query(query: str, timeout: int = 300) -> dict:
                     r = httpx.post(url, data={"data": query}, timeout=timeout + 60,
                                    headers={"User-Agent": settings.HTTP_UA})
                     if r.status_code == 200:
-                        return r.json()
+                        d = r.json()
+                        # a timed-out / out-of-memory query still answers 200, with a "remark" and partial
+                        # or no elements; treating it as data would wipe the area from the store
+                        rem = str(d.get("remark") or "")
+                        if "error" not in rem.lower():
+                            return d
+                        last = f"{url} -> {rem[:200]}"
+                        time.sleep(2 * (quick + 1))
+                        continue
                     last = f"{url} -> HTTP {r.status_code}"
                     if r.status_code not in (429, 502, 503, 504):
                         break

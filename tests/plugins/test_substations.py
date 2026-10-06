@@ -130,27 +130,28 @@ VV, COH = -10.10, 0.337
 NAN = float("nan")
 
 
+# confidences per the 5 Oct 2026 decision: gated new 0.30 + review, unchecked 0.25 + review, OSM 0.90
 @pytest.mark.parametrize("vv,coh,appl,osm,keep,conf,review,gate_s1,gate_n", [
     # S1 present, NISAR covers
-    (-8.0, 0.50, True, False, True, 0.75, False, "pass", "pass"),
+    (-8.0, 0.50, True, False, True, 0.30, True, "pass", "pass"),
     (-8.0, 0.50, True, True, True, 0.90, False, "pass", "pass"),
     (-12.0, 0.50, True, False, False, None, False, "fail", "pass"),
     (-8.0, 0.20, True, False, False, None, False, "pass", "fail"),
     (-8.0, 0.20, True, True, False, None, False, "pass", "fail"),   # OSM does not bypass a gate
     # S1 present, no NISAR raster for the polygon -> NISAR gate skipped, no penalty
-    (-8.0, NAN, False, False, True, 0.75, False, "pass", "not_covered"),
+    (-8.0, NAN, False, False, True, 0.30, True, "pass", "not_covered"),
     (-12.0, NAN, False, False, False, None, False, "fail", "not_covered"),
-    (-8.0, 0.10, False, False, True, 0.75, False, "pass", "not_covered"),  # coh ignored
+    (-8.0, 0.10, False, False, True, 0.30, True, "pass", "not_covered"),  # coh ignored
     # no S1 -> review
-    (NAN, 0.50, True, False, True, 0.50, True, "na", "pass"),
-    (None, NAN, False, False, True, 0.50, True, "na", "not_covered"),
+    (NAN, 0.50, True, False, True, 0.25, True, "na", "pass"),
+    (None, NAN, False, False, True, 0.25, True, "na", "not_covered"),
     (NAN, NAN, False, True, True, 0.90, False, "na", "not_covered"),
     (NAN, 0.20, True, False, False, None, False, "na", "fail"),
     # NISAR registered but no valid pixel -> not evaluable -> review
-    (-8.0, NAN, True, False, True, 0.50, True, "pass", "na"),
-    (float("inf"), 0.50, True, False, True, 0.50, True, "na", "pass"),
+    (-8.0, NAN, True, False, True, 0.25, True, "pass", "na"),
+    (float("inf"), 0.50, True, False, True, 0.25, True, "na", "pass"),
     # boundaries are inclusive (sA11 used >=)
-    (VV, COH, True, False, True, 0.75, False, "pass", "pass"),
+    (VV, COH, True, False, True, 0.30, True, "pass", "pass"),
     (VV - 1e-9, COH, True, False, False, None, False, "fail", "pass"),
 ])
 def test_gate_table(vv, coh, appl, osm, keep, conf, review, gate_s1, gate_n):
@@ -173,7 +174,7 @@ def test_apply_gates_frame_nan_handling():
                       "matches_osm": [False, False, False, True]})
     g = post.apply_gates(d, VV, COH)
     assert g["keep"].tolist() == [True, True, False, True]
-    assert g["confidence"].tolist()[:2] == [0.5, 0.5] and g["confidence"].iloc[3] == 0.9
+    assert g["confidence"].tolist()[:2] == [0.25, 0.25] and g["confidence"].iloc[3] == 0.9
     assert g["review"].tolist() == [True, True, False, False]
     assert "s1_vv" in g["reject_reason"].iloc[2]
 
@@ -443,8 +444,8 @@ def test_end_to_end_prob_override(window, tmp_path):
     assert set(f["class"]) == {"substation"}
     assert f["src_id"].is_unique and not set(f["src_id"]) & set(rj["src_id"])
     west = f.geometry.representative_point().x < xm
-    assert (f.loc[west & (f.source == "model_new"), "confidence"] == 0.75).all()
-    assert (f.loc[~west & (f.source == "model_new"), "confidence"] == 0.5).all()
+    assert (f.loc[west & (f.source == "model_new"), "confidence"] == 0.30).all()
+    assert (f.loc[~west & (f.source == "model_new"), "confidence"] == 0.25).all()
     assert f.loc[~west & (f.source == "model_new"), "review"].all()
     osm = f[f.source == "model_confirms_osm"]
     assert set(osm["name"]) == {"Essar", "Global Hitech"} and (osm.confidence == 0.9).all()

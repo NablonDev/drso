@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { createDraft, deleteRun } from "./helpers";
+import { createDraft, deleteRun, reuseSource } from "./helpers";
 
 // "Refresh from OSM" on the Highways layer (key roads): Overpass for the run's band -> store -> re-extract.
 let runId: string | null = null;
@@ -11,7 +11,7 @@ test("refresh highways from OSM re-extracts NH / SH with a class legend", async 
   test.setTimeout(6 * 60_000);
   const active = await (await request.get("/api/jobs/active")).json();
   test.skip(active.job !== null, "a GPU job is running — not starting a refresh");
-  runId = await createDraft(request, { reuse_from: "BHU-SHI-0003" });
+  runId = await createDraft(request, { reuse_from: await reuseSource(request) });
   await page.goto(`/runs/${runId}/layers`);
   await expect(page.getByTestId("layer-table")).toBeVisible();
   const btn = page.getByTestId("refresh-roads");

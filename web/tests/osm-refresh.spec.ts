@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { createDraft, deleteRun } from "./helpers";
+import { createDraft, deleteRun, reuseSource } from "./helpers";
 
 // "Refresh from OSM" on the power layer: Overpass for the run's band -> store -> re-extract power.
 let runId: string | null = null;
@@ -11,7 +11,7 @@ test("refresh power from OSM re-extracts the layer with voltages", async ({ page
   test.setTimeout(6 * 60_000);
   const active = await (await request.get("/api/jobs/active")).json();
   test.skip(active.job !== null, "a GPU job is running — not starting a refresh");
-  runId = await createDraft(request, { reuse_from: "BHU-SHI-0003" });
+  runId = await createDraft(request, { reuse_from: await reuseSource(request) });
   await page.goto(`/runs/${runId}/layers`);
   await expect(page.getByTestId("layer-table")).toBeVisible();
   await page.getByTestId("refresh-power").click();
@@ -28,5 +28,6 @@ test("refresh power from OSM re-extracts the layer with voltages", async ({ page
   expect(power.image_source).toBe("OpenStreetMap");
   expect(power.source).toContain("refreshed for this area");
   expect(Object.keys(power.stats.by_voltage).length).toBeGreaterThan(0);
-  await expect(page.getByTestId("voltage-legend")).toBeVisible();
+  // two legends since the HT / LT split (6 Oct 2026): high tension is the first power row
+  await expect(page.getByTestId("voltage-legend").first()).toBeVisible();
 });

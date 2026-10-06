@@ -16,6 +16,17 @@ export async function createDraft(request: APIRequestContext, extra: Record<stri
   return (await r.json()).id as string;
 }
 
+/** Newest Bhujpool–Shivlaka run whose layers are complete under the current layer set — the run the
+ *  tests reuse layers from (a run made before a layer was added is not solve-ready). */
+export async function reuseSource(request: APIRequestContext): Promise<string> {
+  const runs = (await (await request.get("/api/runs?limit=200")).json()).runs as { id: string; family: string }[];
+  for (const r of runs.filter((x) => x.family === "BHU-SHI")) {
+    const run = await (await request.get(`/api/runs/${r.id}`)).json();
+    if (run.layers_ready) return r.id;
+  }
+  throw new Error("no solve-ready BHU-SHI run: create 'Bhujpool Shivlaka' (±5 km) and extract its layers");
+}
+
 export async function deleteRun(request: APIRequestContext, id: string | null | undefined) {
   if (!id) return;
   await request.delete(`/api/runs/${id}`);

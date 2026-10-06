@@ -631,16 +631,16 @@ def _blocked(inp, frame, comp, out, findex, rules) -> dict:
         if inter.is_empty:
             continue
         lat_cover = (inter.bounds[3] - inter.bounds[1]) / (2 * frame.half_width_m)
-        scores.append((lat_cover, vr.rule_id, inter))
+        scores.append((lat_cover, vr.rule_id, inter, vr.layer))
     scores.sort(key=lambda s: -s[0])
     blockers = []
     seen = set()
-    for cov, rid, inter in scores[:6]:
+    for cov, rid, inter, vlyr in scores[:6]:
         if rid in seen:
             continue
         seen.add(rid)
         r = rules.get(rid)
-        lyr = r.layer if r else None
+        lyr = vlyr or (r.layer if r else None)      # the layer this buffer came from (also_layers too)
         it, _ = findex.nearest(inter.centroid, layers={lyr} if lyr else None)
         blockers.append({"rule_id": rid, "rule": r.name if r else rid, "statutory": bool(r and r.statutory),
                          "feature": it["label"] if it else (r.name if r else rid),

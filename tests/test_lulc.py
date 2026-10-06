@@ -207,6 +207,7 @@ def test_model_layer_served_from_stored_output(tmp_path, monkeypatch, run_row):
         artifacts = {}
         work_dir = tmp_path
     monkeypatch.setattr(lulc_runner, "run", lambda *a, **k: R)
+    monkeypatch.setattr(settings, "RUN_MODELS", True)        # dev.env switches model runs off
     gdf, cov, meta = extraction._lulc_model_layer(run_row, "solar", lay, band, lambda f: None,
                                                   _Rep({"force_models": True}))
     assert meta["lulc_stats"]["served_from"] == "model" and meta["model"] == "m"
@@ -239,7 +240,7 @@ def test_imagery_fetch_job_runs_acquirer(monkeypatch, run_row):
 
 def test_models_yaml_points_at_installed_weights():
     cfg = lulc_runner.load_models()
-    assert set(cfg["models"]) == {"village_roads", "plotted_land", "solar", "substations", "wind_turbines"}
+    assert set(cfg["models"]) == {"buildings", "village_roads", "plotted_land", "solar", "substations", "wind_turbines"}
     for name in cfg["models"]:
         m = lulc_runner.model_cfg(name)
         for p in m["weights_abs"].values():

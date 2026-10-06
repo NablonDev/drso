@@ -28,7 +28,7 @@ test("new route: DMS paste converts, geo-validation runs, the run is created", a
   // do not reuse — this keeps the run a plain draft
   for (const cb of await page.getByTestId("reuse-table").locator("input[type=checkbox]:checked").all()) await cb.uncheck();
   await page.getByTestId("corridor-next").click();
-  await expect(page).toHaveURL(/\/runs\/PWC-COR-\d+\/images$/);       // id from the corridor name
+  await expect(page).toHaveURL(/\/runs\/PWX-COR-\d+\/images$/);       // id from the corridor name
   created = page.url().match(/runs\/([^/]+)\//)![1];
   await expect(page.getByTestId("corridor-name")).toHaveText("PW corridor Bhuj Shivlaka");
   // imagery check starts by itself and shows progress
