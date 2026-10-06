@@ -249,7 +249,7 @@ groups:
     rules:
       - id: railway
         name: "Railway line"
-        note: "Setback follows structure height plus the railway allowance"
+        note: "Setback follows structure height plus the railway allowance; angle towers on both sides (at least B1)"
         layer: rail
         mechanism: crossing
         crossing_cost: railway
@@ -258,12 +258,12 @@ groups:
           - {key: height_allowance_m, label: "Structure height allowance", type: num, unit: m, value: 6}
           - {key: angle_deg, label: "Crossing angle", type: rng, unit: "°", value: [70, 110]}
           - {key: max_span_m, label: "Max crossing span", type: num, unit: m, value: 300}
-          - {key: tower_type, label: "Crossing tower type", type: sel, value: "D", options: ["A", "B", "C", "D", "A/B/C", "B/C/D"]}
+          - {key: tower_type, label: "Crossing tower type", type: sel, value: "D", options: ["B", "C", "D", "B/C/D"]}
           - {key: pct_design_span, label: "Or % of design span", type: num, unit: "%", value: 80}
 
       - id: national_highway
         name: "National highway"
-        note: "Tension-type towers required at all national highways"
+        note: "Tension-type towers required at all national highways; angle towers on both sides (at least B1)"
         layer: roads
         classes: [nh]
         mechanism: crossing
@@ -273,11 +273,11 @@ groups:
           - {key: parallel_setback_m, label: "Parallel-run setback", type: num, unit: m, value: 300}
           - {key: angle_deg, label: "Crossing angle", type: rng, unit: "°", value: [80, 100]}
           - {key: max_span_m, label: "Max crossing span", type: num, unit: m, value: 250}
-          - {key: tower_type, label: "Crossing tower type", type: sel, value: "B/C/D", options: ["A", "B", "C", "D", "A/B/C", "B/C/D"]}
+          - {key: tower_type, label: "Crossing tower type", type: sel, value: "B/C/D", options: ["B", "C", "D", "B/C/D"]}
 
       - id: river
         name: "River"
-        note: "Major and minor crossings take different tower types"
+        note: "Major and minor crossings take different tower types; angle towers on both banks (at least B1)"
         layer: river
         mechanism: crossing
         crossing_cost: major_river
@@ -285,8 +285,8 @@ groups:
           - {key: tower_setback_m, label: "Bank buffer, each side", type: num, unit: m, value: 150}
           - {key: angle_deg, label: "Crossing angle", type: num, unit: "°", value: 90}
           - {key: major_threshold_m, label: "Major crossing threshold", type: num, unit: m, value: 600}
-          - {key: major_tower_type, label: "Major tower type", type: sel, value: "D", options: ["A", "B", "C", "D", "A/B/C"]}
-          - {key: tower_type, label: "Minor tower type", type: sel, value: "A/B/C", options: ["A", "B", "C", "D", "A/B/C"]}
+          - {key: major_tower_type, label: "Major tower type", type: sel, value: "D", options: ["B", "C", "D", "B/C/D"]}
+          - {key: tower_type, label: "Minor tower type", type: sel, value: "B/C/D", options: ["B", "C", "D", "B/C/D"]}
 
       - id: canal
         name: "Canal"

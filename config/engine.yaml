@@ -20,6 +20,10 @@ spans:
 crossings:
   single_angle_tolerance_deg: 15   # a rule giving one angle (e.g. river 90°) accepts ±this
   parallel_angle_deg: 30           # span within this angle of a road/canal = running parallel
+  # Both towers of a span crossing these features are angle towers, at least B1; the spotting picks
+  # the cheapest type that also covers the deflection there, heavier only where a rule asks (railway D,
+  # major river D) (Vivek, 6 Oct 2026). Roads: national highways only.
+  angle_tower_rules: [railway, national_highway, river]
 
 routes:
   # Each route is the same solver re-run with one extra internal penalty. The reported ₹ cost

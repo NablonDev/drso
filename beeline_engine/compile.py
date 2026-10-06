@@ -26,7 +26,7 @@ from scipy import ndimage
 from shapely.geometry import LineString, MultiLineString, Point
 from shapely.ops import unary_union
 
-from .config import ResolvedRule, forced_min_type, load_layers
+from .config import ResolvedRule, forced_min_type, load_layers, max_type
 from .frame import Frame
 
 log = logging.getLogger(__name__)
@@ -273,7 +273,8 @@ def class_density_rs_m2(costs: dict, sensitive_mult: float = 1.0) -> dict[str, f
 def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict[str, ResolvedRule],
                   costs: dict, spec_kv: int, half_width_m: float, endpoints_go_radius_m: float | None = None,
                   design_span_m: float = 400.0, single_angle_tol_deg: float = 15.0,
-                  gantry_buffer_m: float = 10.0, raster_margin_m: float = 0.0) -> Compiled:
+                  gantry_buffer_m: float = 10.0, raster_margin_m: float = 0.0,
+                  angle_tower_rules: tuple[str, ...] = ()) -> Compiled:
     # Terminal yards: the substation(s) the line starts / ends in. They are carved out of the
     # substation rule; the yard (+ gantry buffer) and the go-zone disc are clear for the conductor,
     # and no tower may stand inside the yard other than the dead-end towers at A and B.
@@ -461,6 +462,10 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
                 cr.major_cost_rs = float(cross_costs.get("major_river", 0)) * RS_PER_L
                 cr.cost_rs = 0.0
                 cr.min_type = forced_min_type(p.get("tower_type"))
+            if r.id in angle_tower_rules:        # angle tower each side of the crossing (engine.yaml)
+                cr.min_type = max_type(cr.min_type, "B1")
+                if cr.major_type is not None:
+                    cr.major_type = max_type(cr.major_type, "B1")
             crossings.append(cr)
             ps = p.get("parallel_setback_m")
             if ps:

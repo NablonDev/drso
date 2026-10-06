@@ -145,6 +145,35 @@ def test_wide_river_needs_long_span():
         assert not (c - 175 - 150 + 0.5 < x < c + 175 + 150 - 0.5)
 
 
+def test_crossings_take_angle_towers_both_sides():
+    """Railway, national-highway and river crossings: both towers of the crossing span are angle towers
+    (at least B1, the cheapest one that fits the deflection) (Vivek, 6 Oct 2026)."""
+    f = frame()
+    c = f.length_m / 2
+    stream = frame_geom(f, LineString([(c, -3000), (c, 3000)]))          # minor river: a line, no width
+    nh = frame_geom(f, LineString([(c - 4000, -3000), (c - 4000, 3000)]))
+    res = run_solve(solve_input({"river": gdf([stream], "river", "Test stream"), "roads": gdf([nh], "nh", "NH 41")}))
+    assert res["feasible"]
+    r = res["routes"][0]
+    types = [t["type"] for t in r["towers"]]
+    hits = [(i, cr["rule"]) for i, s in enumerate(r["spans"]) for cr in s["crossings"] if cr["rule"] in ("river", "national_highway")]
+    assert {h[1] for h in hits} == {"river", "national_highway"}
+    for i, rule in hits:
+        assert types[i] != "A" and types[i + 1] != "A", (rule, types[i], types[i + 1])
+
+
+def test_no_stretch_over_5_km_without_an_angle_tower():
+    """Section point interval (plain 5 km): angle towers never more than 5 km apart, even on a straight line."""
+    res = run_solve(solve_input({}))
+    r = res["routes"][0]
+    cum = [0.0]
+    for s in r["spans"]:
+        cum.append(cum[-1] + s["length_m"])
+    idx = [i for i, t in enumerate(r["towers"]) if t["type"] != "A"]
+    assert idx[0] == 0 and idx[-1] == len(r["towers"]) - 1
+    assert max(cum[b] - cum[a] for a, b in zip(idx, idx[1:])) <= 5000.0 + 1e-6
+
+
 def test_band_fully_blocked_is_reported():
     f = frame()
     c = f.length_m / 2
