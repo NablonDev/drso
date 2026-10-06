@@ -326,15 +326,15 @@ layers:
     default_confidence: 0.90
     classes: [crz_water]
 
-  # Bridges (transfers/bridges/OUTPUT.gpkg, layer `structures`): 24,681 deck polygons statewide,
-  # OSM (Overture 2026-08 + Geofabrik 2026-09) merged with Bhuvan NHAI and corroborated by SOI;
-  # deck width from OSM tags / lanes / NHAI. Not used: the HERE / Mappls `_INTERNAL` layers and
-  # the Google-derived flyovers (ToS forbids derivative datasets).
+  # Bridges (transfers/bridges/OUTPUT.gpkg): the open `structures` layer (OSM + NHAI + SOI, 24,681
+  # decks) plus — for the DEMO ONLY — HERE bridges / tunnels, Mappls elevated / underground roads and
+  # the Google-derived flyovers. Each feature's attrs carry provider + licence; the manifest marks the
+  # restricted entries `licence_restricted: true` so they can be dropped before a real delivery.
   - key: bridges
     name: "Bridges"
     kind: polygon
     producer: reference
-    desc: "Cached — road / rail bridges, flyovers, underpasses (OSM + NHAI + SOI)"
+    desc: "Cached — road / rail bridges, flyovers, underpasses (OSM + NHAI + SOI; HERE, Mappls, Google demo only)"
     minutes_per_km2: 0.002
     default_confidence: 0.85
     classes: [road_bridge, rail_bridge, flyover, underpass]

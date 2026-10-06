@@ -54,7 +54,11 @@ tests/            test_engine.py (synthetic, incl. brute-force optimality), test
    until that line is delivered. No CRZ clearance cost is applied. No refresh from the UI.
    Bridges come from `transfers/bridges/OUTPUT.gpkg`, layer `structures` only — 24,681 deck
    polygons (road bridge / rail bridge / flyover / underpass), OSM merged with Bhuvan NHAI and SOI.
-   The `_INTERNAL` HERE / Mappls layers and the Google-derived flyovers in that file are not used.
+   For the demo, the HERE bridges / tunnels, Mappls elevated / underground roads and Google-derived
+   flyovers are added too (centrelines widened to class-default deck widths). They are licence-
+   restricted: every feature carries `provider` + `licence`, and the manifest marks those entries
+   `licence_restricted: true` — re-ingest with `scripts/ingest_all.py ... --only bridges --no-restricted`
+   before any real delivery.
    Rule "Bridges" (No-Go group) keeps towers off and conductors from crossing any deck; both
    buffers start at 0 m. Mostly OSM-derived: ODbL share-alike applies to a delivered extract.
    Fetch hooks for AOIs that are not covered go in `config/reference_sources.yaml`.

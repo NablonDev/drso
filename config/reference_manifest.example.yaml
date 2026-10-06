@@ -112,18 +112,67 @@ layers:
     path: "transfers/CRZ/crz_water_gujarat.geojson"
     const_class: crz_water
     source: "CRZ — sea / Gulf water polygon (Gujarat delivery)"
-  # Bridges: only the consolidated `structures` layer. The `_INTERNAL` HERE / Mappls layers and
-  # the Google-derived flyovers in the same file must not be ingested (licence / ToS).
+  # Bridges. `structures` is the consolidated open layer (OSM + NHAI + SOI). The HERE, Mappls and
+  # Google-derived flyover layers are included for the DEMO ONLY (Vivek, 6 Oct 2026: client informed
+  # of the restrictions). Every feature from them carries provider + licence so it can be stripped
+  # before any real delivery: drop the three `licence_restricted: true` entries and re-ingest.
+  # Raw tile pieces (here_road_pieces_bridge_tunnel, mappls_raw_pieces) duplicate the dissolved
+  # layers and are not used. Centreline widths below are class defaults (assumption).
   bridges:
-    path: "transfers/bridges/OUTPUT.gpkg"
-    layer: "gujarat_structures_all_sources_1 — structures"
-    class_field: struct_type
-    class_map: {bridge: road_bridge, bridge_or_flyover: road_bridge, flyover: flyover, elevated: flyover,
-                rail_bridge: rail_bridge, underpass_embankment: underpass}
-    name_field: name
-    id_field: uid
-    keep_fields: [struct_type, status, road_class, ref_route, deck_width_m, length_m, "confidence:confidence_grade", sources, nhai_fow]
-    source: "Bridges — OSM (Overture 2026-08, Geofabrik 2026-09) + Bhuvan NHAI + SOI corroboration"
+    - path: "transfers/bridges/OUTPUT.gpkg"
+      layer: "gujarat_structures_all_sources_1 — structures"
+      class_field: struct_type
+      class_map: {bridge: road_bridge, bridge_or_flyover: road_bridge, flyover: flyover, elevated: flyover,
+                  rail_bridge: rail_bridge, underpass_embankment: underpass}
+      name_field: name
+      id_field: uid
+      keep_fields: [struct_type, status, road_class, ref_route, deck_width_m, length_m, "confidence:confidence_grade", sources, nhai_fow]
+      const_fields: {provider: "OSM + NHAI + SOI", licence: "ODbL (OSM) / GoI sources"}
+      source: "Bridges — OSM (Overture 2026-08, Geofabrik 2026-09) + Bhuvan NHAI + SOI corroboration"
+    - path: "transfers/bridges/OUTPUT.gpkg"
+      layer: "here_gujarat_bridges_INTERNAL_1 — here_bridges"
+      licence_restricted: true
+      class_field: kind
+      class_map: {rail: rail_bridge, highway: road_bridge, major_road: road_bridge, minor_road: road_bridge, path: road_bridge}
+      name_field: name
+      line_width_m: {field: kind_detail, default: 7, map: {motorway: 25, trunk: 15, primary: 12, secondary: 9, tertiary: 7,
+                     residential: 6, service: 5, rail: 6, footway: 3}}
+      keep_fields: [kind_detail, ref, z_level, under_construction, length_m]
+      const_fields: {provider: HERE, licence: "HERE base tiles — internal analysis only; DEMO, not licensed for delivery"}
+      source: "HERE Vector Tile API v2 bridges (pulled 2026-09-29) — DEMO ONLY, licence-restricted"
+    - path: "transfers/bridges/OUTPUT.gpkg"
+      layer: "here_gujarat_bridges_INTERNAL_1 — here_tunnels"
+      licence_restricted: true
+      const_class: underpass
+      name_field: name
+      line_width_m: {field: kind_detail, default: 7, map: {trunk: 15, primary: 12, secondary: 9, tertiary: 7, residential: 6, service: 5}}
+      keep_fields: [kind_detail, ref, z_level, length_m]
+      const_fields: {provider: HERE, licence: "HERE base tiles — internal analysis only; DEMO, not licensed for delivery"}
+      source: "HERE tunnels / underpasses — DEMO ONLY, licence-restricted"
+    - path: "transfers/bridges/OUTPUT.gpkg"
+      layer: "mappls_gujarat_structures_INTERNAL — mappls_elevated"
+      licence_restricted: true
+      const_class: flyover
+      line_width_m: {field: cls, default: 10, map: {motorway: 20, highway: 15, arterial: 12, primary: 10, limited: 10}}
+      keep_fields: [cls, length_m]
+      const_fields: {provider: Mappls, licence: "Mappls rendered map content — internal analysis only; DEMO, not licensed for delivery"}
+      source: "Mappls elevated roads (tiles v=092026) — DEMO ONLY, licence-restricted"
+    - path: "transfers/bridges/OUTPUT.gpkg"
+      layer: "mappls_gujarat_structures_INTERNAL — mappls_underground"
+      licence_restricted: true
+      const_class: underpass
+      line_width_m: {field: cls, default: 10, map: {motorway: 20, arterial: 12, primary: 10, limited: 10}}
+      keep_fields: [cls, length_m]
+      const_fields: {provider: Mappls, licence: "Mappls rendered map content — internal analysis only; DEMO, not licensed for delivery"}
+      source: "Mappls underground roads — DEMO ONLY, licence-restricted"
+    - path: "transfers/bridges/OUTPUT.gpkg"
+      layer: "gujarat_flyovers — flyovers"
+      licence_restricted: true
+      const_class: flyover
+      name_field: road_name
+      keep_fields: [class, ref, length_m, area_m2]
+      const_fields: {provider: Google Routes, licence: "Google Maps Platform ToS — derivative datasets not permitted; DEMO only"}
+      source: "Flyovers from Google Routes flyoverInfo (Sep 2026) — DEMO ONLY, licence-restricted"
   # aviation / approach: now sourced from the aviation store (beeline_api/aviation; README step 8).
   # airport_boundary_merged.gpkg stacks Esri and OSM without de-duplication — do not ingest it.
   substations:
