@@ -190,7 +190,7 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
                         long_heading_limit_deg=float(eng["spans"].get("long_heading_limit_deg", 60)),
                         long_heading_step_deg=float(eng["spans"].get("long_heading_step_deg", 5)),
                         long_length_step_m=float(eng["spans"].get("long_length_step_m", 100)),
-                        terrain=terrain, heading_slack=bool(eng["grid"].get("heading_slack", False)),
+                        terrain=terrain, heading_slack=eng["grid"].get("heading_slack", False),
                         ground_clearance_m=float(eng["spotting"]["ground_clearance_m"][inp.kv]),
                         lowest_attachment_m=float(eng["spotting"]["lowest_attachment_m"][inp.kv]),
                         sag_at_design_m=float(eng["spotting"]["sag_at_design_span_m"][inp.kv]),

@@ -54,7 +54,7 @@ class SolverParams:
     # an in-between heading, which the spotting straightens into suspension towers. Pricing them as
     # B1/B2 made every stretch not parallel to the bee-line ~₹0.3 Cr per tower too dear (the search
     # ranked a hill route ₹22 Cr below a flat one that was ₹3 Cr cheaper once spotted).
-    heading_slack: bool = False
+    heading_slack: str | bool = False        # False | True (any bend <= step) | "adjacent" (same span length, one row apart)
     # terrain in the search (6 Oct 2026): clearance per span, hilly span limit, hilly section towers
     terrain: bool = False
     ground_clearance_m: float = 0.0
@@ -320,7 +320,16 @@ def transition_matrix(grid: Grid, p: SolverParams) -> tuple[np.ndarray, np.ndarr
     defl = np.abs(h[:, None] - h[None, :])
     K = len(h)
     step = np.degrees(np.arctan(grid.sy / np.maximum(grid.length_m, 1.0)))     # heading step per vector
-    slack = np.maximum(step[:, None], step[None, :]) + 0.5 if p.heading_slack else np.zeros((K, K))
+    if p.heading_slack == "adjacent":
+        # only the two vectors a straight line at an in-between heading alternates between: same
+        # chainage advance, one row apart (e.g. (8,0) and (8,1): 7.1° at 400 m)
+        dc, dr = grid.offsets[:, 0], grid.offsets[:, 1]
+        adj = (dc[:, None] == dc[None, :]) & (np.abs(dr[:, None] - dr[None, :]) == 1)
+        slack = np.where(adj, np.maximum(step[:, None], step[None, :]) + 0.5, 0.0)
+    elif p.heading_slack:
+        slack = np.maximum(step[:, None], step[None, :]) + 0.5
+    else:
+        slack = np.zeros((K, K))
     T = np.full((K, K), INF, np.float32)
     TA = np.full((K, K), INF, np.float32)
     for i in range(K):
