@@ -279,6 +279,16 @@ def _lulc_model_layer(run, k, lay, band, progress, rep):
                                   "lulc_stats": {"served_from": "stored_partial", "warnings": [warn]}}
         return _empty_gdf(), None, {"source": f"{lay['name']}: not run — {warn}", "model": m.get("name"),
                                     "lulc_stats": {"served_from": "none", "warnings": [warn]}}
+    missing = [k for k in (m.get("required_layers") or [])
+               if (g := _current_layer(run["id"], k)) is None or not len(g)]
+    if missing:
+        warn = f"no {', '.join(missing)} for this band (input to this model); the model was not run"
+        if stored is not None and len(stored):
+            return stored, scov, {"source": f"Stored output (partial, {100 * s_frac:.0f}% of band) — {(sm or {}).get('source')}",
+                                  "model": (sm or {}).get("model"), "image_date": (sm or {}).get("source_date"),
+                                  "lulc_stats": {"served_from": "stored_partial", "warnings": [warn]}}
+        return _empty_gdf(), None, {"source": f"{lay['name']}: not run — {warn}", "model": m.get("name"),
+                                    "lulc_stats": {"served_from": "none", "warnings": [warn]}}
     if not settings.RUN_MODELS:
         warn = "model runs are switched off on this machine (BEELINE_RUN_MODELS=0); stored output only"
         if stored is not None and len(stored):
@@ -313,6 +323,39 @@ def _layer_to_gpkg(run_id: str, key: str, dst: Path) -> str | None:
     return str(dst)
 
 
+def _saltscape_gpkg(spec: dict, band, dst: Path) -> str | None:
+    """Salt-scape polygons for the plotted-land salt-works filter, from the reference store: {layer:
+    classes or None for all}. Read 1 km past the band (the filter's ring reaches that far). Layer
+    `features` + layer `coverage` (union of the source layers' coverage)."""
+    from shapely.ops import unary_union
+    area = band.buffer(0.011)
+    parts, covs = [], []
+    for key, classes in spec.items():
+        g, meta = reference.read_clip(key, area)
+        if g is None:
+            continue
+        cv = reference.coverage_of(meta)
+        if cv is not None:
+            covs.append(cv.intersection(area))
+        if classes:
+            g = g[g["class"].isin(classes)]
+        g = g[g.geom_type.isin(["Polygon", "MultiPolygon"])]
+        if len(g):
+            parts.append(g[["class", "geometry"]].assign(layer=key))
+    if not parts and not covs:
+        return None
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    if dst.exists():
+        dst.unlink()
+    feats = gpd.GeoDataFrame(pd.concat(parts, ignore_index=True), crs=4326) if parts else \
+        gpd.GeoDataFrame({"class": [], "layer": []}, geometry=[], crs=4326)
+    pyogrio.write_dataframe(feats, dst, layer="features", driver="GPKG", promote_to_multi=True)
+    if covs:
+        pyogrio.write_dataframe(gpd.GeoDataFrame({"id": [1]}, geometry=[unary_union(covs)], crs=4326), dst,
+                                layer="coverage", driver="GPKG", append=True, promote_to_multi=True)
+    return str(dst)
+
+
 def _plugin_inputs(run: dict, name: str, m: dict, band) -> dict:
     """Upstream layers of this run + local reference inputs the plugin may use."""
     d = settings.RUNS_DIR / run["id"] / "lulc" / "_inputs"
@@ -324,6 +367,7 @@ def _plugin_inputs(run: dict, name: str, m: dict, band) -> dict:
                       where rl.run_id=%s and rl.layer_key='village_roads'""", (run["id"],))
         lulc = ((r or {}).get("stats") or {}).get("lulc") or {}
         ins["village_roads_prob"] = (lulc.get("artifacts") or {}).get("prob_raster") or []
+        ins["saltscape_gpkg"] = _saltscape_gpkg(m.get("saltscape") or {}, band, d / "saltscape.gpkg")
     ref = settings.DATA / "reference_inputs"
     for key, fname in (("osm_solar_gpkg", "osm_solar_india.gpkg"), ("osm_wind_gpkg", "osm_wind.gpkg"),
                        ("osm_substations_gpkg", "osm_substations.gpkg")):

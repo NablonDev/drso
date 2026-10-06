@@ -3,7 +3,8 @@
   AOI -> village roads clipped to AOI + roads_overlap_m -> road-probability VRT from the given tifs
       -> UTM zone of the AOI centroid -> geometry pipeline (chord variant, IDEAL) -> strict triplets
       -> core trim (cluster representative point inside the AOI) -> building coverage (run buildings layer)
-      -> salt-works filter (local WorldCover; skipped with a warning when none is supplied)
+      -> salt-works filter (inputs.saltscape_gpkg: delivered salt pans / mud flats / salt marsh / mangrove;
+         skipped with a warning when none is supplied). No WorldCover since 6 Oct 2026.
       -> out.gpkg: `features` (clusters, EPSG:4326), `plots`, `removed_saltworks`
 
 Same per-region steps as the statewide run /mnt/cog-data/guj/pl/code/guj_pl.py one() + guj_pl_byregion.py.
@@ -56,21 +57,6 @@ def first_layer(path, prefer="features"):
     import pyogrio
     names = [l for l, _ in pyogrio.list_layers(path)]
     return prefer if prefer in names else names[0]
-
-
-def worldcover_paths(req):
-    out, warn = [], []
-    for it in (req.get("imagery") or {}).get("worldcover") or []:
-        p = it.get("path") if isinstance(it, dict) else it
-        if not p:
-            continue
-        if is_remote(p):
-            warn.append("WorldCover path %s is remote; plugins read local files only - ignored" % p)
-        elif not os.path.exists(p):
-            warn.append("WorldCover path %s does not exist - ignored" % p)
-        else:
-            out.append(p)
-    return out, warn
 
 
 def build_vrt(paths, vrt, list_file):
@@ -129,16 +115,15 @@ def check(req: dict | None) -> dict:
                 add("buildings_gpkg", False, "%s: %s" % (bg, e), required=False)
         else:
             add("buildings_gpkg", False, "not given: built_pct will be null", required=False)
-        wc, warn = worldcover_paths(req)
-        bad = []
-        for p in wc:
+        sg = inp.get("saltscape_gpkg")
+        if sg:
             try:
-                with rasterio.open(p):
-                    pass
+                i = pyogrio.read_info(sg, layer="features")
+                add("saltscape_gpkg", True, "%s: %d features" % (sg, i["features"]), required=False)
             except Exception as e:  # noqa: BLE001
-                bad.append("%s: %s" % (p, e))
-        add("worldcover", bool(wc) and not bad, "; ".join(warn + bad) or ("%d local tifs" % len(wc) if wc else "none: salt filter will be skipped"),
-            required=False)
+                add("saltscape_gpkg", False, "%s: %s" % (sg, e), required=False)
+        else:
+            add("saltscape_gpkg", False, "not given: salt filter will be skipped", required=False)
     return {"ok": all(c["ok"] for c in checks if c["required"]), "checks": checks}
 
 
@@ -248,16 +233,19 @@ def run(req: dict):
     CC, PP = deliver_mod.deliver(R, C, bg, id_prefix=str(P["id_prefix"]), log=log)
 
     common.progress(0.90, "salt-works filter")
-    wc, w = worldcover_paths(req); warnings += w
     removed = CC.iloc[0:0].assign(ring_saltscape=pd.Series(dtype="float64"))
-    if not wc:
-        warnings.append("no local WorldCover supplied: salt-works filter skipped")
+    sg = inp.get("saltscape_gpkg")
+    if not sg or not os.path.exists(sg):
+        warnings.append("no salt-scape layers supplied: salt-works filter skipped")
         log(warnings[-1])
     elif len(CC):
-        wcp = wc[0] if len(wc) == 1 else build_vrt(wc, str(wd / "worldcover.vrt"), str(wd / "worldcover_list.txt"))
-        CC, PP, removed, have = salt_mod.saltfilter(CC, PP, wcp, thr=float(P["salt_threshold"]), log=log)
+        import shapely
+        salt = gpd.read_file(sg, layer="features", engine="pyogrio").to_crs(crs)
+        cv = gpd.read_file(sg, layer="coverage", engine="pyogrio") if "coverage" in [l for l, _ in pyogrio.list_layers(sg)] else None
+        cov = shapely.union_all(cv.to_crs(crs).geometry.values) if cv is not None and len(cv) else None
+        CC, PP, removed, have = salt_mod.saltfilter(CC, PP, salt, cov, thr=float(P["salt_threshold"]), log=log)
         if have < 0.99:
-            warnings.append("WorldCover covers only %.0f%% of the salt-filter rings" % (100 * have))
+            warnings.append("salt-scape layers cover only %.0f%% of the salt-filter rings" % (100 * have))
 
     # ---- outputs, EPSG:4326
     common.progress(0.96, "writing")

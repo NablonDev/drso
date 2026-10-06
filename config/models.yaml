@@ -45,8 +45,13 @@ models:
     layer: plotted
     code: lulc_models/plotted_land
     env: "${ENV_ROOT}/terratorch/bin/python"     # has every plotted-land dependency
-    imagery: [worldcover]
+    # Runs on the village roads output (lines + probability rasters); buildings give built %. No
+    # imagery: the salt-works filter reads the delivered salt pans / other_water salt-scape classes
+    # instead of WorldCover (Vivek, 6 Oct 2026).
+    imagery: []
     needs_layers: [village_roads, buildings]
+    required_layers: [village_roads]      # not run when the band has no village roads
+    saltscape: {salt_pans: null, other_water: [salt_pan, mud_flat, salt_marsh, mangrove]}
     gpu: false
     timeout_h: 4
     params: {ideal: 1, salt_threshold: 0.60, prob_accept: 0.20, roads_overlap_m: 3000}
