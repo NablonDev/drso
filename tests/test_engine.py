@@ -211,9 +211,32 @@ def test_ridge_gets_a_tower_instead_of_a_short_clearance(monkeypatch):
     r = res["routes"][0]
     assert all((s["min_clearance_m"] is None or s["min_clearance_m"] >= 15.0 - 1e-6) for s in r["spans"]), \
         min(s["min_clearance_m"] for s in r["spans"] if s["min_clearance_m"] is not None)
-    added = [t for t in r["towers"] if "clearance" in t["reasons"]]
-    assert added and any(abs(t["chainage_km"] * 1000 - c) < 120 for t in added)
-    assert any(e["type"] == "CLEARANCE_TOWER" for e in r["events"])
+    # the search itself (terrain in the span cost) or the spotting puts a tower at the crest
+    assert any(abs(t["chainage_km"] * 1000 - c) < 120 for t in r["towers"])
+    assert not any("ground_clearance" in (t["warnings"] or []) for t in r["towers"])
+
+
+def test_search_goes_round_a_hill_when_that_is_cheaper(monkeypatch):
+    """A steep 120 m hill on the bee-line, flat ground 1.5 km to either side: with terrain in the
+    search cost the route leaves the hill (hilly spans, extensions and ridge towers cost more than
+    the detour)."""
+    f = frame()
+    c = f.length_m / 2
+
+    class HillDem(_FakeDem):
+        def sample(self, lon, lat):
+            ux, uy = self.f.lonlat_to_utm(np.asarray(lon, float), np.asarray(lat, float))
+            fx, fy = self.f.utm_to_frame(ux, uy)
+            d = np.hypot((np.asarray(fx) - c) / 2500.0, np.asarray(fy) / 700.0)
+            return (120.0 * np.clip(1 - d, 0, None) * (1 + 0.5 * np.sin(np.asarray(fx) / 90.0))).astype(float)
+    from beeline_engine import pipeline as pl
+    monkeypatch.setattr(pl.demmod, "ensure_tiles", lambda bb, d: [])
+    monkeypatch.setattr(pl.demmod, "DemSampler", lambda tiles, bb: HillDem(frame(), None))
+    inp = solve_input({})
+    inp.dem_dir = "unused"
+    r = run_solve(inp)["routes"][0]
+    on_hill = [t for t in r["towers"] if abs(t["chainage_km"] * 1000 - c) < 1500 and t["ground_z"] and t["ground_z"] > 20]
+    assert len(on_hill) <= 2, [(t["chainage_km"], t["ground_z"]) for t in on_hill]
 
 
 def test_hilly_ground_takes_hilly_spans_and_sections(monkeypatch):

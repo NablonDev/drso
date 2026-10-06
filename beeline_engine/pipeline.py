@@ -15,7 +15,7 @@ from shapely.geometry import LineString, Point, box
 from shapely.ops import unary_union
 
 from . import dem as demmod
-from .compile import compile_rules
+from .compile import attach_terrain, compile_rules
 from .config import LineSpec, load_engine, load_layers, resolve_costs, resolve_rules
 from .events import event
 from .frame import Frame
@@ -174,13 +174,31 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
     check_cancel()
 
     tower_cost = tower_type_cost(costs, inp.kv)
+    # terrain in the search: the DEM on the rule grid; costs from the same tables the spotting uses
+    terrain = dem is not None and dem.ok
+    if terrain:
+        t = time.time()
+        attach_terrain(comp, dem, float(eng["spotting"].get("hilly_slope_deg", 10)))
+        timings["terrain_s"] = round(time.time() - t, 2)
+    steel_a = float(costs["tonnage"]["A"]) * float(costs["tower"]["rate_per_tonne_rs"])
+    plain_km = float(rules["section_interval"].params["plain_km"])
+    hilly_km = float(rules["section_interval"].params["hilly_km"])
     base = SolverParams(site_spacing_m=eng["grid"]["site_spacing_m"], span_min_m=smin, span_max_m=smax,
                         max_dev_deg=max_dev, type_bands=bands, tower_cost_rs=tower_cost,
                         parallel_angle_deg=eng["crossings"]["parallel_angle_deg"],
                         river_max_span_m=float(eng["spans"].get("river_crossing_max_span_m", 0)),
                         long_heading_limit_deg=float(eng["spans"].get("long_heading_limit_deg", 60)),
                         long_heading_step_deg=float(eng["spans"].get("long_heading_step_deg", 5)),
-                        long_length_step_m=float(eng["spans"].get("long_length_step_m", 100)))
+                        long_length_step_m=float(eng["spans"].get("long_length_step_m", 100)),
+                        terrain=terrain,
+                        ground_clearance_m=float(eng["spotting"]["ground_clearance_m"][inp.kv]),
+                        lowest_attachment_m=float(eng["spotting"]["lowest_attachment_m"][inp.kv]),
+                        sag_at_design_m=float(eng["spotting"]["sag_at_design_span_m"][inp.kv]),
+                        design_span_m=design,
+                        extension_cost_rs=steel_a * float(costs["tower"]["extension_pct"]) / 100.0,
+                        hilly_span_max_m=float(rules["design_span"].params["hilly_m"]),
+                        hilly_section_rs_per_m=max(0.0, tower_cost["B1"] - tower_cost["A"])
+                        * max(0.0, 1.0 / hilly_km - 1.0 / plain_km) / 1000.0)
     sp = SpotParams(design_span_m=design, span_max_m=smax,
                     min_span_m=float(rules["crossing_span_limits"].params["min_span_m"]),
                     max_dev_deg=max_dev, type_bands=bands,

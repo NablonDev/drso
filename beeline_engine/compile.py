@@ -108,6 +108,29 @@ class Compiled:
     costs: dict = field(default_factory=dict)
     terminal_zone: object = None     # frame coords: go-zone discs + terminal yards (+ gantry buffer)
     terminal_yards: object = None
+    # terrain on the rule raster grid (set by attach_terrain; None = no DEM)
+    ground_z: np.ndarray | None = None       # m, NaN where the DEM has no value
+    hilly: np.ndarray | None = None          # bool: slope >= hilly_slope_deg over ~100 m
+
+
+def attach_terrain(comp: "Compiled", dem, hilly_slope_deg: float) -> None:
+    """Ground height and hilly mask on the 20 m rule grid, from the DEM sampler (6 Oct 2026)."""
+    f = comp.frame
+    h, w = comp.tower_forbidden.shape
+    cols = np.arange(w)
+    z = np.full((h, w), np.nan, np.float32)
+    for r0 in range(0, h, 256):                     # row blocks: bounded memory for wide bands
+        rows = np.arange(r0, min(h, r0 + 256))
+        fx = np.broadcast_to(f.x0 + (cols + 0.5) * f.res_m, (len(rows), w))
+        fy = np.broadcast_to((f.y_top - (rows + 0.5) * f.res_m)[:, None], (len(rows), w))
+        lon, lat = f.frame_to_lonlat(fx.ravel(), fy.ravel())
+        z[rows] = np.asarray(dem.sample(lon, lat), np.float32).reshape(len(rows), w)
+    zf = np.where(np.isfinite(z), z, np.nanmean(z) if np.isfinite(z).any() else 0.0)
+    zs = ndimage.uniform_filter(zf, size=5, mode="nearest")            # ~100 m, as the 90 m span check
+    gy, gx = np.gradient(zs, f.res_m)
+    slope = np.degrees(np.arctan(np.hypot(gx, gy)))
+    comp.ground_z = z
+    comp.hilly = (slope >= hilly_slope_deg) & np.isfinite(z)
 
 
 # ----------------------------------------------------------------------------------------

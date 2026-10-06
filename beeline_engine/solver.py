@@ -49,6 +49,16 @@ class SolverParams:
     lateral_penalty_rs_per_m: float = 0.0    # per tower, per metre of lateral offset
     sensitive_multiplier: float = 1.0
     extra_strip_rs_per_m: np.ndarray | None = None   # raster, ₹ per metre of line (diversity)
+    # terrain in the search (6 Oct 2026): clearance per span, hilly span limit, hilly section towers
+    terrain: bool = False
+    ground_clearance_m: float = 0.0
+    lowest_attachment_m: float = 0.0
+    sag_at_design_m: float = 0.0
+    design_span_m: float = 400.0
+    extension_m: float = 18.0
+    extension_cost_rs: float = 0.0           # one body extension on a suspension tower
+    hilly_span_max_m: float | None = None
+    hilly_section_rs_per_m: float = 0.0      # extra tension towers on hilly ground, per metre of line
 
 
 @dataclass
@@ -149,6 +159,10 @@ class _Rasters:
         self.par = [t(np.nan_to_num(pr.angle, nan=-1.0)) for pr in compiled.parallels]
         self.h, self.w = compiled.tower_forbidden.shape
         self.river_cols = None
+        self.z = self.hilly = None
+        if p.terrain and compiled.ground_z is not None:
+            self.z = t(compiled.ground_z)
+            self.hilly = t(compiled.hilly, torch.bool)
 
     def set_river_cols(self, compiled: Compiled, grid: "Grid", p: SolverParams):
         """Grid columns from which a long span could reach a river."""
@@ -195,6 +209,25 @@ def _edge_block(compiled: Compiled, grid: Grid, p: SolverParams, rasters: "_Rast
     invalid = rasters.cond[row, col].any(dim=-1)
     strip = rasters.strip[row, col].mean(dim=-1)
     E = length * (compiled.conductor_rs_per_m + strip)
+    if rasters.z is not None and not require_river:
+        # ground clearance of this span over the DEM (towers at standard height): extensions cost
+        # steel; a span that extensions on both towers cannot clear is not allowed (a tower must
+        # stand on the high ground instead, or the line goes round)
+        zs = rasters.z[row, col]                                         # (C,R,K,S)
+        za, zb = zs[..., :1], zs[..., -1:]
+        sag = p.sag_at_design_m * (length.unsqueeze(-1) / p.design_span_m) ** 2
+        line = (1 - tt) * (za + p.lowest_attachment_m) + tt * (zb + p.lowest_attachment_m) - 4 * sag * tt * (1 - tt)
+        clear = torch.nan_to_num(line - zs, nan=1e9).amin(dim=-1)        # no DEM value: no penalty
+        need = p.ground_clearance_m - clear
+        one = (need > 0) & (need <= p.extension_m * 0.5)                 # one tower raised (mid-span gains ~half)
+        two = (need > p.extension_m * 0.5) & (need <= p.extension_m)
+        E = E + one.float() * p.extension_cost_rs + two.float() * (2 * p.extension_cost_rs)
+        invalid |= need > p.extension_m
+        hil = rasters.hilly[row, col]
+        if p.hilly_span_max_m is not None:
+            invalid |= hil.any(dim=-1) & (length > p.hilly_span_max_m + 1e-3)
+        if p.hilly_section_rs_per_m:
+            E = E + length * hil.float().mean(dim=-1) * p.hilly_section_rs_per_m
     crossed_river = torch.zeros_like(invalid)
 
     tA = p.tower_cost_rs["A"]
@@ -390,7 +423,8 @@ def solve(compiled: Compiled, p: SolverParams, cancel_check=None, progress=None)
     end_cols = set(np.nonzero(np.isfinite(seedB).any(axis=1))[0].tolist())
     start_marker = torch.tensor(-1, dtype=torch.int16, device=dev)
 
-    chunk = max(1, min(32, int(2.5e8 // max(1, R * K * n_samples))))
+    budget = 1.25e8 if rasters.z is not None else 2.5e8               # terrain doubles the gathered samples
+    chunk = max(1, min(32, int(budget // max(1, R * K * n_samples))))
     E_chunk, E_start = None, -1
     for c in range(nc + 1):
         if cancel_check and c % 64 == 0:
