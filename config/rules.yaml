@@ -1,4 +1,4 @@
-# Default rule set — 29 prototype rules + 2 added (protected areas, cell towers), five groups (the prototype's Rules screen).
+# Default rule set — 29 prototype rules + 5 added (protected areas, cell towers, wind turbines, village roads, CRZ), five groups (the prototype's Rules screen).
 #
 # Every value tagged best_guess: true is a placeholder pending AESL confirmation.
 # A parameter value is either a scalar or a per-voltage map {765, 400, 220, 132}.
@@ -160,6 +160,20 @@ groups:
         params:
           - {key: tower_setback_m, label: "Tower buffer", type: num, unit: m, value: 0}
           - {key: conductor_buffer_m, label: "Conductor buffer", type: num, unit: m, value: 0}
+          - {key: treatment, label: "Treatment", type: sel, value: "No-Go", options: ["No-Go", "Allowed"]}
+
+      # Not in the prototype's 29; added 6 Oct 2026 with the CRZ layer (Vivek: sea + 500 m of land
+      # No-Go, no CRZ cost). Counted as rule 34. The 500 m is measured from the edge of the
+      # delivered sea polygon, which stands in for the HTL until the HTL line is delivered.
+      - id: crz
+        name: "Coastal regulation zone"
+        note: "CRZ Notification 2019 — sea, and 500 m landward of the shoreline; measured from the sea polygon edge until the HTL is delivered"
+        layer: crz
+        classes: [crz_water]
+        mechanism: nogo
+        params:
+          - {key: tower_setback_m, label: "Tower buffer from the sea", type: num, unit: m, value: 500}
+          - {key: conductor_buffer_m, label: "Conductor buffer from the sea", type: num, unit: m, value: 500}
           - {key: treatment, label: "Treatment", type: sel, value: "No-Go", options: ["No-Go", "Allowed"]}
 
       # Not in the prototype's 29; added 5 Oct 2026 with the Tarang Sanchar cell tower layer.

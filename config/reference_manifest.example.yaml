@@ -106,6 +106,12 @@ layers:
     keep_fields: [landform, substrate_class, eng_material, dune_state, symcode, surface_water_class, currency_check, sources_agreeing, sources_dissenting, base_epoch]
     source: "Soil types — marsh / mangrove swamp (NGLM 2005-06, cross-checked)"
     source_date: "2005-06"
+  # CRZ: the sea / Gulf water polygon only for now (one MultiPolygon, 107,762 km2, reaching
+  # ~130 km offshore and south to Maharashtra). HTL and CRZ I-IV zones to be added as classes.
+  crz:
+    path: "transfers/CRZ/crz_water_gujarat.geojson"
+    const_class: crz_water
+    source: "CRZ — sea / Gulf water polygon (Gujarat delivery)"
   # aviation / approach: now sourced from the aviation store (beeline_api/aviation; README step 8).
   # airport_boundary_merged.gpkg stacks Esri and OSM without de-duplication — do not ingest it.
   substations:

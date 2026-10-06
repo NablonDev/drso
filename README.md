@@ -48,6 +48,10 @@ tests/            test_engine.py (synthetic, incl. brute-force optimality), test
    hard rock" reads `hard_rock` + `sand_dunes` (`also_layers`), so switching either to No-Go keeps
    the route off those layers too. Source base epoch is 2005-06; `currency_check` flags 17 dunes
    now vegetated and 6 sandy-plain polygons with a possible new salt pan / brine pond.
+   CRZ comes from `transfers/CRZ/crz_water_gujarat.geojson` — for now only the sea / Gulf water
+   polygon (no HTL, no CRZ I-IV zones). Rule 34 "Coastal regulation zone" (No-Go group) keeps
+   towers and conductor out of the sea and 500 m back from its edge, which stands in for the HTL
+   until that line is delivered. No CRZ clearance cost is applied. No refresh from the UI.
    Fetch hooks for AOIs that are not covered go in `config/reference_sources.yaml`.
 5. **OSM power lines and towers (all India)** — 765 / 400 / 220 / 132 kV only, stored by voltage
    (PostGIS table `osm_power`, one partition per voltage). Load once (downloads the ~1.7 GB Geofabrik

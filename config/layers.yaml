@@ -223,6 +223,18 @@ layers:
     default_confidence: 0.99
     classes: [notified_wetland]
 
+  # Coastal Regulation Zone. Delivered so far: the sea / Gulf water polygon only
+  # (transfers/CRZ/crz_water_gujarat.geojson). HTL and CRZ I-IV zones will follow (Vivek, 6 Oct
+  # 2026) as further classes of this layer; the "Coastal regulation zone" rule reads crz_water.
+  - key: crz
+    name: "Coastal regulation zone"
+    kind: polygon
+    producer: reference
+    desc: "Cached — sea / Gulf water side (HTL and CRZ I-IV zones to follow)"
+    minutes_per_km2: 0.002
+    default_confidence: 0.90
+    classes: [crz_water]
+
   # Airports and their runways (beeline_api/aviation). Both are read beyond the band by reach_m
   # (or the rule distance, whichever is larger) and not clipped: the NOC radius and the
   # prohibition distance reach airports that sit outside the corridor.

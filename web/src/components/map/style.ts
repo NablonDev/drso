@@ -25,6 +25,7 @@ export const LAYER_COLOURS: Record<string, string> = {
   telecom: "#2BB0A6",
   pipelines: "#B07A2A",
   wetlands: "#4E8C7A",
+  crz: "#2E6FB0",
   aviation: "#9E6811",
   approach: "#E04F8C",
   defence: "#5B6B7A",
@@ -92,6 +93,7 @@ export const LAYER_ORDER = [
   "forest",
   "protected",
   "wetlands",
+  "crz",
   "defence",
   "aviation",
   "approach",
@@ -130,6 +132,7 @@ export const DEFAULT_ON = new Set([
   "power",
   "telecom",
   "wetlands",
+  "crz",
   "aviation",
   "approach",
   "substations",
@@ -137,7 +140,7 @@ export const DEFAULT_ON = new Set([
 ]);
 
 /** Layers the route map shows under "No-Go features". */
-export const NOGO_LAYERS = ["clusters", "buildings", "protected", "wetlands", "defence", "aviation", "approach", "substations", "solar", "monuments"];
+export const NOGO_LAYERS = ["clusters", "buildings", "protected", "wetlands", "crz", "defence", "aviation", "approach", "substations", "solar", "monuments"];
 
 /** Route colours: the prototype's four hues, lifted for contrast over satellite imagery. */
 export const ROUTE_COLOURS = ["#4FA3CF", "#9C82D6", "#E3AA45", "#6CC08A"];
