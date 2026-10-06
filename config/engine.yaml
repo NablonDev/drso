@@ -10,7 +10,8 @@ grid:
 
 spans:
   # min span comes from the rule "Span limits at a crossing — Minimum span" (100 m default)
-  max_factor: 1.125           # max span = factor x plain design span (450 m at 400 m)
+  # max span = the rule "Design span" (plain / hilly), a hard maximum in the search and the spotting
+  # (Vivek, 6 Oct 2026; was 1.125 x design span in the search only)
   # Long spans are allowed only where the span crosses a river (best guess, AESL to confirm)
   river_crossing_max_span_m: 1000
   long_heading_limit_deg: 60

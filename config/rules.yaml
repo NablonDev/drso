@@ -301,7 +301,7 @@ groups:
 
       - id: power_line
         name: "High tension power line"
-        note: "765 / 400 / 220 / 132 kV — crossed at the null point, clear of the existing towers"
+        note: "765 / 400 / 220 / 132 kV — crossed at the null point (mid-span of the existing span ± tolerance), clear of the existing towers"
         layer: power
         classes: [power_line, power_tower]
         mechanism: crossing
@@ -309,6 +309,7 @@ groups:
         params:
           - {key: tower_setback_m, label: "Tower to existing tower", type: num, unit: m, value: 100}
           - {key: null_point_radius_m, label: "Null-point clear radius", type: num, unit: m, value: 100}
+          - {key: null_point_tolerance_pct, label: "Null point: cross within ± of mid-span", type: num, unit: "%", value: 10}
           - {key: angle_deg, label: "Crossing angle", type: rng, unit: "°", value: [60, 120]}
           - {key: max_span_m, label: "Max crossing span", type: num, unit: m, value: 250}
           - {key: tower_type, label: "Tower type", type: sel, value: "B/C/D", options: ["B", "C", "D", "B/C/D"]}
@@ -318,7 +319,7 @@ groups:
       # now, set independently. Same shutdown crossing cost.
       - id: power_line_lt
         name: "Low tension power line"
-        note: "66 / 33 kV — crossed at the null point, clear of the existing towers / poles"
+        note: "66 / 33 kV — crossed at the null point (mid-span of the existing span ± tolerance), clear of the existing towers / poles"
         layer: power_lt
         classes: [power_line, power_tower]
         mechanism: crossing
@@ -326,6 +327,7 @@ groups:
         params:
           - {key: tower_setback_m, label: "Tower to existing tower", type: num, unit: m, value: 100}
           - {key: null_point_radius_m, label: "Null-point clear radius", type: num, unit: m, value: 100}
+          - {key: null_point_tolerance_pct, label: "Null point: cross within ± of mid-span", type: num, unit: "%", value: 10}
           - {key: angle_deg, label: "Crossing angle", type: rng, unit: "°", value: [60, 120]}
           - {key: max_span_m, label: "Max crossing span", type: num, unit: m, value: 250}
           - {key: tower_type, label: "Tower type", type: sel, value: "B/C/D", options: ["B", "C", "D", "B/C/D"]}
@@ -424,7 +426,7 @@ groups:
 
       - id: design_span
         name: "Design span"
-        note: "Per voltage, plain terrain governs the solve; hilly applies where the DEM slope class says so"
+        note: "Hard maximum span per voltage, used by the route search and the tower spotting alike: no span is longer than the plain value, or the hilly value where the DEM slope reaches 10°. River crossings excepted (Vivek, 6 Oct 2026)"
         mechanism: geometry
         params:
           - {key: plain_m, label: "Plain terrain", type: num, unit: m, value: {765: 400, 400: 400, 220: 350, 132: 320}, best_guess: true}

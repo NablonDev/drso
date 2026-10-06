@@ -26,6 +26,14 @@ test("route map renders the map canvas and four routes in the comparison table",
   await expect(lp).toContainText(`0 of ${n} shown`);
   await lp.getByRole("checkbox").first().check();
   await expect(lp).toContainText(`1 of ${n} shown`);
+  // the map can fill the screen; Escape brings the page back
+  const mapBox = page.getByTestId("route-map");
+  await page.getByTestId("map-maximise").click();
+  await expect(mapBox).toHaveClass(/maxed/);
+  const full = await mapBox.boundingBox();
+  expect(full!.width).toBeGreaterThan(box!.width);
+  await page.keyboard.press("Escape");
+  await expect(mapBox).not.toHaveClass(/maxed/);
   // zoom readout never exceeds the native ceiling
   await expect(page.getByTestId("zoombar")).toContainText(/z\d/);
   expect(appErrors(errors)).toEqual([]);

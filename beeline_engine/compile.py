@@ -258,6 +258,40 @@ def _within(dist: np.ndarray | None, d: float) -> np.ndarray | None:
 
 
 # ----------------------------------------------------------------------------------------
+NULL_POINT_MAX_SPAN_M = 700.0      # a longer gap between mapped towers probably hides one: left open
+
+
+def _null_point_bans(lines, towers, epsg: int, tol: float) -> list:
+    """Parts of existing spans the new conductor may not cross (UTM): everything outside
+    mid-span ± tol x span. Spans come from the mapped towers along each line; stretches without a
+    tower at both ends, or longer than NULL_POINT_MAX_SPAN_M, are left open (unknown)."""
+    from shapely.ops import linemerge, substring
+    if lines is None or towers is None or not len(lines) or not len(towers):
+        return []
+    lu = lines.geometry.to_crs(epsg)
+    tu = towers.geometry.to_crs(epsg)
+    u = unary_union([g for g in lu if g is not None and not g.is_empty])
+    merged = linemerge(u) if u.geom_type == "MultiLineString" else u
+    tree_pts = list(tu)
+    from shapely import STRtree
+    tree = STRtree(tree_pts)
+    keep = max(0.0, 0.5 - tol)
+    out = []
+    for ln in getattr(merged, "geoms", [merged]):
+        if ln.geom_type != "LineString" or ln.length < 1:
+            continue
+        idx = tree.query(ln, predicate="dwithin", distance=25.0)
+        pos = sorted({round(ln.project(tree_pts[i]), 1) for i in idx})
+        pos = [s for k, s in enumerate(pos) if k == 0 or s - pos[k - 1] > 20.0]
+        for s0, s1 in zip(pos[:-1], pos[1:]):
+            L = s1 - s0
+            if L > NULL_POINT_MAX_SPAN_M or keep <= 0:
+                continue
+            out.append(substring(ln, s0, s0 + keep * L))
+            out.append(substring(ln, s1 - keep * L, s1))
+    return [g for g in out if g is not None and not g.is_empty and g.length > 0]
+
+
 LULC_COST_CLASS = {
     "agriculture": "agriculture", "agriculture_fallow": "agriculture", "orchard": "orchard",
     "social_forest": "social_forest", "reserve_forest": "forest",
@@ -459,6 +493,17 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
                 nr = float(p.get("null_point_radius_m", 0))
                 add(_within(R.dist(r.layer, ["power_tower"]), nr), conductor_forbidden, r.id)
                 vec(cond_geoms, r.id, r.layer, ["power_tower"], nr)
+                # null point: the existing span may be crossed only within ± tol of its mid-span
+                tol = p.get("null_point_tolerance_pct")
+                if tol is not None:
+                    bans = _null_point_bans(R.subset(r.layer, ["power_line"]), R.subset(r.layer, ["power_tower"]),
+                                            frame.epsg, float(tol) / 100.0)
+                    if bans:
+                        mk = rfeatures.rasterize([(g.buffer(frame.res_m / 2), 1) for g in bans], out_shape=shape,
+                                                 transform=frame.transform, fill=0, all_touched=True,
+                                                 dtype="uint8").astype(bool)
+                        add(mk, conductor_forbidden, r.id)
+                        cond_geoms.append(VecRule(r.id, r.layer, [frame.geom_utm_to_frame(g) for g in bans], 0.0))
                 line_classes = ["power_line"]
             else:
                 if td > 0:

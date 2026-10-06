@@ -138,7 +138,7 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
     # Shortest span = the rule's crossing minimum (falling-tower distance). Short spans are
     # allowed anywhere; their extra tower cost is what keeps them rare.
     smin = float(rules["crossing_span_limits"].params["min_span_m"])
-    smax = eng["spans"]["max_factor"] * design
+    smax = design          # "Design span" is the hard maximum span (hilly value applied on hilly ground)
     bands = {k: float(rules["tower_type_bands"].params[k]) for k in ("A", "B1", "B2", "C1", "C2", "D45", "D60")}
     max_dev = float(rules["max_deviation"].params["limit_deg"])
     if not rules["max_deviation"].enabled:

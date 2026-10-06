@@ -13,6 +13,7 @@ import {
   geomCoords,
   LAYER_COLOURS,
   LAYER_ORDER,
+  layerIds,
   NOGO_LAYERS,
   routeColour,
   setLowConfVisible,
@@ -65,6 +66,7 @@ function Body({ s }: { s: Solve }) {
   // every run layer can be shown under the routes (6 Oct 2026); starts as on Review the layers
   const [on, setOn] = useState<Record<string, boolean>>(() => Object.fromEntries(LAYER_ORDER.map((k) => [k, DEFAULT_ON.has(k)])));
   const [widen, setWiden] = useState(false);
+  const [maxed, setMaxed] = useState(false);
   const routes = s.result.routes;
   const feasible = s.result.feasible && routes.length > 0;
   const sel = routes.find((r) => r.id === selId) ?? routes[0];
@@ -74,6 +76,8 @@ function Body({ s }: { s: Solve }) {
   }, [s.id, routes, loadTowers]);
 
   const ends = useMemo(() => endpoints(run), [run.a_lon, run.a_lat, run.b_lon, run.b_lat]); // eslint-disable-line react-hooks/exhaustive-deps
+  const hwM = s.result.line?.half_width_m ?? 0;
+  const midLat = (ends.a[1] + ends.b[1]) / 2;
   const routesFC = useMemo(() => routesGeoJSON(routes), [routes]);
   const prevFC = useMemo(() => linesGeoJSON(cmp?.parent_routes ?? []), [cmp]);
   const band = layersQ.data?.band;
@@ -119,6 +123,22 @@ function Body({ s }: { s: Solve }) {
       map.addLayer({ id: "beeline-line", type: "line", source: "beeline", layout: { visibility: "none" }, paint: { "line-color": "#ffffff", "line-width": 1.6, "line-dasharray": [4, 3], "line-opacity": 0.85 } });
     if (!map.getLayer("prev-line"))
       map.addLayer({ id: "prev-line", type: "line", source: "prev", layout: { visibility: "none", "line-join": "round" }, paint: { "line-color": "#C8D0CC", "line-width": 2.6, "line-dasharray": [3, 2], "line-opacity": 0.9 } });
+    if (!map.getLayer("row-strip") && hwM > 0) {
+      // right of way along each route: a line whose pixel width tracks 2 x half-width in metres
+      const mpp0 = 156543.03392 * Math.cos((midLat * Math.PI) / 180);
+      const w0 = (2 * hwM) / mpp0;
+      map.addLayer({
+        id: "row-strip",
+        type: "line",
+        source: "routes",
+        layout: { "line-join": "round", "line-cap": "butt" },
+        paint: {
+          "line-color": ["match", ["get", "id"], 1, routeColour(1), 2, routeColour(2), 3, routeColour(3), 4, routeColour(4), "#cccccc"],
+          "line-width": ["interpolate", ["exponential", 2], ["zoom"], 0, w0, 22, w0 * 2 ** 22],
+          "line-opacity": 0.14,
+        },
+      });
+    }
     if (!map.getLayer("routes-casing")) {
       map.addLayer({
         id: "routes-casing",
@@ -139,11 +159,12 @@ function Body({ s }: { s: Solve }) {
         },
       });
     }
-  }, [map, band, ends, prevFC, routesFC]);
+  }, [map, band, ends, prevFC, routesFC, hwM, midLat]);
 
   // selection styling
   useEffect(() => {
     if (!map || !map.getLayer("routes-line")) return;
+    if (map.getLayer("row-strip")) map.setPaintProperty("row-strip", "line-opacity", ["case", ["==", ["get", "id"], selId], 0.38, 0.12]);
     map.setPaintProperty("routes-line", "line-width", ["case", ["==", ["get", "id"], selId], 5, 2.4]);
     map.setPaintProperty("routes-line", "line-opacity", ["case", ["==", ["get", "id"], selId], 1, 0.55]);
     map.setPaintProperty("routes-casing", "line-width", ["case", ["==", ["get", "id"], selId], 8.5, 4.5]);
@@ -197,6 +218,70 @@ function Body({ s }: { s: Solve }) {
     };
   }, [map, select]);
 
+  // maximise the map; Escape brings the page back
+  useEffect(() => {
+    if (!maxed) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMaxed(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [maxed]);
+  useEffect(() => {
+    if (!map) return;
+    const id = requestAnimationFrame(() => map.resize());
+    return () => cancelAnimationFrame(id);
+  }, [map, maxed]);
+
+  // hover: what is under the pointer on the layers shown
+  const layerName = useMemo(() => Object.fromEntries((layersQ.data?.layers ?? []).map((l) => [l.key, l.name])), [layersQ.data]);
+  useEffect(() => {
+    if (!map) return;
+    const popup = new maplibregl.Popup({ closeButton: false, closeOnClick: false, offset: 12, className: "hovertip", maxWidth: "280px" });
+    let raf = 0;
+    const onMove = (e: maplibregl.MapMouseEvent) => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        const ids = LAYER_ORDER.flatMap(layerIds).filter((i) => map.getLayer(i) && map.getLayoutProperty(i, "visibility") !== "none");
+        const hit = ids.length ? map.queryRenderedFeatures(e.point, { layers: ids }) : [];
+        if (!hit.length) {
+          popup.remove();
+          return;
+        }
+        // the topmost feature of each layer under the pointer, at most three layers
+        const seen = new Set<string>();
+        const rows: string[] = [];
+        for (const f of hit) {
+          const key = f.sourceLayer ?? "";
+          if (seen.has(key) || seen.size >= 3) continue;
+          seen.add(key);
+          const pr = (f.properties ?? {}) as Record<string, unknown>;
+          const cls = typeof pr.class === "string" ? pr.class.replace(/_/g, " ") : "";
+          const bits = [
+            pr.name ? String(pr.name) : null,
+            cls && cls !== String(pr.name ?? "").toLowerCase() ? cls : null,
+            pr.voltage_kv ? `${pr.voltage_kv} kV` : null,
+            typeof pr.confidence === "number" ? `confidence ${(pr.confidence as number).toFixed(2)}` : null,
+          ].filter(Boolean);
+          rows.push(`<div class="ht-row"><b>${esc(layerName[key] ?? key)}</b>${bits.length ? `<span>${esc(bits.join(" · "))}</span>` : ""}</div>`);
+        }
+        popup.setLngLat(e.lngLat).setHTML(rows.join("")).addTo(map);
+      });
+    };
+    const onOut = () => {
+      cancelAnimationFrame(raf);
+      popup.remove();
+    };
+    map.on("mousemove", onMove);
+    map.getCanvas().addEventListener("mouseleave", onOut);
+    return () => {
+      cancelAnimationFrame(raf);
+      map.off("mousemove", onMove);
+      map.getCanvas().removeEventListener("mouseleave", onOut);
+      popup.remove();
+    };
+  }, [map, layerName]);
+
   // fly to a spot requested from "Why this route"
   useEffect(() => {
     if (!map || !focus || focus.runId !== run.id) return;
@@ -244,9 +329,15 @@ function Body({ s }: { s: Solve }) {
               Previous revision
             </button>
             <ZoomBar map={map} ceiling={ceiling} />
+            <button aria-pressed={maxed} onClick={() => setMaxed((x) => !x)} data-testid="map-maximise" title="Fill the screen with the map (Esc to return)">
+              Maximise map
+            </button>
           </div>
-          <div className="mapcanvas" data-testid="route-map">
+          <div className={`mapcanvas${maxed ? " maxed" : ""}`} data-testid="route-map">
             <div ref={mapRef} className="mlmap" />
+            {maxed ? (
+              <button className="mapexit" onClick={() => setMaxed(false)} data-testid="map-restore">Exit full screen · Esc</button>
+            ) : null}
             {!map ? <div className="mapnote"><Loading text="Loading imagery…" /></div> : null}
           </div>
           {t.towers && feasible ? <TowerLayer map={map} routes={[sel.id]} editable={false} /> : null}
@@ -265,6 +356,7 @@ function Body({ s }: { s: Solve }) {
             {routes.map((r) => (
               <div key={r.id}><i style={{ background: routeColour(r.id) }} />Route {r.id}</div>
             ))}
+            {hwM > 0 ? <div><i style={{ background: routeColour(sel?.id ?? 1), opacity: 0.4, height: 8 }} />Right of way ±{num(hwM, 1)} m</div> : null}
             <div><i style={{ background: "#D69A4E", borderRadius: "50%", width: 8, height: 8 }} />Angle tower</div>
             <div><i style={{ background: "#fff", border: "1px solid #14202A", borderRadius: "50%", width: 8, height: 8 }} />Suspension tower</div>
             <div><i style={{ background: "repeating-linear-gradient(90deg,var(--ink-2) 0 4px,transparent 4px 7px)" }} />Bee-line / band</div>
@@ -619,4 +711,9 @@ function RouteLayers({ layers, on, setOn }: {
       </div>
     </div>
   );
+}
+
+
+function esc(t: string): string {
+  return t.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] ?? c);
 }

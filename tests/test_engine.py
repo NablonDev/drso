@@ -257,6 +257,40 @@ def test_hilly_ground_takes_hilly_spans_and_sections(monkeypatch):
     assert max(g for start, g in gaps if start > half + 500) <= 3000.0 + 1e-6
 
 
+def test_design_span_is_the_hard_maximum_and_editable():
+    """Rule 'Design span' caps every span in the search and the spotting (gantry slack spans and
+    river crossings aside); changing it on the Rules screen changes the cap."""
+    for override, cap in ((None, 400.0), ({"design_span": {"params": {"plain_m": 350}}}, 350.0)):
+        r = run_solve(solve_input({}, overrides=override))["routes"][0]
+        inner = r["spans"][1:-1]
+        assert max(s["length_m"] for s in inner) <= cap + 1e-6, (cap, max(s["length_m"] for s in inner))
+
+
+def test_existing_line_is_crossed_at_the_null_point():
+    """An existing 400 kV line across the corridor, towers every 400 m: the new line crosses it within
+    mid-span ± 10 % (160-240 m from an existing tower)."""
+    from shapely.geometry import Point as P
+    f = frame()
+    c = f.length_m / 2 + 37.0
+    ys = np.arange(-1800.0, 1801.0, 400.0) + 130.0          # tower rows offset so mid-spans avoid y = 0
+    line = frame_geom(f, LineString([(c, -2000), (c, 2000)]))
+    towers = [frame_geom(f, P(c, y)) for y in ys]
+    g = gpd.GeoDataFrame({"class": ["power_line"] + ["power_tower"] * len(towers),
+                          "name": ["Existing 400 kV"] + [None] * len(towers),
+                          "attrs": [{"voltage_kv": 400}] * (1 + len(towers))},
+                         geometry=[line] + towers, crs=4326)
+    res = run_solve(solve_input({"power": g}))
+    assert res["feasible"]
+    r = res["routes"][0]
+    pts = towers_frame(f, r)
+    route = LineString(pts)
+    ex = LineString([(c, -2000), (c, 2000)])
+    x = route.intersection(ex)
+    assert x.geom_type == "Point"
+    d = min(abs(x.y - y) for y in ys)
+    assert 160.0 - 1.0 <= d <= 240.0 + 1.0, d
+
+
 def test_band_fully_blocked_is_reported():
     f = frame()
     c = f.length_m / 2
