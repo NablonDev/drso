@@ -76,6 +76,60 @@ layers:
     default_confidence: 0.74
     classes: [normal_dry, wet_submerged, black_cotton, hard_rock, sandy_fissured]
 
+  # Soil types (transfers/soil types/gujarat_soil_types_5_layers, Gujarat statewide). NGLM 1:50k
+  # geomorphology (Resourcesat-1 LISS-III, 2005-06) cross-checked per feature against LD50K, JRC
+  # water, DEM slope, Sentinel-2 dry NDVI and SoilGrids clay. The five layers never overlap.
+  # foundation_class: the costs.yaml foundation multiplier a tower inside the layer pays.
+  - key: hard_rock
+    name: "Soil — hard rock (top strata)"
+    kind: polygon
+    producer: reference
+    minutes_per_km2: 0.002
+    desc: "Cached — NGLM 2005-06 geomorphology, cross-checked"
+    default_confidence: 0.95
+    foundation_class: hard_rock
+    classes: [hard_rock]
+
+  - key: sand_dunes
+    name: "Soil — sand dunes (top strata)"
+    kind: polygon
+    producer: reference
+    minutes_per_km2: 0.002
+    desc: "Cached — NGLM 2005-06 active dunes, cross-checked"
+    default_confidence: 0.85
+    foundation_class: sandy_fissured
+    classes: [sand_dunes]
+
+  - key: sandy_plain
+    name: "Soil — sandy plain (top strata)"
+    kind: polygon
+    producer: reference
+    minutes_per_km2: 0.002
+    desc: "Cached — NGLM 2005-06 stabilised sand, cross-checked"
+    default_confidence: 0.95
+    foundation_class: sandy_fissured
+    classes: [sandy_plain]
+
+  - key: salt_pans
+    name: "Soil — salt pans"
+    kind: polygon
+    producer: reference
+    minutes_per_km2: 0.002
+    desc: "Cached — NGLM 2005-06 salt pans, cross-checked"
+    default_confidence: 0.9
+    foundation_class: wet_submerged
+    classes: [salt_pan]
+
+  - key: marshy_land
+    name: "Soil — marshy land"
+    kind: polygon
+    producer: reference
+    minutes_per_km2: 0.002
+    desc: "Cached — NGLM 2005-06 marsh / mangrove swamp, cross-checked"
+    default_confidence: 0.6
+    foundation_class: wet_submerged
+    classes: [marsh]
+
   - key: power
     name: "Power lines and towers"
     kind: any

@@ -348,8 +348,9 @@ def _global_events(inp, frame, rules, comp, findex, layer_names, rule_layer, dem
     # layers
     rules_by_layer: dict[str, list[str]] = {}
     for r in rules.values():
-        if r.layer and r.enabled:
-            rules_by_layer.setdefault(r.layer, []).append(r.name)
+        if r.enabled:
+            for lk in ([r.layer] if r.layer else []) + (r.also_layers or []):
+                rules_by_layer.setdefault(lk, []).append(r.name)
     band = frame.band_polygon_lonlat()
     band_km2 = _area_km2(frame, band)
     for key, li in inp.layers.items():

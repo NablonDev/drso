@@ -721,8 +721,8 @@ def run_layers(run_id: str):
     rules_by_layer: dict[str, list[str]] = {}
     for g in load_rules()["groups"]:
         for rr in g["rules"]:
-            if rr.get("layer"):
-                rules_by_layer.setdefault(rr["layer"], []).append(rr["name"])
+            for lk in ([rr["layer"]] if rr.get("layer") else []) + (rr.get("also_layers") or []):
+                rules_by_layer.setdefault(lk, []).append(rr["name"])
     band, frame = geo.band_polygon((r["a_lon"], r["a_lat"]), (r["b_lon"], r["b_lat"]), r["band_km"])
     band_km2 = geo.area_km2(band, frame)
     out, flags = [], []

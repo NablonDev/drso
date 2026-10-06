@@ -13,7 +13,8 @@
 #   crossing             crossing checks on spans (angle window, max span, tower type)
 #   nogo                 tower and/or conductor forbidden buffers
 #   wetland              tower forbidden band; conductor optionally forbidden
-#   landclass            LULC/forest class: Allowed (priced) or No-Go
+#   landclass            LULC/forest class: Allowed (priced) or No-Go; also_layers = extra layers
+#                        read whole (e.g. the soil-type layers)
 #   geometry             span, deviation, tower-type and section parameters (no layer)
 
 version: "AESL-2026.10-default"
@@ -311,6 +312,7 @@ groups:
         note: "Construction cost and long-term settlement risk"
         layer: lulc
         classes: [marsh, salt_pan]
+        also_layers: [marshy_land, salt_pans]      # the soil-type layers, whole
         mechanism: landclass
         cost_class: barren
         params:
@@ -336,6 +338,7 @@ groups:
         note: "Cheapest ground on any corridor; hard rock is dearer to excavate, which the foundation rate handles"
         layer: lulc
         classes: [shrub, barren, hard_rock, sand_dunes, unclassified]
+        also_layers: [hard_rock, sand_dunes]
         mechanism: landclass
         cost_class: barren
         params:

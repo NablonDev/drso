@@ -54,6 +54,58 @@ layers:
       id_field: uid
       keep_fields: [owner, fuel_class, status_raw, source, source_vintage, positional_class]
       source: "unclassified (OSM)"
+  # Soil types: one gpkg (no file extension), five layers that never overlap. NGLM 1:50k
+  # geomorphology, Resourcesat-1 LISS-III 2005-06, cross-checked per feature (confidence field).
+  hard_rock:
+    path: "transfers/soil types/gujarat_soil_types_5_layers"
+    layer: "Soil Type - Hard Rock (top strata)"
+    const_class: hard_rock
+    name_field: landform
+    conf_field: confidence
+    id_field: feature_id
+    keep_fields: [landform, substrate_class, eng_material, dune_state, symcode, surface_water_class, currency_check, sources_agreeing, sources_dissenting, base_epoch]
+    source: "Soil types — hard rock (NGLM 2005-06, cross-checked)"
+    source_date: "2005-06"
+  sand_dunes:
+    path: "transfers/soil types/gujarat_soil_types_5_layers"
+    layer: "Soil Type - Sand Dunes (top strata)"
+    const_class: sand_dunes
+    name_field: landform
+    conf_field: confidence
+    id_field: feature_id
+    keep_fields: [landform, substrate_class, eng_material, dune_state, symcode, surface_water_class, currency_check, sources_agreeing, sources_dissenting, base_epoch]
+    source: "Soil types — active sand dunes (NGLM 2005-06, cross-checked)"
+    source_date: "2005-06"
+  sandy_plain:
+    path: "transfers/soil types/gujarat_soil_types_5_layers"
+    layer: "Soil Type - Sandy Plain (top strata)"
+    const_class: sandy_plain
+    name_field: landform
+    conf_field: confidence
+    id_field: feature_id
+    keep_fields: [landform, substrate_class, eng_material, dune_state, symcode, surface_water_class, currency_check, sources_agreeing, sources_dissenting, base_epoch]
+    source: "Soil types — stabilised sandy plain (NGLM 2005-06, cross-checked)"
+    source_date: "2005-06"
+  salt_pans:
+    path: "transfers/soil types/gujarat_soil_types_5_layers"
+    layer: "Soil Type - Salt Panes"
+    const_class: salt_pan
+    name_field: landform
+    conf_field: confidence
+    id_field: feature_id
+    keep_fields: [landform, substrate_class, eng_material, dune_state, symcode, surface_water_class, currency_check, sources_agreeing, sources_dissenting, base_epoch]
+    source: "Soil types — salt pans (NGLM 2005-06, cross-checked)"
+    source_date: "2005-06"
+  marshy_land:
+    path: "transfers/soil types/gujarat_soil_types_5_layers"
+    layer: "Soil Type - Marshy Land"
+    const_class: marsh
+    name_field: landform
+    conf_field: confidence
+    id_field: feature_id
+    keep_fields: [landform, substrate_class, eng_material, dune_state, symcode, surface_water_class, currency_check, sources_agreeing, sources_dissenting, base_epoch]
+    source: "Soil types — marsh / mangrove swamp (NGLM 2005-06, cross-checked)"
+    source_date: "2005-06"
   # aviation / approach: now sourced from the aviation store (beeline_api/aviation; README step 8).
   # airport_boundary_merged.gpkg stacks Esri and OSM without de-duplication — do not ingest it.
   substations:

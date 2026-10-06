@@ -39,6 +39,15 @@ tests/            test_engine.py (synthetic, incl. brute-force optimality), test
    India-wide. Owner, fuel, source and positional class travel to the popup (`keep_fields`). The
    schematic GEM routes, the 2026 PARIVESH / forest-clearance proposals, facility points and CGD
    areas in the same file are not ingested. No refresh from the UI.
+   Soil types come from `transfers/soil types/gujarat_soil_types_5_layers` (a gpkg without the
+   extension) as five layers that never overlap: `hard_rock`, `sand_dunes`, `sandy_plain`,
+   `salt_pans`, `marshy_land`. Each names a `foundation_class` in `config/layers.yaml` (hard rock
+   ×1.68, sand ×1.41, salt pan / marsh ×1.34 of the base foundation, from `costs.yaml`), so a tower
+   standing on one pays that foundation rate; the dearer wins where the `soil` layer also has a
+   class. The "Marshy land" rule also reads `marshy_land` + `salt_pans`, and "Shrubs, barren and
+   hard rock" reads `hard_rock` + `sand_dunes` (`also_layers`), so switching either to No-Go keeps
+   the route off those layers too. Source base epoch is 2005-06; `currency_check` flags 17 dunes
+   now vegetated and 6 sandy-plain polygons with a possible new salt pan / brine pond.
    Fetch hooks for AOIs that are not covered go in `config/reference_sources.yaml`.
 5. **OSM power lines and towers (all India)** — 765 / 400 / 220 / 132 kV only, stored by voltage
    (PostGIS table `osm_power`, one partition per voltage). Load once (downloads the ~1.7 GB Geofabrik

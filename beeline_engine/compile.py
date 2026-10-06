@@ -26,7 +26,7 @@ from scipy import ndimage
 from shapely.geometry import LineString, MultiLineString, Point
 from shapely.ops import unary_union
 
-from .config import ResolvedRule, forced_min_type
+from .config import ResolvedRule, forced_min_type, load_layers
 from .frame import Frame
 
 log = logging.getLogger(__name__)
@@ -398,7 +398,8 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
             if p.get("treatment") != "No-Go":
                 continue
             cb = cond_buffer(r)
-            for lyr, cls in ((r.layer, r.classes), ("lulc", r.also_lulc_classes)):
+            for lyr, cls in ((r.layer, r.classes), ("lulc", r.also_lulc_classes),
+                             *((extra, None) for extra in (r.also_layers or []))):
                 if lyr == "lulc" and cls is None and r.layer != "lulc":
                     continue
                 dist = R.dist(lyr, cls)
@@ -499,17 +500,23 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
         sensitive[fm] = 1.0
         land_rate[fm] = costs["forest"]["rf_land_cr_ha"] * RS_PER_CR / M2_PER_HA
 
+    # Foundation multiplier: the `soil` layer's per-feature class, plus every layer whose registry
+    # entry names a foundation_class (the soil-type layers). Where two disagree the dearer wins.
     soil_mult = np.ones(shape, np.float32)
-    soil = layers.get("soil")
-    if soil is not None and len(soil):
+    fnd = costs["foundation"]
+    soil_layers = [("soil", None)] + [(l["key"], l["foundation_class"]) for l in load_layers()["layers"]
+                                      if l.get("foundation_class") in SOIL_KEYS]
+    for key, fixed in soil_layers:
+        soil = layers.get(key)
+        if soil is None or not len(soil):
+            continue
         utm = soil.to_crs(frame.epsg)
-        fnd = costs["foundation"]
-        shapes = [(g, float(fnd.get(c, 1.0))) for g, c in zip(utm.geometry, utm["class"])
-                  if g is not None and not g.is_empty and c in SOIL_KEYS]
+        shapes = [(g, float(fnd.get(fixed or c, 1.0))) for g, c in zip(utm.geometry, utm["class"])
+                  if g is not None and not g.is_empty and (fixed or c) in SOIL_KEYS]
         if shapes:
             sm = rfeatures.rasterize(shapes, out_shape=shape, transform=frame.transform, fill=0,
                                      dtype="float32")
-            soil_mult = np.where(sm > 0, sm, 1.0).astype(np.float32)
+            soil_mult = np.maximum(soil_mult, np.where(sm > 0, sm, 1.0)).astype(np.float32)
 
     fnd_base = float(costs["foundation"]["base_cr_tower"]) * RS_PER_CR
     base_area = float(costs["base_area_m2"])

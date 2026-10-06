@@ -78,6 +78,7 @@ class ResolvedRule:
     crossing_cost: str | None = None
     cost_class: str | None = None
     also_lulc_classes: list[str] | None = None
+    also_layers: list[str] | None = None        # landclass: further layers read whole
     overridden: list[str] = field(default_factory=list)
 
 
@@ -124,7 +125,8 @@ def resolve_rules(spec: LineSpec, overrides: dict | None = None) -> dict[str, Re
                 layer=r.get("layer"), classes=r.get("classes"), params=params,
                 enabled=ov.get("enabled", True), statutory=bool(g.get("statutory")),
                 crossing_cost=r.get("crossing_cost"), cost_class=r.get("cost_class"),
-                also_lulc_classes=r.get("also_lulc_classes"), overridden=changed,
+                also_lulc_classes=r.get("also_lulc_classes"), also_layers=r.get("also_layers"),
+                overridden=changed,
             )
     return out
 
