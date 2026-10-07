@@ -151,6 +151,21 @@ class _Rasterizer:
         self._frame_geoms: dict = {}
         self.base_layer: dict = {}        # filtered key -> source layer key
 
+    def by_voltage(self, layer: str, min_kv: float, at_least: bool) -> str:
+        """Key of a copy of `layer` holding only features whose attrs.voltage_kv is >= min_kv
+        (at_least) or < min_kv. Features without a voltage count as >= (the stricter side)."""
+        key = f"{layer}|kv{'>=' if at_least else '<'}{min_kv:g}"
+        if key not in self.layers:
+            g = self.layers.get(layer)
+            if g is None or not len(g) or "attrs" not in g:
+                self.layers[key] = g if at_least else None
+            else:
+                kv = g["attrs"].map(lambda a: (a or {}).get("voltage_kv")).astype(float)
+                hi = kv.isna() | (kv >= min_kv)
+                self.layers[key] = g[hi] if at_least else g[~hi]
+            self.base_layer[key] = layer
+        return key
+
     def filtered(self, layer: str | None, min_area_m2: float) -> str | None:
         """Key of a copy of `layer` without polygons smaller than min_area_m2 (UTM m²); registered
         on first use. Rules with a `min_area_m2` param read this copy (e.g. buildings: a field hut
@@ -540,19 +555,34 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
                     add(_within(R.dist(r.layer, classes), td), tower_forbidden, r.id)
                     vec(tower_geoms, r.id, r.layer, classes, td)
                 line_classes = classes
-            ang = R.angle_nearest(r.layer, line_classes, within_m=frame.res_m * 1.5)
-            if ang is None:
-                continue
-            fired[r.id] = fired.get(r.id, 0) + 1
             window = _angle_window(r, tol)
+            # Power lines: the crossing-angle window applies only from `angle_min_kv` upwards; lower
+            # voltages are crossed at any angle (Vivek, 7 Oct 2026). Two rasters, same rule id.
+            parts = [(r.layer, window)]
+            if r.id in ("power_line", "power_line_lt") and p.get("angle_min_kv") is not None and window is not None:
+                kv_min = float(p["angle_min_kv"])
+                parts = [(R.by_voltage(r.layer, kv_min, True), window), (R.by_voltage(r.layer, kv_min, False), None)]
             max_span = p.get("max_span_m")
             if p.get("pct_design_span") is not None:
                 pct_span = float(p["pct_design_span"]) / 100.0 * design_span_m
                 max_span = pct_span if max_span is None else min(float(max_span), pct_span)
             cost = float(cross_costs.get(r.crossing_cost, 0)) * RS_PER_L if r.crossing_cost else 0.0
-            cr = CrossingRaster(rule_id=r.id, name=r.name, angle=ang, window=window,
-                                max_span_m=None if max_span is None else float(max_span),
-                                min_type=forced_min_type(p.get("tower_type")), cost_rs=cost)
+            built = []
+            for lyr, win in parts:
+                ang = R.angle_nearest(lyr, line_classes, within_m=frame.res_m * 1.5)
+                if ang is None:
+                    continue
+                built.append(CrossingRaster(rule_id=r.id, name=r.name, angle=ang, window=win,
+                                            max_span_m=None if max_span is None else float(max_span),
+                                            min_type=forced_min_type(p.get("tower_type")), cost_rs=cost))
+            if not built:
+                continue
+            fired[r.id] = fired.get(r.id, 0) + 1
+            cr = built[0]
+            for extra in built[1:]:
+                if r.id in angle_tower_rules:
+                    extra.min_type = max_type(extra.min_type, "B1")
+                crossings.append(extra)
             if r.id == "river":
                 cr.width_raster = R.mask(r.layer, classes)
                 cr.major_threshold_m = float(p.get("major_threshold_m", 600))

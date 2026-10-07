@@ -293,6 +293,28 @@ def test_existing_line_is_crossed_at_the_null_point():
     assert 160.0 - 1.0 <= d <= 240.0 + 1.0, d
 
 
+def test_sub_400kv_line_is_crossed_at_any_angle():
+    """A 220 kV line at 20° to the bee-line is crossed as it comes (no 60° window); a 765 kV line in
+    the same place forces a crossing inside the window (Vivek, 7 Oct 2026)."""
+    from shapely.geometry import Point as P
+    f = frame()
+    c = f.length_m / 2
+    for kv, expect_window in ((220, False), (765, True)):
+        line = frame_geom(f, LineString([(c - 4000, -1456), (c + 4000, 1456)]))         # 20° to the bee-line
+        pts = [frame_geom(f, P(c - 4000 + t * 8000, -1456 + t * 2912)) for t in np.linspace(0, 1, 22)]
+        g = gpd.GeoDataFrame({"class": ["power_line"] + ["power_tower"] * len(pts), "name": [f"{kv} kV"] + [None] * len(pts),
+                              "attrs": [{"voltage_kv": kv}] * (1 + len(pts))}, geometry=[line] + pts, crs=4326)
+        res = run_solve(solve_input({"power": g}, overrides={"power_line": {"params": {"null_point_tolerance_pct": 50}}}))
+        assert res["feasible"], kv
+        r = res["routes"][0]
+        cr = [x for s in r["spans"] for x in s["crossings"] if x["rule"] == "power_line"]
+        assert cr, kv
+        if expect_window:
+            assert all(x["angle_deg"] >= 60 - 1e-6 for x in cr), (kv, [x["angle_deg"] for x in cr])
+        else:
+            assert any(x["angle_deg"] < 60 - 1e-6 for x in cr), (kv, [x["angle_deg"] for x in cr])
+
+
 def test_band_fully_blocked_is_reported():
     f = frame()
     c = f.length_m / 2
