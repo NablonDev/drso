@@ -431,10 +431,11 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
             r = _replace(r, layer=R.filtered(r.layer, float(p["min_area_m2"])))
         m = r.mechanism
         if m == "conductor_clearance":
-            extra = p.get("increment_per_33kv_m", 0) * max(0, (spec_kv - 33) / 33.0) if spec_kv > 400 else 0
-            d = float(p["horizontal_m"]) + extra + hw
-            # conductor clearance is measured from the outer phase; the corridor half-width
-            # bounds the outer phase position, so the line axis keeps hw + horizontal away.
+            # Horizontal clearance is the per-voltage figure (no per-33 kV increment on top of it)
+            # and is measured from the outer phase, which sits outer_phase_m from the line axis
+            # (765 kV D/C ~15 m — Vivek, 7 Oct 2026). Earlier: + increment + corridor half-width
+            # (49 m at 765 kV), which closed every farm lane.
+            d = float(p["horizontal_m"]) + float(p.get("outer_phase_m", hw))
             add(_within(R.dist(r.layer, r.classes), d), conductor_forbidden, r.id)
             vec(cond_geoms, r.id, r.layer, r.classes, d)
         elif m == "airport_prohibition":

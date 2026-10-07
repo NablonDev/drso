@@ -34,7 +34,9 @@ groups:
         params:
           - {key: vertical_m, label: "Vertical", type: num, unit: m, value: {765: 10.6, 400: 5.6, 220: 4.6, 132: 4.0}, best_guess: true}
           - {key: horizontal_m, label: "Horizontal", type: num, unit: m, value: {765: 8.9, 400: 5.6, 220: 3.8, 132: 2.9}, best_guess: true}
-          - {key: increment_per_33kv_m, label: "Increment per 33 kV", type: num, unit: m, value: 0.3}
+          # distance of the outer phase from the line axis; the clearance is measured from there
+          # (765 kV D/C 15 m confirmed by Vivek, 7 Oct 2026; other voltages best guess)
+          - {key: outer_phase_m, label: "Outer phase from line axis", type: num, unit: m, value: {765: 15.0, 400: 10.0, 220: 7.0, 132: 5.0}, best_guess: true}
           - {key: min_area_m2, label: "Ignore structures smaller than", type: num, unit: "m²", value: 0}
 
       - id: airport_prohibition
