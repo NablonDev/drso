@@ -334,29 +334,27 @@ LULC_COST_CLASS = {
     "water_body": "water",
 }
 COST_CLASS_CODES = {"nonagri": 0, "agriculture": 1, "orchard": 2, "social_forest": 3, "forest": 4, "water": 5}
-SOIL_KEYS = ("normal_dry", "wet_submerged", "black_cotton", "hard_rock", "sandy_fissured")
+SOIL_KEYS = ("normal_dry", "wet_submerged", "black_cotton", "hard_rock")
 
 
 def class_density_rs_m2(costs: dict, sensitive_mult: float = 1.0) -> dict[str, float]:
-    """₹ per m² of RoW corridor by cost class (true cost, sensitive_mult applied by caller)."""
+    """₹ per m² of RoW corridor by cost class (true cost, sensitive_mult applied by caller).
+    Route Cost Parameters 3 (7 Oct 2026): one rural land value; corridor compensation is a share of
+    it; forest adds NPV + compensatory afforestation + plans per m² diverted and the reserve-forest
+    land share. No crop, tree or stamp items."""
     land = costs["land"]
-    crops = costs["crops"]
     forest = costs["forest"]
     row = land["row_corridor_pct"] / 100.0
-    stamp = land["stamp_legal_l_ha"] * RS_PER_L / M2_PER_HA
-    agri = land["agri_land_cr_ha"] * RS_PER_CR / M2_PER_HA
-    nonagri = land["nonagri_land_cr_ha"] * RS_PER_CR / M2_PER_HA
-    crop = crops["standing_crop_l_ha"] * RS_PER_L / M2_PER_HA
-    orchard_trees = crops["orchard_trees_per_ha"] * crops["orchard_tree_rs"] / M2_PER_HA
-    sf_trees = crops["social_forest_trees_per_ha"] * crops["timber_tree_rs"] / M2_PER_HA
-    fr = (forest["npv_l_ha"] + forest["ca_l_ha"]) * RS_PER_L / M2_PER_HA
+    value = land["land_cr_ha"] * RS_PER_CR / M2_PER_HA
+    fr = (forest["npv_l_ha"] + forest["ca_l_ha"] + forest["plans_l_ha"]) * RS_PER_L / M2_PER_HA
     rf_land = forest["rf_land_cr_ha"] * RS_PER_CR / M2_PER_HA
+    corridor = value * row
     return {
-        "agriculture": agri * row + stamp + crop,
-        "orchard": agri * row + stamp + orchard_trees,
-        "social_forest": nonagri * row + stamp + sf_trees,
+        "agriculture": corridor,
+        "orchard": corridor,
+        "social_forest": corridor,
         "forest": rf_land * row + fr,
-        "nonagri": nonagri * row + stamp,
+        "nonagri": corridor,
         "water": 0.0,
     }
 
@@ -419,7 +417,6 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
 
     crossings: list[CrossingRaster] = []
     parallels: list[ParallelRaster] = []
-    cross_costs = costs["crossings"]
     tol = single_angle_tol_deg
 
     for r in rules.values():
@@ -500,6 +497,8 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
             elif r.id == "creek":
                 add(_within(dist, td), conductor_forbidden, r.id)
                 vec(cond_geoms, r.id, r.layer, r.classes, td)
+            elif p.get("conductor_may_cross") == "Yes":
+                pass                    # tower setback only; spans cross freely (nalla — Vivek, 7 Oct 2026)
             else:
                 cd = float(p.get("conductor_buffer_m", 0))
                 add(_within(dist, cd), conductor_forbidden, r.id)
@@ -567,7 +566,7 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
             if p.get("pct_design_span") is not None:
                 pct_span = float(p["pct_design_span"]) / 100.0 * design_span_m
                 max_span = pct_span if max_span is None else min(float(max_span), pct_span)
-            cost = float(cross_costs.get(r.crossing_cost, 0)) * RS_PER_L if r.crossing_cost else 0.0
+            cost = 0.0          # no crossing charges (Route Cost Parameters 3); the heavier towers are priced by type
             built = []
             for lyr, win in parts:
                 ang = R.angle_nearest(lyr, line_classes, within_m=frame.res_m * 1.5)
@@ -588,7 +587,7 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
                 cr.width_raster = R.mask(r.layer, classes)
                 cr.major_threshold_m = float(p.get("major_threshold_m", 600))
                 cr.major_type = forced_min_type(p.get("major_tower_type"))
-                cr.major_cost_rs = float(cross_costs.get("major_river", 0)) * RS_PER_L
+                cr.major_cost_rs = 0.0
                 cr.cost_rs = 0.0
                 cr.min_type = forced_min_type(p.get("tower_type"))
             if r.id in angle_tower_rules:        # angle tower each side of the crossing (engine.yaml)
@@ -620,7 +619,7 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
     dens = class_density_rs_m2(costs)
     strip_density = np.full(shape, dens["nonagri"], np.float32)
     sensitive = np.zeros(shape, np.float32)
-    land_rate = np.full(shape, costs["land"]["nonagri_land_cr_ha"] * RS_PER_CR / M2_PER_HA, np.float32)
+    land_rate = np.full(shape, costs["land"]["land_cr_ha"] * RS_PER_CR / M2_PER_HA, np.float32)
     cost_class = np.zeros(shape, np.uint8)
     lulc = layers.get("lulc")
     if lulc is not None and len(lulc):
@@ -639,8 +638,6 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
             cost_class[sel] = COST_CLASS_CODES[cc]
             if cc in ("agriculture", "orchard", "social_forest", "forest"):
                 sensitive[sel] = 1.0
-            if cc in ("agriculture", "orchard"):
-                land_rate[sel] = costs["land"]["agri_land_cr_ha"] * RS_PER_CR / M2_PER_HA
     # Delivered forest layers override the LULC classes (forest package, 6 Oct 2026): social forest
     # first, reserve forest (incl. reserve forest inside a PA) over it.
     sm = R.mask("social_forest", None)
@@ -658,6 +655,14 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
         cost_class[fm] = COST_CLASS_CODES["forest"]
         sensitive[fm] = 1.0
         land_rate[fm] = costs["forest"]["rf_land_cr_ha"] * RS_PER_CR / M2_PER_HA
+        # NPV multiplier on forest diverted inside a protected area (applies only where the
+        # protected-areas rule is set to Allowed; No-Go keeps the route out anyway)
+        npv = costs["forest"]["npv_l_ha"] * RS_PER_L / M2_PER_HA
+        for key, mult in (("wildlife_sanctuary", "pa_wls_mult"), ("national_park", "pa_np_mult")):
+            pm = R.mask(key, None)
+            if pm is not None:
+                sel = fm & pm
+                strip_density[sel] += np.float32(npv * (float(costs["forest"][mult]) - 1.0))
 
     # Foundation multiplier: every layer whose registry entry names a foundation_class (the
     # soil-type layers). Where two disagree the dearer wins. (Generic `soil` layer removed, 6 Oct 2026.)
@@ -677,15 +682,14 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
                                      dtype="float32")
             soil_mult = np.maximum(soil_mult, np.where(sm > 0, sm, 1.0)).astype(np.float32)
 
-    fnd_base = float(costs["foundation"]["base_cr_tower"]) * RS_PER_CR
-    base_area = float(costs["base_area_m2"])
-    earthing = float(costs["tower"]["earthing_rs"])
-    site_cost = (fnd_base * soil_mult + base_area * land_rate * costs["land"]["tower_base_pct"] / 100.0
-                 + earthing).astype(np.float32)
+    # Type-independent part of a tower's cost at each cell (the search adds the all-in price by type):
+    # soil extra over a normal foundation and tower-base compensation, both on the suspension
+    # tower's figures; the spotting costs every tower with its own type's foundation and area.
+    ta = costs["towers"]["A"]
+    site_cost = (ta["fdn_rs"] * (soil_mult - 1.0)
+                 + ta["area_m2"] * land_rate * costs["land"]["tower_base_pct"] / 100.0).astype(np.float32)
 
-    cnd = costs["conductor"]
-    conductor_rs_per_m = (cnd["conductor_cr_km"] + cnd["earthwire_cr_km"] + cnd["stringing_cr_km"]
-                          + cnd["spacer_cr_km"]) * RS_PER_CR / 1000.0
+    conductor_rs_per_m = float(costs["line_rs_per_m"])
 
     # ---- terminal zone (gantry go-zone + terminal yards) --------------------------------
     if not zone.is_empty:

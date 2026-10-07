@@ -73,7 +73,7 @@ layers:
     name: "River"
     kind: polygon
     producer: reference
-    desc: "River and stream areas — NWIA 2019 + GatiShakti + OSM"
+    desc: "River areas — Rivers - Conflated: GatiShakti UGI (refined) + SAC/ISRO NWIA 2019 (7 Oct 2026)"
     minutes_per_km2: 0.002
     default_confidence: 0.85
     classes: [river]
@@ -91,7 +91,7 @@ layers:
     name: "Canal"
     kind: any
     producer: reference
-    desc: "Canal water areas (OSM) + canal centrelines (GatiShakti, ~110 m precision)"
+    desc: "Canal centrelines — Canals - Conflated: GatiShakti UGI, refined to <=0.5 m/px (7 Oct 2026)"
     minutes_per_km2: 0.002
     default_confidence: 0.80
     classes: [canal]
@@ -100,7 +100,7 @@ layers:
     name: "Reservoir"
     kind: polygon
     producer: reference
-    desc: "Reservoirs and barrages (water extent) — OSM + NWIA 2019"
+    desc: "Reservoirs and barrages (water extent) — OSM + NWIA 2019 + GatiShakti reservoir polygons (7 Oct 2026)"
     minutes_per_km2: 0.002
     default_confidence: 0.85
     classes: [reservoir]
@@ -109,7 +109,7 @@ layers:
     name: "Nalla"
     kind: any
     producer: reference
-    desc: "Nallas and small drains — no source yet"
+    desc: "Nallas / seasonal streams — NRSC SISDP Phase II 1:10k drainage (2016-19), streams only"
     minutes_per_km2: 0.002
     default_confidence: 0.80
     classes: [nalla]
@@ -153,7 +153,6 @@ layers:
     minutes_per_km2: 0.002
     desc: "Cached — NGLM 2005-06 active dunes, cross-checked"
     default_confidence: 0.85
-    foundation_class: sandy_fissured
     classes: [sand_dunes]
 
   - key: sandy_plain
@@ -163,7 +162,6 @@ layers:
     minutes_per_km2: 0.002
     desc: "Cached — NGLM 2005-06 stabilised sand, cross-checked"
     default_confidence: 0.95
-    foundation_class: sandy_fissured
     classes: [sandy_plain]
 
   - key: salt_pans

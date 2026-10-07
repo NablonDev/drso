@@ -8,7 +8,7 @@ test.afterAll(async ({ request }) => {
 });
 
 test("solve a reused run end to end", async ({ page, request }) => {
-  test.setTimeout(6 * 60_000);
+  test.setTimeout(11 * 60_000);   // solves roughly doubled with 600 m hilly spans (7 Oct 2026)
   const active = await (await request.get("/api/jobs/active")).json();
   test.skip(active.job !== null, "a GPU job is running — not starting a solve");
   runId = await createDraft(request, { reuse_from: await reuseSource(request), routes_wanted: 2 });
@@ -23,6 +23,6 @@ test("solve a reused run end to end", async ({ page, request }) => {
   await page.getByRole("button", { name: "Solve the route", exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`/runs/${runId}/solve$`));
   await expect(page.getByTestId("busy-chip")).toBeVisible();
-  await expect(page).toHaveURL(new RegExp(`/runs/${runId}/map$`), { timeout: 5 * 60_000 });
+  await expect(page).toHaveURL(new RegExp(`/runs/${runId}/map$`), { timeout: 10 * 60_000 });
   await expect(page.getByTestId("compare-table").locator("tbody tr").first()).toBeVisible();
 });

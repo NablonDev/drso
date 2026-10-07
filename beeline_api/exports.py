@@ -12,7 +12,7 @@ import geopandas as gpd
 import pyogrio
 from shapely.geometry import LineString, Point
 
-TYPE_COLOURS = {"A": 7, "B1": 3, "B2": 3, "C1": 2, "C2": 2, "D45": 1, "D60": 1}
+TYPE_COLOURS = {"A": 7, "B1": 3, "C1": 2, "D45": 1, "D60": 1}
 
 
 def _route_gdfs(route: dict, epsg: int | None = None):

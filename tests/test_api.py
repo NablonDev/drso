@@ -132,12 +132,16 @@ def test_full_flow(client):
     fid = dec["buildings"]["features"][0]["properties"]["id"]
     ft = client.get(f"/api/runs/{rid}/features/{fid}").json()
     assert ft["layer_key"] == "buildings" and ft["model"] == "corridor footprint delivery" and ft["chainage_km"]
-    # solve
+    # solve. The test corridor crosses the Kachchh Desert Sanctuary (forest package, 6 Oct 2026), which
+    # is No-Go by default and closes the ±5 km band at km 36.4–37.0: allowed here, with a reason.
+    r = client.put(f"/api/runs/{rid}/rules/protected_areas",
+                   json={"enabled": True, "params": {"treatment": "Allowed"}, "reason": "test corridor crosses the sanctuary"})
+    assert r.status_code == 200, r.text
     assert client.post(f"/api/runs/{rid}/solve").status_code == 202
     j = run_next_job()
     assert j["status"] == "done", j["error"]
     s = client.get(f"/api/runs/{rid}/solve").json()
-    assert s["feasible"] and len(s["result"]["routes"]) == 4
+    assert s["feasible"] and len(s["result"]["routes"]) == 4, (s["result"].get("blocked") or {}).get("event")
     r1 = s["result"]["routes"][0]
     assert r1["towers"][0]["type"] == "G" and r1["towers"][-1]["type"] == "G"
     assert r1["cost"]["total"] > 0 and r1["events"]
@@ -160,13 +164,14 @@ def test_full_flow(client):
     assert r.status_code == 400 and "reason" in r.json()["detail"].lower()
     r = client.put(f"/api/runs/{rid2}/rules/clusters", json={"enabled": True, "params": {"tower_setback_m": 80},
                                                               "reason": "client call"})
-    assert r.status_code == 200 and r.json()["n_changed"] == 1
+    assert r.status_code == 200 and r.json()["n_changed"] == 2          # + protected areas, carried over
     assert client.post(f"/api/runs/{rid2}/solve").status_code == 202
     assert run_next_job()["status"] == "done"
     cmp = client.get(f"/api/runs/{rid2}/compare").json()
     assert cmp["parent"] == rid and cmp["rows"] and any("clusters" in c for c in cmp["changes"])
     man2 = client.get(f"/api/runs/{rid2}/solve").json()["manifest"]
-    assert man2["overrides"][0]["reason"] == "client call" and man2["overrides"][0]["rev"] == 2
+    ov2 = next(o for o in man2["overrides"] if o["reason"] == "client call")
+    assert ov2["rev"] == 2
 
 
 def test_rules_and_costs_validation(client):
@@ -181,21 +186,28 @@ def test_rules_and_costs_validation(client):
     assert r.json()["n_off"] == 1
     assert client.delete(f"/api/runs/{rid}/rules").json()["n_off"] == 0
     rules = client.get(f"/api/runs/{rid}/rules").json()
-    assert rules["n_rules"] == 38          # 29 prototype + 10 added (incl. low tension power line, bridges) - notified wetland
-    r = client.put(f"/api/runs/{rid}/costs", json={"tower": {"rate_per_tonne_rs": "abc"}})
+    assert rules["n_rules"] == 39          # 29 prototype + 11 added (incl. low tension power line, bridges, nalla) - notified wetland
+    r = client.put(f"/api/runs/{rid}/costs", json={"tower_price": {"A": "abc"}})
     assert r.status_code == 400
-    r = client.put(f"/api/runs/{rid}/costs", json={"land": {"agri_land_cr_ha": -1}})
+    r = client.put(f"/api/runs/{rid}/costs", json={"tower_price": {"B2": 1}})
+    assert r.status_code == 400                       # B2 / C2 dropped
+    r = client.put(f"/api/runs/{rid}/costs", json={"land": {"land_cr_ha": -1}})
     assert r.status_code == 400
+    r = client.put(f"/api/runs/{rid}/costs", json={"land": {"agri_land_cr_ha": 1}})
+    assert r.status_code == 400                       # single land rate now
     c0 = client.get(f"/api/runs/{rid}/costs").json()
-    assert len(c0["categories"]) == 8 and not any(c["key"] == "delay" for c in c0["categories"])
-    c1 = client.put(f"/api/runs/{rid}/costs", json={"tower": {"rate_per_tonne_rs": 60000}}).json()
-    assert abs(c1["tonnage"][0]["cr_each"] * 2 - c0["tonnage"][0]["cr_each"]) <= 2e-3
-    c2 = client.put(f"/api/runs/{rid}/costs", json={"tower_tonnage": {"A": 50}}).json()
-    assert c2["tonnage"][0]["tonnes"] == 50 and c2["tonnage"][0]["changed"]
+    assert [c["key"] for c in c0["categories"]] == ["land", "forest", "line", "foundation", "buildings", "tower"]
+    assert [t["type"] for t in c0["towers"]] == ["A", "B1", "C1", "D45", "D60"]
+    c2 = client.put(f"/api/runs/{rid}/costs", json={"tower_price": {"A": 0.5}}).json()
+    assert c2["towers"][0]["price_cr"] == 0.5 and c2["towers"][0]["changed"]
+    c3 = client.put(f"/api/runs/{rid}/costs", json={"tower_price": {"A": c0["towers"][0]["default_price_cr"]}}).json()
+    assert not c3["towers"][0]["changed"]
     # 400 kV resolves its own values
     r4 = make_run(client, kv=400)
-    t4 = client.get(f"/api/runs/{r4}/costs").json()["tonnage"][0]["tonnes"]
-    assert t4 != c0["tonnage"][0]["tonnes"]
+    t4 = client.get(f"/api/runs/{r4}/costs").json()["towers"][0]["price_cr"]
+    assert t4 != c0["towers"][0]["price_cr"]
+    assert client.post("/api/runs", json={"name": "sc", "a": {"lat": 23, "lon": 70}, "b": {"lat": 23.1, "lon": 70.1},
+                                          "kv": 400, "circuit": "sc", "band_km": 2}).status_code == 422
 
 
 def test_replace_and_add_sources(client, tmp_path):

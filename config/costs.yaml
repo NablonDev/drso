@@ -1,108 +1,97 @@
-# Cost categories (8). Delay & time removed per Vivek, 5 Oct 2026.
+# Cost rates — AESL Route Cost Parameters 3 (Inputs + Towers sheets, non-hidden rows), applied 7 Oct 2026.
+# "Card" = AESL Cost Raster Rate Card, Nablon AI, 21 Sep 2026 (765 kV D/C reference, Bhuj–Lakadiya).
+# Double circuit only (S/C and Q/C out of scope, Vivek 7 Oct 2026).
 # status: sourced | tcc  (tcc = awaiting AESL TCC sign-off; the report names every such category)
-# Values may be scalars or per-voltage maps keyed like rules.yaml ("765", "765_dc", "default").
-# best_guess: true marks placeholders invented for the build; replace with TCC figures.
+# Values may be scalars or per-voltage maps ("765", "400", "220", "132", "default").
+# Removed 7 Oct 2026 (Vivek): diversion processing, crossing charges, earthing, crops & trees,
+# environment / CRZ, stamp & legal, sandy / fissured foundation class. The +18 m extension is kept,
+# priced at 9.4 % of the tower's own all-in price (Vivek, 7 Oct 2026).
 
-version: "AESL-2026.10-draft"
+version: "AESL-RCP3-2026.10"
 
 categories:
   - key: land
     title: "Land & RoW"
-    desc: "Acquisition for the tower base and compensation across the corridor width"
+    desc: "Settled land value (jantri notified 43 ₹/m² × settlement multiplier 15 = 645 ₹/m², rural), corridor and tower-base compensation"
     status: sourced
     items:
-      - {key: agri_land_cr_ha, label: "Agricultural land", unit: "₹Cr/ha", value: 0.21}
-      - {key: nonagri_land_cr_ha, label: "Non-agricultural", unit: "₹Cr/ha", value: 0.34}
-      - {key: tower_base_pct, label: "Tower base", unit: "% land", value: 100}
-      - {key: row_corridor_pct, label: "RoW corridor", unit: "% land", value: 30}
-      - {key: stamp_legal_l_ha, label: "Revenue stamp & legal", unit: "₹L/ha", value: 0.8}
-
-  - key: crops
-    title: "Crops & trees"
-    desc: "Standing crop for one season, and trees felled inside the corridor"
-    status: sourced
-    items:
-      - {key: standing_crop_l_ha, label: "Standing crop", unit: "₹L/ha", value: 0.9}
-      - {key: orchard_tree_rs, label: "Orchard tree", unit: "₹/tree", value: 4200}
-      - {key: timber_tree_rs, label: "Timber tree", unit: "₹/tree", value: 2800}
-      - {key: plantation_l_ha, label: "Plantation, per season", unit: "₹L/ha", value: 1.4}
-      - {key: orchard_trees_per_ha, label: "Orchard tree density", unit: "trees/ha", value: 100, best_guess: true}
-      - {key: social_forest_trees_per_ha, label: "Social forest tree density", unit: "trees/ha", value: 400, best_guess: true}
+      - {key: land_cr_ha, label: "Land value, rural (settled)", unit: "₹Cr/ha", value: 0.645}
+      - {key: row_corridor_pct, label: "Corridor compensation, rural", unit: "% land", value: 30}
+      - {key: tower_base_pct, label: "Tower-base compensation", unit: "% land", value: 200}
 
   - key: forest
-    title: "Forest"
-    desc: "Net present value, compensatory afforestation and the diversion fee"
+    title: "Forest diversion"
+    desc: "NPV, compensatory afforestation and plans per hectare diverted; reserve-forest land in the corridor; NPV multiplier inside a protected area"
     status: sourced
     items:
-      - {key: npv_l_ha, label: "NPV, eco-class IV", unit: "₹L/ha", value: 10.4}
-      - {key: ca_l_ha, label: "Compensatory afforestation", unit: "₹L/ha", value: 6.2}
-      - {key: diversion_l_case, label: "Diversion processing", unit: "₹L/case", value: 1.1}
+      - {key: npv_l_ha, label: "Forest NPV, dense", unit: "₹L/ha", value: 8.61}
+      - {key: ca_l_ha, label: "Compensatory afforestation", unit: "₹L/ha", value: 1.1}
+      - {key: plans_l_ha, label: "Wildlife and soil-moisture plans", unit: "₹L/ha", value: 1.6}
       - {key: rf_land_cr_ha, label: "Reserve forest land", unit: "₹Cr/ha", value: 0.48}
+      - {key: pa_wls_mult, label: "NPV multiplier, Wildlife Sanctuary", unit: "× NPV", value: 5}
+      - {key: pa_np_mult, label: "NPV multiplier, National Park", unit: "× NPV", value: 10}
 
-  - key: env
-    title: "Environment / CRZ"
-    desc: "Clearance, studies and mitigation where the corridor touches a regulated zone"
+  - key: line
+    title: "Line cost per km"
+    desc: "Conductor, insulators, fittings and stringing per km of line (765 kV D/C card rates); lower voltages scale by the line cost factor. Towers and land excluded."
     status: tcc
     items:
-      - {key: crz_case_l, label: "CRZ clearance case", unit: "₹L", value: 18}
-      - {key: wildlife_case_l, label: "Wildlife clearance case", unit: "₹L", value: 24}
-      - {key: eia_study_l, label: "EIA / biodiversity study", unit: "₹L", value: 9}
-      - {key: mitigation_l_km, label: "Mitigation, per km", unit: "₹L/km", value: 2.6}
-
-  - key: tower
-    title: "Tower hardware"
-    desc: "Steel, bolts, insulators and fittings by tower type"
-    status: tcc
-    items:
-      - {key: rate_per_tonne_rs, label: "Rate per tonne", unit: "₹/t", value: 120000}
-      - {key: insulator_tension_rs, label: "Insulator set, tension", unit: "₹/set", value: {765: 148000, 400: 62000, 220: 28000, 132: 14000}, best_guess: true}
-      - {key: insulator_susp_rs, label: "Insulator set, susp.", unit: "₹/set", value: {765: 96000, 400: 41000, 220: 18000, 132: 9000}, best_guess: true}
-      - {key: earthing_rs, label: "Earthing per tower", unit: "₹", value: 22000}
-      - {key: extension_pct, label: "Extension, +18 m", unit: "% cost", value: 9.4}
-    # Tower weight by type (tonnes). 765 kV D/C from the prototype; the rest best guess.
-    # Circuit factor scales the D/C figure: S/C 0.62, Q/C 1.55 (best guess).
-    tonnage:
-      best_guess: true
-      circuit_factor: {sc: 0.62, dc: 1.0, qc: 1.55}
-      by_voltage:
-        "765": {A: 39.71, B1: 57.38, B2: 65.21, C1: 65.03, C2: 73.89, D45: 81.29, D60: 92.37}
-        "400": {A: 16.5, B1: 22.0, B2: 25.5, C1: 27.0, C2: 30.5, D45: 34.0, D60: 39.0}
-        "220": {A: 8.2, B1: 11.0, B2: 12.6, C1: 13.4, C2: 15.2, D45: 17.0, D60: 19.5}
-        "132": {A: 4.6, B1: 6.2, B2: 7.1, C1: 7.6, C2: 8.6, D45: 9.6, D60: 11.0}
-    # insulator sets per tower = phases x circuits x strings; tension towers carry 2 strings per phase
-    insulator_sets_per_circuit: {suspension: 3, tension: 6}
-    # tower base footprint for land acquisition (m²), best guess
-    base_area_m2: {765: 576, 400: 324, 220: 196, 132: 121}
-
-  - key: conductor
-    title: "Conductor & earthwire"
-    desc: "Stringing cost per route-km, including sag and tension work"
-    status: tcc
-    items:
-      - {key: conductor_cr_km, label: "Conductor, bundled", unit: "₹Cr/km", value: {765: 1.61, 400: 0.72, 220: 0.34, 132: 0.18}, best_guess: true}
-      - {key: earthwire_cr_km, label: "Earthwire", unit: "₹Cr/km", value: {765: 0.09, 400: 0.07, 220: 0.05, 132: 0.04}, best_guess: true}
-      - {key: stringing_cr_km, label: "Stringing labour", unit: "₹Cr/km", value: {765: 0.14, 400: 0.09, 220: 0.06, 132: 0.04}, best_guess: true}
-      - {key: spacer_cr_km, label: "Spacer and damper set", unit: "₹Cr/km", value: {765: 0.06, 400: 0.04, 220: 0.02, 132: 0.01}, best_guess: true}
+      - {key: conductor_cr_km, label: "Conductor", unit: "₹Cr/km", value: 1.61}
+      - {key: insulators_cr_km, label: "Insulators and hardware", unit: "₹Cr/km", value: 0.325}
+      - {key: accessories_cr_km, label: "Accessories (spacers, dampers)", unit: "₹Cr/km", value: 0.09}
+      - {key: erection_cr_km, label: "Erection and stringing", unit: "₹Cr/km", value: 0.324}
+      - {key: earthwire_cr_km, label: "Earthwire and OPGW", unit: "₹Cr/km", value: 0, best_guess: true}
+      - {key: line_factor, label: "Line cost factor (× 765 kV D/C)", unit: "×", value: {765: 1.0, 400: 0.4, 220: 0.17, 132: 0.10}}
 
   - key: foundation
-    title: "Soil type & foundation"
-    desc: "Foundation class drives the excavation and concrete quantity"
+    title: "Soil & foundation"
+    desc: "Foundation multiplier by soil class; only the extra over a normal foundation is costed (the tower price includes a normal one)"
     status: tcc
     items:
       - {key: normal_dry, label: "Normal dry", unit: "× base", value: 1.0}
-      - {key: wet_submerged, label: "Wet / submerged", unit: "× base", value: 1.34}
-      - {key: black_cotton, label: "Black cotton", unit: "× base", value: 1.52}
-      - {key: hard_rock, label: "Hard rock", unit: "× base", value: 1.68}
-      - {key: sandy_fissured, label: "Sandy / fissured", unit: "× base", value: 1.41}
-      - {key: base_cr_tower, label: "Base foundation", unit: "₹Cr/twr", value: {765: 0.18, 400: 0.09, 220: 0.045, 132: 0.025}, best_guess: true}
+      - {key: black_cotton, label: "Black cotton", unit: "× base", value: 1.55}
+      - {key: hard_rock, label: "Rock", unit: "× base", value: 1.2}
+      - {key: wet_submerged, label: "Soft / creek / flooded (piles)", unit: "× base", value: 1.85}
 
-  - key: crossings
-    title: "Crossings"
-    desc: "Extra cost at each controlled crossing — permission, shutdown and heavier towers"
+  - key: buildings
+    title: "Buildings"
+    desc: "Demolition compensation per m² of plinth — relaxed route only (not used while buildings are No-Go)"
     status: tcc
     items:
-      - {key: railway, label: "Railway crossing", unit: "₹L each", value: 34}
-      - {key: national_highway, label: "National highway", unit: "₹L each", value: 18}
-      - {key: power_line, label: "Power line, shutdown", unit: "₹L each", value: 26}
-      - {key: major_river, label: "Major river", unit: "₹L each", value: 62}
-      - {key: pipeline, label: "Pipeline", unit: "₹L each", value: 14}
+      - {key: composite_rs_m2, label: "Composite / load-bearing", unit: "₹/m² plinth", value: 20750}
+      - {key: rcc_rs_m2, label: "RCC framed", unit: "₹/m² plinth", value: 24410}
+
+  - key: tower
+    title: "Towers"
+    desc: "All-in price per tower by type (normal foundation included), base foundation and base area — D/C; body extension"
+    status: tcc
+    items:
+      - {key: extension_pct, label: "Body extension, +18 m", unit: "% tower price", value: 9.4}
+    # price_cr: ₹ Cr per tower incl. normal foundation; fdn_l: base (normal) foundation ₹ lakh;
+    # area_m2: base area for tower-base compensation. 765 kV = card; others indicative (sheet).
+    # 220 / 132 kV: the sheet's D45 covers 30–60°, so D60 takes the D45 row.
+    types:
+      "765":
+        A:   {price_cr: 0.4765, fdn_l: 11.0, area_m2: 729}
+        B1:  {price_cr: 0.6886, fdn_l: 14.0, area_m2: 784}
+        C1:  {price_cr: 0.7803, fdn_l: 16.0, area_m2: 784}
+        D45: {price_cr: 0.9754, fdn_l: 18.4, area_m2: 784}
+        D60: {price_cr: 1.1085, fdn_l: 23.0, area_m2: 784}
+      "400":
+        A:   {price_cr: 0.2144, fdn_l: 3.5, area_m2: 256}
+        B1:  {price_cr: 0.3099, fdn_l: 6.0, area_m2: 289}
+        C1:  {price_cr: 0.3511, fdn_l: 12.0, area_m2: 289}
+        D45: {price_cr: 0.4389, fdn_l: 12.85, area_m2: 441}
+        D60: {price_cr: 0.4988, fdn_l: 15.0, area_m2: 441}
+      "220":
+        A:   {price_cr: 0.0953, fdn_l: 1.3, area_m2: 60.84}
+        B1:  {price_cr: 0.1377, fdn_l: 1.6, area_m2: 121}
+        C1:  {price_cr: 0.1561, fdn_l: 1.8, area_m2: 144}
+        D45: {price_cr: 0.1951, fdn_l: 2.5, area_m2: 196}
+        D60: {price_cr: 0.1951, fdn_l: 2.5, area_m2: 196}
+      "132":
+        A:   {price_cr: 0.0524, fdn_l: 0.93, area_m2: 49}
+        B1:  {price_cr: 0.0757, fdn_l: 0.97, area_m2: 81}
+        C1:  {price_cr: 0.0858, fdn_l: 1.1, area_m2: 110.25}
+        D45: {price_cr: 0.1073, fdn_l: 1.5, area_m2: 169}
+        D60: {price_cr: 0.1073, fdn_l: 1.5, area_m2: 169}

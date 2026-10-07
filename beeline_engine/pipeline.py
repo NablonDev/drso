@@ -16,7 +16,7 @@ from shapely.ops import unary_union
 
 from . import dem as demmod
 from .compile import attach_terrain, compile_rules
-from .config import LineSpec, load_engine, load_layers, resolve_costs, resolve_rules
+from .config import TOWER_TYPES, LineSpec, load_engine, load_layers, resolve_costs, resolve_rules
 from .events import event
 from .frame import Frame
 from .solver import SolverParams, solve, tower_type_cost
@@ -139,7 +139,7 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
     # allowed anywhere; their extra tower cost is what keeps them rare.
     smin = float(rules["crossing_span_limits"].params["min_span_m"])
     smax = design          # "Design span" is the hard maximum span (hilly value applied on hilly ground)
-    bands = {k: float(rules["tower_type_bands"].params[k]) for k in ("A", "B1", "B2", "C1", "C2", "D45", "D60")}
+    bands = {k: float(rules["tower_type_bands"].params[k]) for k in TOWER_TYPES}
     max_dev = float(rules["max_deviation"].params["limit_deg"])
     if not rules["max_deviation"].enabled:
         max_dev = 60.0
@@ -180,10 +180,12 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
         t = time.time()
         attach_terrain(comp, dem, float(eng["spotting"].get("hilly_slope_deg", 10)))
         timings["terrain_s"] = round(time.time() - t, 2)
-    steel_a = float(costs["tonnage"]["A"]) * float(costs["tower"]["rate_per_tonne_rs"])
-    plain_km = float(rules["section_interval"].params["plain_km"])
-    hilly_km = float(rules["section_interval"].params["hilly_km"])
-    base = SolverParams(site_spacing_m=eng["grid"]["site_spacing_m"], span_min_m=smin, span_max_m=smax,
+    hilly_m = float(rules["design_span"].params["hilly_m"])
+    ext_pct = float(costs["tower"]["extension_pct"]) / 100.0
+    # with terrain, hilly spans (all-tension) may be longer than plain ones: the grid offers up to the
+    # longer of the two and the edge test keeps non-hilly spans within the plain value
+    smax_search = max(smax, hilly_m) if terrain else smax
+    base = SolverParams(site_spacing_m=eng["grid"]["site_spacing_m"], span_min_m=smin, span_max_m=smax_search,
                         max_dev_deg=max_dev, type_bands=bands, tower_cost_rs=tower_cost,
                         parallel_angle_deg=eng["crossings"]["parallel_angle_deg"],
                         river_max_span_m=float(eng["spans"].get("river_crossing_max_span_m", 0)),
@@ -195,11 +197,11 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
                         lowest_attachment_m=float(eng["spotting"]["lowest_attachment_m"][inp.kv]),
                         sag_at_design_m=float(eng["spotting"]["sag_at_design_span_m"][inp.kv]),
                         design_span_m=design,
-                        extension_cost_rs=steel_a * float(costs["tower"]["extension_pct"]) / 100.0,
-                        hilly_span_max_m=float(rules["design_span"].params["hilly_m"]),
-                        hilly_section_rs_per_m=max(0.0, tower_cost["B1"] - tower_cost["A"])
-                        * max(0.0, 1.0 / hilly_km - 1.0 / plain_km) / 1000.0)
-    sp = SpotParams(design_span_m=design, span_max_m=smax,
+                        extension_cost_rs=tower_cost["A"] * ext_pct,
+                        extension_cost_hilly_rs=tower_cost["B1"] * ext_pct,
+                        hilly_span_max_m=hilly_m, plain_span_max_m=smax,
+                        hilly_tower_extra_rs=max(0.0, tower_cost["B1"] - tower_cost["A"]))
+    sp = SpotParams(design_span_m=design, span_max_m=smax_search,
                     min_span_m=float(rules["crossing_span_limits"].params["min_span_m"]),
                     max_dev_deg=max_dev, type_bands=bands,
                     section_km=float(rules["section_interval"].params["plain_km"]),

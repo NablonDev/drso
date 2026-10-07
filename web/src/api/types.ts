@@ -1,7 +1,7 @@
 // Shapes of the Beeline API responses, written from web/fixtures and beeline_api/app.py.
 
 export type RunStatus = "draft" | "extracting" | "review" | "solving" | "complete" | "blocked" | "failed";
-export type Circuit = "sc" | "dc" | "qc";
+export type Circuit = "dc"; // double circuit only
 export type SourceMode = "auto" | "replace" | "add";
 export type LonLat = [number, number];
 
@@ -377,22 +377,22 @@ export interface CostCategory {
   items: CostItem[];
 }
 
-export interface TonnageRow {
+export interface TowerPriceRow {
   type: string;
   deviation: string;
-  tonnes: number;
-  default_tonnes: number;
-  cr_each: number;
+  price_cr: number;
+  default_price_cr: number;
+  fdn_l: number;
+  area_m2: number;
   changed: boolean;
 }
 
 export interface CostsResponse {
   version: string;
   categories: CostCategory[];
-  tonnage: TonnageRow[];
-  rate_per_tonne_rs: number;
+  towers: TowerPriceRow[];
+  line_cr_km: number;
   n_tcc: number;
-  tonnage_best_guess: boolean;
 }
 
 export interface EventSource {
@@ -445,10 +445,11 @@ export interface RouteCost {
   foundation: number;
   conductor: number;
   land_row: number;
-  crops_trees: number;
   forest: number;
-  crossings: number;
-  environment: number;
+  // removed 7 Oct 2026 (Route Cost Parameters 3); present only on older solves
+  crops_trees?: number;
+  crossings?: number;
+  environment?: number;
 }
 
 export interface RouteStats {

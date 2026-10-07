@@ -62,9 +62,11 @@ class SolverParams:
     sag_at_design_m: float = 0.0
     design_span_m: float = 400.0
     extension_m: float = 18.0
-    extension_cost_rs: float = 0.0           # one body extension on a suspension tower
+    extension_cost_rs: float = 0.0           # one body extension on a suspension (A) tower
+    extension_cost_hilly_rs: float = 0.0     # one body extension on a hilly-ground (B1) tower
     hilly_span_max_m: float | None = None
-    hilly_section_rs_per_m: float = 0.0      # extra tension towers on hilly ground, per metre of line
+    plain_span_max_m: float | None = None    # spans with no hilly ground stay within this (hilly may be longer)
+    hilly_tower_extra_rs: float = 0.0        # hilly ground: towers are tension (B1), ₹ over an A per span
 
 
 @dataclass
@@ -227,13 +229,16 @@ def _edge_block(compiled: Compiled, grid: Grid, p: SolverParams, rasters: "_Rast
         need = p.ground_clearance_m - clear
         one = (need > 0) & (need <= p.extension_m * 0.5)                 # one tower raised (mid-span gains ~half)
         two = (need > p.extension_m * 0.5) & (need <= p.extension_m)
-        E = E + one.float() * p.extension_cost_rs + two.float() * (2 * p.extension_cost_rs)
         invalid |= need > p.extension_m
-        hil = rasters.hilly[row, col]
+        hil_any = rasters.hilly[row, col].any(dim=-1)
+        ext = torch.where(hil_any, torch.full_like(E, p.extension_cost_hilly_rs), torch.full_like(E, p.extension_cost_rs))
+        E = E + one.float() * ext + two.float() * (2 * ext)
         if p.hilly_span_max_m is not None:
-            invalid |= hil.any(dim=-1) & (length > p.hilly_span_max_m + 1e-3)
-        if p.hilly_section_rs_per_m:
-            E = E + length * hil.float().mean(dim=-1) * p.hilly_section_rs_per_m
+            invalid |= hil_any & (length > p.hilly_span_max_m + 1e-3)
+        if p.plain_span_max_m is not None:
+            invalid |= ~hil_any & (length > p.plain_span_max_m + 1e-3)
+        # hilly ground: every tower is a tension tower (Vivek, 7 Oct 2026); one tower's extra per span
+        E = E + hil_any.float() * p.hilly_tower_extra_rs
     crossed_river = torch.zeros_like(invalid)
 
     tA = p.tower_cost_rs["A"]
@@ -516,16 +521,6 @@ def solve(compiled: Compiled, p: SolverParams, cancel_check=None, progress=None)
 
 
 def tower_type_cost(costs: dict, kv: int) -> dict[str, float]:
-    """₹ per tower by type: steel + insulators. Foundation, land, earthing are site costs."""
-    rate = float(costs["tower"]["rate_per_tonne_rs"])
-    n_circ = costs["n_circuits"]
-    sets = costs["insulator_sets_per_circuit"]
-    out = {}
-    for t in TOWER_TYPES:
-        steel = costs["tonnage"][t] * rate
-        if t == "A":
-            ins = sets["suspension"] * n_circ * float(costs["tower"]["insulator_susp_rs"])
-        else:
-            ins = sets["tension"] * n_circ * float(costs["tower"]["insulator_tension_rs"])
-        out[t] = steel + ins
-    return out
+    """₹ per tower by type: the all-in price of Route Cost Parameters 3 (steel, erection and a normal
+    foundation). Soil extras and tower-base land are site costs."""
+    return {t: float(costs["towers"][t]["price_rs"]) for t in TOWER_TYPES}

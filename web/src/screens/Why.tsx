@@ -182,8 +182,8 @@ function Body({ s }: { s: Solve }) {
                         <td><span className={`pill ${g.pill}`}>{g.label}</span></td>
                         <td>
                           {g.key === "towers" ? `${int(r.stats.towers)} towers · foundations ${crore(r.cost.foundation)}`
-                            : g.key === "conductor" ? `${num(r.stats.length_km, 1)} km`
-                              : g.key === "land" ? `${int(r.stats.corridor_ha)} ha corridor · crops ${crore(r.cost.crops_trees)} · forest ${crore(r.cost.forest)}`
+                            : g.key === "conductor" ? `${num(r.stats.length_km, 1)} km · conductor, insulators, stringing`
+                              : g.key === "land" ? `${int(r.stats.corridor_ha)} ha corridor${r.cost.crops_trees ? ` · crops ${crore(r.cost.crops_trees)}` : ""} · forest ${crore(r.cost.forest)}`
                                 : g.key === "crossings" ? `${int(r.stats.crossings_total)} crossings`
                                   : "clearances"}
                         </td>

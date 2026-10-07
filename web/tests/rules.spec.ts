@@ -29,25 +29,20 @@ test("rule dialog requires a reason and nothing is saved without one", async ({ 
   expect(rules.n_changed).toBe(0);
 });
 
-test("costs: rate per tonne moves all seven tower rates", async ({ page }) => {
+test("costs: a tower price saves and resets", async ({ page }) => {
   await page.goto(`/runs/${runId}/costs`);
-  const a = page.getByTestId("cr-A");
-  await expect(a).toBeVisible();
-  const before = await a.textContent();
-  const rate = page.locator("#rate");
-  await rate.fill("150000");
-  await expect(a).not.toHaveText(before ?? "");
-  await rate.press("Enter");
-  const tonnes = Number(await page.locator("#ton-D60").inputValue());
-  await expect(page.getByTestId("cr-D60")).toHaveText(((tonnes * 150000) / 1e7).toFixed(4));
-  await expect(page.locator("#rate")).toHaveValue("150000");
-  // the server agrees, and every type moved
-  await expect.poll(async () => (await (await page.request.get(`/api/runs/${runId}/costs`)).json()).rate_per_tonne_rs).toBe(150000);
+  await expect(page.getByTestId("tower-price-table")).toBeVisible();
+  const rows = page.getByTestId("tower-price-table").locator("tbody tr");
+  await expect(rows).toHaveCount(5);
+  const price = page.locator("#price-D60");
+  const dflt = await price.inputValue();
+  await price.fill("1.5");
+  await price.press("Enter");
+  await expect.poll(async () => (await (await page.request.get(`/api/runs/${runId}/costs`)).json()).towers[4].price_cr).toBe(1.5);
   // reset to the default so the draft is clean
-  await rate.fill("110000");
-  await rate.press("Enter");
-  await expect(page.getByTestId("cr-D60")).toHaveText(((tonnes * 110000) / 1e7).toFixed(4));
-  await expect.poll(async () => (await (await page.request.get(`/api/runs/${runId}/costs`)).json()).rate_per_tonne_rs).toBe(110000);
+  await price.fill(dflt);
+  await price.press("Enter");
+  await expect.poll(async () => (await (await page.request.get(`/api/runs/${runId}/costs`)).json()).towers[4].changed).toBe(false);
 });
 
 test("a GPU-busy 409 is shown prominently and keeps the user on the screen", async ({ page }) => {

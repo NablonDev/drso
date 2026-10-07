@@ -17,8 +17,8 @@ import yaml
 CONFIG_DIR = Path(os.environ.get("BEELINE_CONFIG_DIR", Path(__file__).resolve().parent.parent / "config"))
 
 VOLTAGES = (765, 400, 220, 132)
-CIRCUITS = ("sc", "dc", "qc")
-TOWER_TYPES = ("A", "B1", "B2", "C1", "C2", "D45", "D60")
+CIRCUITS = ("dc",)                       # double circuit only (S/C, Q/C out of scope — Vivek, 7 Oct 2026)
+TOWER_TYPES = ("A", "B1", "C1", "D45", "D60")   # the five visible types of Route Cost Parameters 3
 
 
 def _load(name: str) -> dict:
@@ -137,8 +137,11 @@ def resolve_rules(spec: LineSpec, overrides: dict | None = None) -> dict[str, Re
 
 
 def resolve_costs(spec: LineSpec, overrides: dict | None = None) -> dict:
-    """Flat {category: {item: value}} plus the tower tonnage table for this line.
-    overrides: {category: {item: value}} — plain values for this run's voltage."""
+    """Flat {category: {item: value}} for this line, plus
+      towers: {type: {"price_rs", "fdn_rs", "area_m2"}} — all-in tower price (normal foundation
+              included), base foundation and base area;
+      line_rs_per_m: conductor + insulators + accessories + erection + earthwire, × line factor.
+    overrides: {category: {item: value}} and {"tower_price": {type: ₹ Cr}} — plain values."""
     costs = load_costs()
     overrides = overrides or {}
     flat: dict[str, dict] = {}
@@ -146,17 +149,17 @@ def resolve_costs(spec: LineSpec, overrides: dict | None = None) -> dict:
         items = {}
         for it in c["items"]:
             items[it["key"]] = pick(it["value"], spec.kv, spec.circuit)
-        items.update(overrides.get(c["key"], {}))
+        items.update({k: v for k, v in (overrides.get(c["key"]) or {}).items() if k in items})   # stale keys ignored
         flat[c["key"]] = items
     tower = next(c for c in costs["categories"] if c["key"] == "tower")
-    tonnage = tower["tonnage"]
-    factor = tonnage["circuit_factor"][spec.circuit]
-    base = tonnage["by_voltage"][str(spec.kv)]
-    t_over = overrides.get("tower_tonnage", {})
-    flat["tonnage"] = {t: float(t_over.get(t, base[t] * factor)) for t in TOWER_TYPES}
-    flat["insulator_sets_per_circuit"] = tower["insulator_sets_per_circuit"]
-    flat["base_area_m2"] = pick(tower["base_area_m2"], spec.kv, spec.circuit)
-    flat["n_circuits"] = {"sc": 1, "dc": 2, "qc": 4}[spec.circuit]
+    table = tower["types"][str(spec.kv)]
+    t_over = overrides.get("tower_price", {})
+    flat["towers"] = {t: {"price_rs": float(t_over.get(t, table[t]["price_cr"])) * 1e7,
+                          "fdn_rs": float(table[t]["fdn_l"]) * 1e5,
+                          "area_m2": float(table[t]["area_m2"])} for t in TOWER_TYPES}
+    ln = flat["line"]
+    flat["line_rs_per_m"] = (ln["conductor_cr_km"] + ln["insulators_cr_km"] + ln["accessories_cr_km"]
+                             + ln["erection_cr_km"] + ln["earthwire_cr_km"]) * float(ln["line_factor"]) * 1e7 / 1000.0
     return flat
 
 

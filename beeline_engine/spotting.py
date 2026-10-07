@@ -29,7 +29,7 @@ from rasterio import features as rfeatures
 from shapely.geometry import LineString, Point
 from shapely.ops import unary_union
 
-from .compile import COST_CLASS_CODES, RS_PER_CR, RS_PER_L, Compiled, class_density_rs_m2
+from .compile import COST_CLASS_CODES, Compiled
 from .config import TOWER_TYPES, max_type, tower_type_for
 
 log = logging.getLogger(__name__)
@@ -201,7 +201,11 @@ class Checker:
                 if width >= cr.major_threshold_m:
                     item.update(major=True, min_type=cr.major_type, cost_rs=cr.major_cost_rs)
             out.append(item)
-        if L > self.sp.span_max_m + 1e-3:
+        # hard maximum: the plain design span, or the (longer) hilly one on hilly ground; rivers excepted
+        limit = self.sp.span_max_m
+        if L > self.sp.design_span_m + 1e-3 and not self.is_hilly(p, q):
+            limit = self.sp.design_span_m
+        if L > limit + 1e-3:
             if L > self.sp.river_max_span_m + 1e-3 or not any(c["rule"] == "river" for c in out):
                 ok = False
         for pr in self.c.parallels:
@@ -228,8 +232,9 @@ def _spot_leg(chk: Checker, p, q, sp: SpotParams):
         return None
     d = math.hypot(q[0] - p[0], q[1] - p[1])
     design = sp.design_span_m
-    if sp.hilly_design_span_m and chk.is_hilly(p, q):
-        design = min(design, sp.hilly_design_span_m)
+    hilly_leg = bool(sp.hilly_design_span_m) and chk.is_hilly(p, q)
+    if hilly_leg:
+        design = sp.hilly_design_span_m
     n0 = max(1, math.ceil(d / design - 1e-9), math.ceil(d / sp.span_max_m - 1e-9))
     cands = list(range(n0, n0 + 5))
     if n0 > 1 and d <= sp.river_max_span_m:
@@ -242,6 +247,9 @@ def _spot_leg(chk: Checker, p, q, sp: SpotParams):
         if not all(chk.tower_ok(x, y, angle_tower=False) for x, y in pts):
             continue
         seq = [p] + pts + [q]
+        if hilly_leg and span > sp.design_span_m + 1e-3 and n > 1 and \
+                not all(chk.is_hilly(a, b) for a, b in zip(seq[:-1], seq[1:])):
+            continue      # a span longer than the plain value must itself be on hilly ground
         good = True
         for a, b in zip(seq[:-1], seq[1:]):
             ok, _ = chk.span_crossings(a, b)
@@ -253,20 +261,23 @@ def _spot_leg(chk: Checker, p, q, sp: SpotParams):
     return None
 
 
+def _tower_site_rs(comp: Compiled, t: str, px: int, py: int) -> float:
+    """Exact per-tower extras of type t at a raster cell: foundation extra over a normal one
+    (soil multiplier − 1) and tower-base compensation on the type's base area (Route Cost Parameters 3)."""
+    tw = comp.costs["towers"][t]
+    return (tw["fdn_rs"] * (float(comp.soil_mult[py, px]) - 1.0)
+            + tw["area_m2"] * float(comp.land_rate_m2[py, px]) * comp.costs["land"]["tower_base_pct"] / 100.0)
+
+
 def _chain_cost(comp: Compiled, sp: SpotParams, pts, inner_types) -> float:
-    """Approximate exact cost of a tower chain (frame coords): inner towers (steel, insulators,
-    earthing, foundation x soil, base land) + spans (conductor + RoW strip density incl. forest)."""
+    """Approximate exact cost of a tower chain (frame coords): inner towers (all-in price by type,
+    soil extra, base land) + spans (line ₹/m + RoW strip density incl. forest)."""
     f = comp.frame
-    costs = comp.costs
-    fnd_base = float(costs["foundation"]["base_cr_tower"]) * RS_PER_CR
-    base_land = float(costs["base_area_m2"]) * costs["land"]["tower_base_pct"] / 100.0
-    earthing = float(costs["tower"]["earthing_rs"])
     c = 0.0
     for (x, y), t in zip(pts[1:-1], inner_types):
         px = int(np.clip((x - f.x0) / f.res_m, 0, f.width - 1))
         py = int(np.clip((f.y_top - y) / f.res_m, 0, f.height - 1))
-        c += sp.tower_cost_rs[t] + earthing + fnd_base * float(comp.soil_mult[py, px]) \
-            + base_land * float(comp.land_rate_m2[py, px])
+        c += sp.tower_cost_rs[t] + _tower_site_rs(comp, t, px, py)
     width = 2 * comp.half_width_m
     for (x0, y0), (x1, y1) in zip(pts[:-1], pts[1:]):
         L = math.hypot(x1 - x0, y1 - y0)
@@ -416,6 +427,14 @@ def build_route(chk: Checker, pts: list[tuple[float, float]], angle_set: set[int
                         towers[ti].warnings.append(f"power_adjacent_deviation:{c['rule']}")
     for i in added:
         towers[i].reasons.append("clearance")
+    # hilly ground: every tower on a hilly span is a tension tower, B1 at least (Vivek, 7 Oct 2026)
+    for s in spans:
+        if s.hilly:
+            for ti in (s.a, s.b):
+                t = towers[ti]
+                if t.type != "G" and t.type == "A":
+                    t.type = "B1"
+                    t.reasons.append("hilly")
     # section points (hilly interval once the stretch since the last tension tower has a hilly span)
     run = 0.0
     hilly_run = False
@@ -572,26 +591,26 @@ def _clearance(comp, dem, towers, s: Span, sp: SpotParams):
 
 
 def route_cost(comp: Compiled, towers: list[Tower], spans: list[Span], sp: SpotParams):
+    """Route cost, Route Cost Parameters 3 (7 Oct 2026): towers at their all-in price by type
+    (normal foundation included); foundation = soil extra only; line ₹/km × length; RoW corridor
+    compensation + tower-base land; forest NPV + CA + plans + reserve-forest land (× PA multiplier).
+    Body extensions at extension_pct of the tower's price per +18 m. No crossing, earthing, crop,
+    stamp or diversion items."""
     costs = comp.costs
     f = comp.frame
-    rate = float(costs["tower"]["rate_per_tonne_rs"])
-    ext_pct = float(costs["tower"]["extension_pct"]) / 100.0
-    fnd_base = float(costs["foundation"]["base_cr_tower"]) * RS_PER_CR
-    base_area = float(costs["base_area_m2"])
     base_pct = costs["land"]["tower_base_pct"] / 100.0
-    earthing = float(costs["tower"]["earthing_rs"])
+    ext_pct = float(costs["tower"]["extension_pct"]) / 100.0
     c_tower = c_found = c_land = 0.0
     for t in towers:
         if t.type == "G":
             continue
         px = int(np.clip((t.x - f.x0) / f.res_m, 0, f.width - 1))
         py = int(np.clip((f.y_top - t.y) / f.res_m, 0, f.height - 1))
-        steel_ins = sp.tower_cost_rs[t.type]
-        steel = costs["tonnage"][t.type] * rate
-        # the extension rate is quoted per +18 m; taller crossing towers are priced pro rata
-        c_tower += steel_ins + earthing + steel * ext_pct * (t.extension_m / EXTENSION_M)
-        c_found += fnd_base * float(comp.soil_mult[py, px])
-        c_land += base_area * float(comp.land_rate_m2[py, px]) * base_pct
+        tw = costs["towers"][t.type]
+        # the extension rate is quoted per +18 m on the tower's own price; taller towers pro rata
+        c_tower += sp.tower_cost_rs[t.type] * (1.0 + ext_pct * t.extension_m / EXTENSION_M)
+        c_found += tw["fdn_rs"] * (float(comp.soil_mult[py, px]) - 1.0)
+        c_land += tw["area_m2"] * float(comp.land_rate_m2[py, px]) * base_pct
     length = sum(s.length_m for s in spans)
     c_cond = length * comp.conductor_rs_per_m
 
@@ -601,29 +620,18 @@ def route_cost(comp: Compiled, towers: list[Tower], spans: list[Span], sp: SpotP
     utm = _frame_geom_to_utm(f, corridor)
     mask = rfeatures.rasterize([(utm, 1)], out_shape=comp.cost_class.shape, transform=f.transform,
                                fill=0, dtype="uint8").astype(bool)
-    cell = f.res_m ** 2
-    dens = class_density_rs_m2(costs)
+    # raster cells scaled to the exact corridor area: a corridor along the grid otherwise counts whole
+    # cells (67 m at 765 kV becomes 80 m on the 20 m grid) and is overstated by up to ~19 %
+    n_cells = int(mask.sum())
+    cell = f.res_m ** 2 * (corridor.area / (n_cells * f.res_m ** 2) if n_cells else 1.0)
     areas = {k: float((mask & (comp.cost_class == v)).sum()) * cell / 1e4 for k, v in COST_CLASS_CODES.items()}
-    land = costs["land"]
-    crops = costs["crops"]
-    forest = costs["forest"]
-    row = land["row_corridor_pct"] / 100.0
-    stamp = land["stamp_legal_l_ha"] * RS_PER_L
-    agri_ha = areas["agriculture"] + areas["orchard"]
-    nonagri_ha = areas["nonagri"] + areas["social_forest"]
-    c_row = (agri_ha * land["agri_land_cr_ha"] * RS_PER_CR * row + nonagri_ha * land["nonagri_land_cr_ha"] * RS_PER_CR * row
-             + (agri_ha + nonagri_ha) * stamp)
-    c_crops = (areas["agriculture"] * crops["standing_crop_l_ha"] * RS_PER_L
-               + areas["orchard"] * crops["orchard_trees_per_ha"] * crops["orchard_tree_rs"]
-               + areas["social_forest"] * crops["social_forest_trees_per_ha"] * crops["timber_tree_rs"])
-    c_forest = areas["forest"] * ((forest["npv_l_ha"] + forest["ca_l_ha"]) * RS_PER_L + forest["rf_land_cr_ha"] * RS_PER_CR * row)
-    if areas["forest"] > 0.01:
-        c_forest += forest["diversion_l_case"] * RS_PER_L
-    c_cross = sum(c["cost_rs"] for s in spans for c in s.crossings)
+    # corridor ₹ from the compiled strip density (same figures the search used, incl. the PA multiplier)
+    fmask = mask & (comp.cost_class == COST_CLASS_CODES["forest"])
+    c_forest = float(comp.strip_density[fmask].sum()) * cell
+    c_row = float(comp.strip_density[mask & ~fmask].sum()) * cell
     cost = {
         "towers": c_tower, "foundation": c_found, "conductor": c_cond,
-        "land_row": c_row + c_land, "crops_trees": c_crops, "forest": c_forest,
-        "crossings": c_cross, "environment": 0.0,
+        "land_row": c_row + c_land, "forest": c_forest,
     }
     cost["total"] = sum(cost.values())
     mix = {t: 0 for t in TOWER_TYPES}

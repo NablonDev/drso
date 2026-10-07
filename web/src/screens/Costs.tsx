@@ -93,8 +93,6 @@ export default function Costs() {
   const nav = useNavigate();
   const qc = useQueryClient();
   const q = useCosts(run.id);
-  const [rateDraft, setRateDraft] = useState<number | null>(null);
-  const [tonDraft, setTonDraft] = useState<Record<string, number | null>>({});
   const [savingKey, setSavingKey] = useState<string | null>(null);
 
   const put = useApiMutation<CostsResponse, { body: Body; key: string }>({
@@ -104,13 +102,7 @@ export default function Costs() {
     onSettled: () => setSavingKey(null),
     onSuccess: (r) => {
       qc.setQueryData(qk.costs(run.id), r);
-      setRateDraft(null);
-      setTonDraft({});
       void qc.invalidateQueries({ queryKey: qk.run(run.id) });
-    },
-    onError: () => {
-      setRateDraft(null);
-      setTonDraft({});
     },
   });
 
@@ -118,8 +110,7 @@ export default function Costs() {
   if (q.isError) return <ErrorNote error={q.error} retry={() => void q.refetch()} />;
   const d = q.data;
   const locked = Boolean(run.job);
-  const rate = rateDraft ?? d.rate_per_tonne_rs;
-  const nCats = d.categories.length;
+  const nCats = d.categories.filter((c) => c.items.length > 0).length;
   const tcc = d.categories.filter((c) => c.status === "tcc");
   const sourced = d.categories.filter((c) => c.status === "sourced");
   const save = (key: string, body: Body) => put.mutate({ key, body });
@@ -127,7 +118,7 @@ export default function Costs() {
   return (
     <section>
       <Head title="Costs">
-        {nCats === 8 ? "Eight" : nCats} categories of unit rate. These are what the route is optimised against, so a wrong rate moves the
+        {nCats} categories of unit rate. These are what the route is optimised against, so a wrong rate moves the
         alignment, not just the total.
       </Head>
 
@@ -143,57 +134,42 @@ export default function Costs() {
       <div className="grid2">
         <div className="card">
           <div className="ch">
-            <h3>Tower hardware — rate by type</h3>
-            {d.tonnage_best_guess ? <BestGuess /> : null}
+            <h3>Towers — price by type ({run.kv} kV D/C)</h3>
             <span className="pill p-cross" style={{ marginLeft: "auto" }}>TCC</span>
           </div>
           <div className="tw">
-            <table data-testid="tonnage-table">
+            <table data-testid="tower-price-table">
               <thead>
                 <tr>
                   <th>Type</th>
                   <th>Deviation</th>
-                  <th>Weight</th>
-                  <th style={{ textAlign: "right" }}>₹ Cr each</th>
+                  <th>₹ Cr each</th>
+                  <th style={{ textAlign: "right" }}>Base foundation ₹ L</th>
+                  <th style={{ textAlign: "right" }}>Base area m²</th>
                 </tr>
               </thead>
               <tbody>
-                {d.tonnage.map((t) => {
-                  const tonnes = tonDraft[t.type] ?? t.tonnes;
-                  return (
-                    <tr key={t.type}>
-                      <td><b>{t.type}</b></td>
-                      <td className="mono">{t.deviation}</td>
-                      <td>
-                        <span className="row" style={{ gap: 4, flexWrap: "nowrap" }}>
-                          <NumCell id={`ton-${t.type}`} label={`Tonnage of type ${t.type}`} value={t.tonnes} dflt={t.default_tonnes} width={84}
-                            disabled={locked} saving={savingKey === `ton-${t.type}`}
-                            onDraft={(v) => setTonDraft((s) => ({ ...s, [t.type]: v }))}
-                            onCommit={(v) => save(`ton-${t.type}`, { tower_tonnage: { [t.type]: v } })} />
-                          <span className="hint" style={{ margin: 0 }}>t</span>
-                        </span>
-                      </td>
-                      <td className="mono" style={{ textAlign: "right" }} data-testid={`cr-${t.type}`}>
-                        {num((tonnes * rate) / 1e7, 4)}
-                      </td>
-                    </tr>
-                  );
-                })}
+                {d.towers.map((t) => (
+                  <tr key={t.type}>
+                    <td><b>{t.type}</b></td>
+                    <td className="mono">{t.deviation}</td>
+                    <td>
+                      <NumCell id={`price-${t.type}`} label={`Price of type ${t.type} in rupees crore`} value={t.price_cr}
+                        dflt={t.default_price_cr} width={84} disabled={locked} saving={savingKey === `price-${t.type}`}
+                        onCommit={(v) => save(`price-${t.type}`, { tower_price: { [t.type]: v } })} />
+                    </td>
+                    <td className="mono" style={{ textAlign: "right" }} data-testid={`fdn-${t.type}`}>{num(t.fdn_l, 2)}</td>
+                    <td className="mono" style={{ textAlign: "right" }}>{num(t.area_m2, 0)}</td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
           <div className="cb" style={{ borderTop: "1px solid var(--rule-2)" }}>
-            <div className="row" style={{ gap: 8, marginBottom: 10 }}>
-              <label htmlFor="rate" style={{ fontSize: 12.5, color: "var(--ink-2)" }}>Rate per tonne</label>
-              <NumCell id="rate" label="Rate per tonne in rupees" value={d.rate_per_tonne_rs}
-                dflt={d.categories.find((c) => c.key === "tower")?.items.find((i) => i.key === "rate_per_tonne_rs")?.default}
-                width={120} disabled={locked} saving={savingKey === "rate"} onDraft={setRateDraft}
-                onCommit={(v) => save("rate", { tower: { rate_per_tonne_rs: v } })} />
-              <span className="hint" style={{ margin: 0 }}>₹/t</span>
-            </div>
             <Note kind="info">
-              Derived as <span className="mono">weight × ₹{num(rate, 0)}/tonne</span> at {run.kv} kV. Edit the rate per tonne and all
-              seven move together. Tonnages and the rate per tonne both need TCC confirmation — they change with voltage.
+              The price is all-in: steel, erection and a normal foundation. Where the soil needs a dearer foundation, the extra is
+              the base foundation × (soil multiplier − 1). Tower-base compensation is the base area × land value × tower-base
+              share. Line items add {num(d.line_cr_km, 3)} ₹ Cr per km at this voltage.
             </Note>
           </div>
         </div>
@@ -229,11 +205,11 @@ export default function Costs() {
 
       <div className="card" style={{ marginTop: 14 }}>
         <div className="ch">
-          <h3>The {nCats === 8 ? "eight" : nCats} cost categories</h3>
+          <h3>The {nCats} cost categories</h3>
           <span className="hint" style={{ marginLeft: "auto" }}>every rate editable · {d.n_tcc} of {nCats} awaiting TCC</span>
         </div>
         <div id="costCats">
-          {d.categories.map((c, i) => {
+          {d.categories.filter((c) => c.items.length > 0).map((c, i) => {
             const nChanged = c.items.filter((it) => it.changed).length;
             return (
               <div key={c.key} className="cat" data-cat={c.key}>
@@ -259,7 +235,6 @@ export default function Costs() {
                       </label>
                       <NumCell id={`c-${c.key}-${it.key}`} label={`${c.title}: ${it.label}`} value={it.value} dflt={it.default} width={86}
                         disabled={locked} saving={savingKey === `${c.key}.${it.key}`}
-                        onDraft={c.key === "tower" && it.key === "rate_per_tonne_rs" ? setRateDraft : undefined}
                         onCommit={(v) => save(`${c.key}.${it.key}`, { [c.key]: { [it.key]: v } })} />
                       <span className="u">{it.unit}</span>
                     </div>

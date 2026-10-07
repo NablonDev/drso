@@ -57,7 +57,7 @@ r2 = cp["id"]; print("copy", r2, cp["status"], cp["rev"])
 bad = c.put(f"/api/runs/{r2}/rules/clusters", json={"enabled": True, "params": {"tower_setback_m": 60}})
 assert bad.status_code == 400, bad.text
 ok(c.put(f"/api/runs/{r2}/rules/clusters", json={"enabled": True, "params": {"tower_setback_m": 60, "conductor_buffer_m": 60}, "reason": "e2e test"}))
-ok(c.put(f"/api/runs/{r2}/costs", json={"tower": {"rate_per_tonne_rs": 110000}}))
+ok(c.put(f"/api/runs/{r2}/costs", json={"tower_price": {"A": 0.5}}))
 j = ok(c.post(f"/api/runs/{r2}/solve"), 202); j = wait(j["id"]); print("solve2", j["status"], (j.get("error") or "")[:300])
 cmpr = ok(c.get(f"/api/runs/{r2}/compare")); print("compare", json.dumps(cmpr["rows"][0] if cmpr["rows"] else None)[:400], cmpr["changes"])
 runs = ok(c.get("/api/runs")); print("runs", [(x["id"], x["status"], x["r1_length_km"]) for x in runs["runs"]][:4])

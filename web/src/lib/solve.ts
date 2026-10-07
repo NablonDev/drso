@@ -77,10 +77,10 @@ export interface CostGroup {
 export function costGroups(c: RouteCost): CostGroup[] {
   const g: CostGroup[] = [
     { key: "towers", label: "Towers", rs: (c.towers ?? 0) + (c.foundation ?? 0), pill: "p-acc", colour: "var(--accent)" },
-    { key: "conductor", label: "Conductor", rs: c.conductor ?? 0, pill: "p-lock", colour: "var(--locked)" },
+    { key: "conductor", label: "Line", rs: c.conductor ?? 0, pill: "p-lock", colour: "var(--locked)" },
     { key: "land", label: "Land & RoW", rs: (c.land_row ?? 0) + (c.crops_trees ?? 0) + (c.forest ?? 0), pill: "p-go", colour: "var(--go)" },
-    { key: "crossings", label: "Crossings", rs: c.crossings ?? 0, pill: "p-cross", colour: "var(--cross)" },
   ];
+  if (c.crossings) g.push({ key: "crossings", label: "Crossings", rs: c.crossings, pill: "p-cross", colour: "var(--cross)" });
   if (c.environment) g.push({ key: "env", label: "Environment", rs: c.environment, pill: "p-chg", colour: "var(--changed)" });
   return g;
 }

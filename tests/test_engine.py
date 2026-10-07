@@ -11,7 +11,7 @@ import torch
 from shapely.geometry import LineString, Point, box
 
 from beeline_engine.compile import compile_rules
-from beeline_engine.config import CIRCUITS, VOLTAGES, LineSpec, resolve_costs, resolve_rules
+from beeline_engine.config import CIRCUITS, TOWER_TYPES, VOLTAGES, LineSpec, resolve_costs, resolve_rules
 from beeline_engine.frame import Frame
 from beeline_engine.pipeline import LayerInput, SolveInput, run_solve
 from beeline_engine.solver import (SolverParams, edge_costs, gantry_seeds, make_grid, prepare_strip, site_costs, solve,
@@ -60,8 +60,16 @@ def test_config_resolves_every_voltage_and_circuit():
             k = resolve_costs(spec)
             assert r["corridor_half_width"].params["half_width_m"] > 0
             assert r["design_span"].params["plain_m"] > 0
-            assert all(v > 0 for v in k["tonnage"].values())
-            assert k["n_circuits"] == {"sc": 1, "dc": 2, "qc": 4}[c]
+            assert set(k["towers"]) == set(TOWER_TYPES)
+            prices = [k["towers"][t]["price_rs"] for t in TOWER_TYPES]
+            assert all(p > 0 for p in prices) and prices == sorted(prices)     # dearer with deviation
+            assert k["line_rs_per_m"] > 0
+    assert CIRCUITS == ("dc",)
+    # Route Cost Parameters 3: 765 kV D/C A tower ₹0.4765 Cr, line 2.349 ₹Cr/km
+    k = resolve_costs(LineSpec(765, "dc"))
+    assert abs(k["towers"]["A"]["price_rs"] - 0.4765e7) < 1 and abs(k["line_rs_per_m"] * 1000 / 1e7 - 2.349) < 1e-9
+    k = resolve_costs(LineSpec(765, "dc"), {"tower_price": {"A": 0.5}, "crops": {"x": 1}})
+    assert abs(k["towers"]["A"]["price_rs"] - 0.5e7) < 1 and "crops" not in k
 
 
 def test_frame_roundtrip():
@@ -216,10 +224,11 @@ def test_ridge_gets_a_tower_instead_of_a_short_clearance(monkeypatch):
     assert not any("ground_clearance" in (t["warnings"] or []) for t in r["towers"])
 
 
-def test_search_goes_round_a_hill_when_that_is_cheaper(monkeypatch):
-    """A steep 120 m hill on the bee-line, flat ground 1.5 km to either side: with terrain in the
-    search cost the route leaves the hill (hilly spans, extensions and ridge towers cost more than
-    the detour)."""
+def test_search_takes_the_cheaper_of_hill_and_detour(monkeypatch):
+    """A steep 120 m hill on the bee-line, flat ground to either side. With hilly ground priced in the
+    search (tension towers, 600 m hilly spans, extensions) the chosen route costs no more than the
+    route forced round the hill. Under Route Cost Parameters 3 crossing this hill is the cheaper one
+    (₹106.1 vs ₹107.4 Cr on 7 Oct 2026), and every tower on it is a tension tower."""
     f = frame()
     c = f.length_m / 2
 
@@ -230,33 +239,40 @@ def test_search_goes_round_a_hill_when_that_is_cheaper(monkeypatch):
             d = np.hypot((np.asarray(fx) - c) / 2500.0, np.asarray(fy) / 700.0)
             return (120.0 * np.clip(1 - d, 0, None) * (1 + 0.5 * np.sin(np.asarray(fx) / 90.0))).astype(float)
     from beeline_engine import pipeline as pl
+    from shapely import affinity
     monkeypatch.setattr(pl.demmod, "ensure_tiles", lambda bb, d: [])
     monkeypatch.setattr(pl.demmod, "DemSampler", lambda tiles, bb: HillDem(frame(), None))
-    inp = solve_input({})
-    inp.dem_dir = "unused"
-    r = run_solve(inp)["routes"][0]
-    # the straightened line may clip the lower flank (cost-aware string pulling accepts a chord that is
-    # cheaper overall); it must not climb the hill: nothing above 60 m, at most six towers above 20 m
-    on_hill = [t for t in r["towers"] if abs(t["chainage_km"] * 1000 - c) < 1500 and t["ground_z"] and t["ground_z"] > 20]
-    assert len(on_hill) <= 6 and all(t["ground_z"] <= 60 for t in on_hill), [(t["chainage_km"], t["ground_z"]) for t in on_hill]
+
+    def solve(layers):
+        inp = solve_input(layers)
+        inp.dem_dir = "unused"
+        return run_solve(inp)["routes"][0]
+    free = solve({})
+    blob = frame_geom(f, affinity.scale(Point(c, 0).buffer(1), 2500 * 0.85, 700 * 0.85))
+    detour = solve({"clusters": gdf([blob], "builtup_cluster")})
+    assert max(t["ground_z"] or 0 for t in detour["towers"]) < 20          # the forced route really goes round
+    assert free["cost"]["total"] <= detour["cost"]["total"] * 1.005, (free["cost"]["total"] / 1e7, detour["cost"]["total"] / 1e7)
+    hill = [t for t in free["towers"] if t["type"] != "G" and (t["ground_z"] or 0) > 20]
+    assert all(t["type"] != "A" for t in hill)
 
 
-def test_hilly_ground_takes_hilly_spans_and_sections(monkeypatch):
-    """Rolling hills steeper than 10°: spans at most the hilly design span (300 m at 765 kV) and
-    tension towers at most 3 km apart there; flat ground keeps 5 km."""
+def test_hilly_ground_takes_tension_towers_and_longer_spans(monkeypatch):
+    """Rolling hills steeper than 10°: every tower on a hilly span is a tension tower (B1 at least)
+    and hilly spans may reach the hilly design span (600 m at 765 kV); flat spans stay within 400 m
+    (Vivek, 7 Oct 2026)."""
     f = frame()
     hills = lambda x: np.where(x > f.length_m / 2, 40.0 * np.abs(np.sin(x / 150.0)), 0.0)    # ~15° slopes
     res = _solve_on_dem(monkeypatch, hills)
     r = res["routes"][0]
-    cum = [0.0]
-    for s in r["spans"]:
-        cum.append(cum[-1] + s["length_m"])
-    half = f.length_m / 2
-    hilly_spans = [s for i, s in enumerate(r["spans"][1:-1], 1) if cum[i] > half + 500]
-    assert hilly_spans and max(s["length_m"] for s in hilly_spans) <= 300.0 + 1e-6
-    idx = [i for i, t in enumerate(r["towers"]) if t["type"] != "A"]
-    gaps = [(cum[a], cum[b] - cum[a]) for a, b in zip(idx, idx[1:])]
-    assert max(g for start, g in gaps if start > half + 500) <= 3000.0 + 1e-6
+    T = {t["no"]: t for t in r["towers"]}
+    inner = r["spans"][1:-1]
+    assert max(s["length_m"] for s in inner) <= 600.0 + 1e-6
+    hilly_towers = [t for t in r["towers"] if "hilly" in t["reasons"]]
+    assert hilly_towers and all(t["type"] != "A" for t in hilly_towers)
+    on_hills = [t for t in r["towers"] if t["chainage_km"] * 1000 > f.length_m / 2 + 300 and t["type"] != "G"]
+    assert on_hills and all(t["type"] != "A" for t in on_hills)
+    flat = [s for s in inner if T[s["b"]]["chainage_km"] * 1000 < f.length_m / 2 - 300]
+    assert flat and max(s["length_m"] for s in flat) <= 400.0 + 1e-6
 
 
 def test_design_span_is_the_hard_maximum_and_editable():
@@ -348,7 +364,7 @@ def test_four_routes_are_distinct_objectives():
     assert costs[0] <= min(costs) * 1.02    # route 1 is (near) the cheapest true cost
 
 
-@pytest.mark.parametrize("kv,circuit", [(400, "dc"), (220, "sc"), (132, "qc")])
+@pytest.mark.parametrize("kv,circuit", [(400, "dc"), (220, "dc"), (132, "dc")])
 def test_other_voltages_solve(kv, circuit):
     res = run_solve(solve_input({}, kv=kv, circuit=circuit))
     assert res["feasible"]
@@ -361,12 +377,12 @@ def test_dp_is_optimal_against_dijkstra():
     """Brute-force Dijkstra over the same (site, heading) graph gives the same optimum."""
     f = Frame(A, (72.04, 22.302), 400, 500, 20)
     blob = frame_geom(f, Point(f.length_m / 2, 0).buffer(150))
-    spec = LineSpec(220, "sc")
+    spec = LineSpec(220, "dc")
     rules = resolve_rules(spec)
     costs = resolve_costs(spec)
     comp = compile_rules(f, {"clusters": gdf([blob], "builtup_cluster")}, rules, costs, 220, 17.5, 150, 350)
     tc = tower_type_cost(costs, 220)
-    bands = {k: rules["tower_type_bands"].params[k] for k in ("A", "B1", "B2", "C1", "C2", "D45", "D60")}
+    bands = {k: rules["tower_type_bands"].params[k] for k in TOWER_TYPES}
     p = SolverParams(50, 100, 393.75, 60, bands, tc)
     out = solve(comp, p)
     assert out.feasible
@@ -440,3 +456,17 @@ def test_airport_prohibition_reaches_from_outside_the_frame():
     col, row = f.frame_to_pixel(x, out_top - d - 300)                # inside the frame, beyond the distance
     assert not comp.tower_forbidden[int(row), int(col)]
     assert comp.rules_fired.get("airport_prohibition")
+
+
+def test_nalla_keeps_towers_10m_away_and_is_spanned():
+    """A nalla across the corridor (SISDP drainage, Vivek 7 Oct 2026): no tower within 10 m of the
+    centreline, and the conductor crosses it freely."""
+    f = frame()
+    xs = [f.length_m * k / 8 for k in range(1, 8)]
+    lines = [frame_geom(f, LineString([(x, -1500), (x + 40, 1500)])) for x in xs]
+    r = run_solve(solve_input({"nalla": gdf(lines, "nalla")}))["routes"][0]
+    pts = towers_frame(f, r)
+    fl = [LineString([(x, -1500), (x + 40, 1500)]) for x in xs]
+    assert min(Point(p).distance(l) for p in pts[1:-1] for l in fl) >= 10.0 - 0.5
+    route = LineString(pts)
+    assert all(route.intersects(l) for l in fl)

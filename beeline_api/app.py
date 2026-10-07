@@ -47,7 +47,7 @@ class RunCreate(BaseModel):
     a: Pt
     b: Pt
     kv: int
-    circuit: Literal["sc", "dc", "qc"] = "dc"                # the UI always sends dc (double circuit)
+    circuit: Literal["dc"] = "dc"                            # double circuit only (S/C, Q/C out of scope)
     band_km: float = Field(gt=0.4, le=25)
     routes_wanted: int = Field(4, ge=1, le=4)
     note: str | None = None
@@ -74,7 +74,7 @@ class RunPatch(BaseModel):
     a: Pt | None = None
     b: Pt | None = None
     kv: int | None = None
-    circuit: Literal["sc", "dc", "qc"] | None = None
+    circuit: Literal["dc"] | None = None
     band_km: float | None = Field(None, gt=0.4, le=25)
     routes_wanted: int | None = Field(None, ge=1, le=4)
     note: str | None = None
@@ -567,21 +567,21 @@ def _display_costs(r: dict) -> dict:
             items.append({"key": it["key"], "label": it["label"], "unit": it["unit"], "default": d, "value": v,
                           "changed": v != d, "best_guess": bool(it.get("best_guess"))})
         cats.append({"key": c["key"], "title": c["title"], "desc": c["desc"], "status": c["status"], "items": items})
-    rate = float(resolved["tower"]["rate_per_tonne_rs"])
     bands = {p["key"]: p["value"] for g in load_rules()["groups"] for rr in g["rules"] if rr["id"] == "tower_type_bands"
              for p in rr["params"]}
+    base = resolve_costs(spec, {k: v for k, v in ov.items() if k != "tower_price"})["towers"]
     lo = 0
-    tonnage = []
-    base = resolve_costs(spec, {k: v for k, v in ov.items() if k != "tower_tonnage"})["tonnage"]
+    towers = []
     for t in TOWER_TYPES:
         hi = bands[t]
-        tonnage.append({"type": t, "deviation": f"{lo:g}–{hi:g}°", "tonnes": round(resolved["tonnage"][t], 2),
-                        "default_tonnes": round(base[t], 2), "cr_each": round(resolved["tonnage"][t] * rate / 1e7, 3),
-                        "changed": abs(resolved["tonnage"][t] - base[t]) > 1e-9})
+        p, d = resolved["towers"][t]["price_rs"] / 1e7, base[t]["price_rs"] / 1e7
+        towers.append({"type": t, "deviation": f"{lo:g}–{hi:g}°", "price_cr": round(p, 4), "default_price_cr": round(d, 4),
+                       "fdn_l": round(resolved["towers"][t]["fdn_rs"] / 1e5, 2),
+                       "area_m2": round(resolved["towers"][t]["area_m2"], 2), "changed": abs(p - d) > 1e-9})
         lo = hi
-    return {"version": cfg["version"], "categories": cats, "tonnage": tonnage, "rate_per_tonne_rs": rate,
-            "n_tcc": sum(1 for c in cats if c["status"] == "tcc"),
-            "tonnage_best_guess": bool(next(c for c in cfg["categories"] if c["key"] == "tower")["tonnage"].get("best_guess"))}
+    return {"version": cfg["version"], "categories": cats, "towers": towers,
+            "line_cr_km": round(resolved["line_rs_per_m"] * 1000 / 1e7, 4),
+            "n_tcc": sum(1 for c in cats if c["status"] == "tcc")}
 
 
 @app.get("/api/runs/{run_id}/costs")
@@ -595,16 +595,19 @@ def set_costs(run_id: str, body: dict[str, dict[str, Any]]):
     _ensure_idle_for(run_id)
     disp = _display_costs(r)
     defaults = {c["key"]: {i["key"]: i["default"] for i in c["items"]} for c in disp["categories"]}
-    tdefault = {t["type"]: t["default_tonnes"] for t in disp["tonnage"]}
+    tdefault = {t["type"]: t["default_price_cr"] for t in disp["towers"]}
     ov = {k: dict(v) for k, v in (r["cost_overrides"] or {}).items()}
     for cat, items in body.items():
-        if cat == "tower_tonnage":
+        if cat == "tower_price":
             for t, v in items.items():
                 if t not in tdefault:
                     raise HTTPException(400, f"unknown tower type {t}")
-                v = float(v)
+                try:
+                    v = float(v)
+                except (TypeError, ValueError):
+                    raise HTTPException(400, f"tower price {t} must be a number")
                 if v <= 0:
-                    raise HTTPException(400, "tonnage must be positive")
+                    raise HTTPException(400, "tower price must be positive")
                 ov.setdefault(cat, {})
                 if abs(v - tdefault[t]) < 1e-9:
                     ov[cat].pop(t, None)
