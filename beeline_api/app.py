@@ -18,7 +18,7 @@ from beeline_engine.config import (CIRCUITS, TOWER_TYPES, VOLTAGES, LineSpec, lo
                                    pick, resolve_costs)
 from beeline_engine.frame import Frame
 
-from . import db, geo, imagery, jobs, layers, settings, uploads
+from . import db, geo, imagery, jobs, layers, settings, uploads, user_shapes
 
 log = logging.getLogger("beeline.api")
 app = FastAPI(title="Beeline route planner", version="1.0")
@@ -699,6 +699,70 @@ def models_status():
                     "needs_layers": m.get("needs_layers") or [], "problems": lulc_runner.preflight(m),
                     "params": m.get("params") or {}})
     return {"models": out}
+
+
+# ---- shapes added on the map (Vivek, 8 Oct 2026) -------------------------------------------
+class ShapeAdd(BaseModel):
+    layer_key: str
+    class_: str | None = Field(None, alias="class")
+    name: str = Field(min_length=1, max_length=120)
+    scope: Literal["temporary", "permanent"]
+    features: list[dict] = Field(min_length=1, max_length=user_shapes.MAX_FEATURES)
+
+
+@app.post("/api/geo/parse")
+def parse_map_file(file: UploadFile = File(...)):
+    """A KML / KMZ / GeoJSON / GeoPackage / zipped shapefile -> GeoJSON features in WGS84 (nothing is stored)."""
+    try:
+        return user_shapes.parse_file(file.filename or "upload", file.file)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(400, f"could not read the file: {e}")
+
+
+@app.get("/api/runs/{run_id}/shapes")
+def list_shapes(run_id: str):
+    r = _run(run_id)
+    return {"shapes": user_shapes.list_for_run(r)}
+
+
+@app.post("/api/runs/{run_id}/shapes", status_code=201)
+def add_shapes(run_id: str, req: ShapeAdd):
+    r = _run(run_id)
+    _ensure_idle_for(run_id)
+    reg = {l["key"]: l for l in load_layers()["layers"]}
+    lay = reg.get(req.layer_key)
+    if lay is None:
+        raise HTTPException(404, f"unknown layer {req.layer_key}")
+    cls = req.class_ or lay["classes"][0]
+    if cls not in lay["classes"]:
+        raise HTTPException(400, f"class {cls} is not one of {lay['name']}'s classes: {', '.join(lay['classes'])}")
+    if req.layer_key not in {x["layer_key"] for x in layers.run_layers(run_id)}:
+        raise HTTPException(400, f"{lay['name']} has not been extracted for this run yet; extract the layers first")
+    try:
+        ids = user_shapes.add(r, req.layer_key, cls, " ".join(req.name.split()), req.scope, req.features)
+    except (ValueError, KeyError, TypeError) as e:
+        raise HTTPException(400, f"shape not added: {e}")
+    from shapely.geometry import shape as _shape
+    user_shapes.rebuild_run_layer(r, req.layer_key, changed=[_shape(f["geometry"]) for f in req.features])
+    db.exec_("update runs set updated_at=now() where id=%s", (run_id,))
+    return {"added": ids, "layer_key": req.layer_key, "shapes": user_shapes.list_for_run(r)}
+
+
+@app.delete("/api/runs/{run_id}/shapes/{shape_id}")
+def delete_shape(run_id: str, shape_id: int):
+    r = _run(run_id)
+    _ensure_idle_for(run_id)
+    visible = {s["id"]: s for s in user_shapes.list_for_run(r)}
+    if shape_id not in visible:
+        raise HTTPException(404, f"shape {shape_id} is not on this run")
+    row = user_shapes.delete(shape_id)
+    if row:
+        from shapely.geometry import shape as _shape
+        user_shapes.rebuild_run_layer(r, row["layer_key"], changed=[_shape(visible[shape_id]["geometry"])])
+    db.exec_("update runs set updated_at=now() where id=%s", (run_id,))
+    return {"deleted": shape_id, "layer_key": visible[shape_id]["layer_key"], "shapes": user_shapes.list_for_run(r)}
 
 
 @app.post("/api/runs/{run_id}/solve", status_code=202)

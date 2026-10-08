@@ -179,7 +179,8 @@ def init_schema():
         with c.transaction():
             c.execute("select pg_advisory_xact_lock(724001)")
             c.execute(SCHEMA)
-    from . import aviation, cell_towers, imagery_store, osm_highways, osm_power
+    from . import aviation, cell_towers, imagery_store, osm_highways, osm_power, user_shapes
+    user_shapes.init_schema()
     aviation.init_schema()
     osm_power.init_schema()
     osm_highways.init_schema()

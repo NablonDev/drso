@@ -21,6 +21,7 @@ import {
   setRunLayerVisibility,
 } from "../components/map/style";
 import { useFitBounds, useMapLibre, useRunTiles, type Bounds } from "../components/map/useMap";
+import MapTools, { mapToolState } from "../components/map/MapTools";
 import { CeilingNote, ScaleBar, useCeiling, ZoomBar } from "../components/map/ZoomBar";
 import { ErrorNote, Head, Kpi, Loading, Note } from "../components/ui";
 import { crore, int, num } from "../lib/format";
@@ -67,6 +68,8 @@ function Body({ s }: { s: Solve }) {
   const [on, setOn] = useState<Record<string, boolean>>(() => Object.fromEntries(LAYER_ORDER.map((k) => [k, DEFAULT_ON.has(k)])));
   const [widen, setWiden] = useState(false);
   const [maxed, setMaxed] = useState(false);
+  // routes hidden on the map (8 Oct 2026), like the layer toggles
+  const [hidden, setHidden] = useState<number[]>([]);
   const routes = s.result.routes;
   const feasible = s.result.feasible && routes.length > 0;
   const sel = routes.find((r) => r.id === selId) ?? routes[0];
@@ -174,6 +177,12 @@ function Body({ s }: { s: Solve }) {
 
   useEffect(() => {
     if (!map) return;
+    const f: maplibregl.FilterSpecification = ["!", ["in", ["get", "id"], ["literal", hidden]]];
+    for (const id of ["routes-line", "routes-casing", "row-strip"]) if (map.getLayer(id)) map.setFilter(id, f);
+  }, [map, hidden, routesFC]);
+
+  useEffect(() => {
+    if (!map) return;
     if (map.getLayer("beeline-line")) map.setLayoutProperty("beeline-line", "visibility", t.beeline ? "visible" : "none");
     if (map.getLayer("prev-line")) map.setLayoutProperty("prev-line", "visibility", t.prev ? "visible" : "none");
   }, [map, t.beeline, t.prev, prevFC]);
@@ -202,7 +211,7 @@ function Body({ s }: { s: Solve }) {
   useEffect(() => {
     if (!map) return;
     const onClick = (e: maplibregl.MapLayerMouseEvent) => {
-      if (e.defaultPrevented) return;
+      if (e.defaultPrevented || mapToolState.busy) return;
       const id = Number(e.features?.[0]?.properties?.id);
       if (Number.isFinite(id)) select(id);
     };
@@ -241,6 +250,10 @@ function Body({ s }: { s: Solve }) {
     let raf = 0;
     const onMove = (e: maplibregl.MapMouseEvent) => {
       cancelAnimationFrame(raf);
+      if (mapToolState.busy) {
+        popup.remove();
+        return;
+      }
       raf = requestAnimationFrame(() => {
         const ids = LAYER_ORDER.flatMap(layerIds).filter((i) => map.getLayer(i) && map.getLayoutProperty(i, "visibility") !== "none");
         const hit = ids.length ? map.queryRenderedFeatures(e.point, { layers: ids }) : [];
@@ -335,12 +348,13 @@ function Body({ s }: { s: Solve }) {
           </div>
           <div className={`mapcanvas${maxed ? " maxed" : ""}`} data-testid="route-map">
             <div ref={mapRef} className="mlmap" />
+            <MapTools map={map} runId={run.id} onLayersChanged={tiles.retry} />
             {maxed ? (
               <button className="mapexit" onClick={() => setMaxed(false)} data-testid="map-restore">Exit full screen · Esc</button>
             ) : null}
             {!map ? <div className="mapnote"><Loading text="Loading imagery…" /></div> : null}
           </div>
-          {t.towers && feasible ? <TowerLayer map={map} routes={[sel.id]} editable={false} /> : null}
+          {t.towers && feasible && !hidden.includes(sel.id) ? <TowerLayer map={map} routes={[sel.id]} editable={false} /> : null}
           <ScaleBar map={map} />
           <CeilingNote ceiling={ceiling} />
           {tiles.error && wantTiles ? (
@@ -388,6 +402,7 @@ function Body({ s }: { s: Solve }) {
               </div>
             </>
           ) : null}
+          {feasible ? <RouteToggles routes={routes} hidden={hidden} setHidden={setHidden} /> : null}
           <RouteLayers layers={layersQ.data?.layers ?? []} on={on} setOn={setOn} />
           <div className="card" style={{ marginTop: 10 }}>
             <div className="cb stack">
@@ -669,6 +684,40 @@ function Failure({ s, onWiden }: { s: Solve; onWiden: () => void }) {
 }
 
 
+
+/** Show or hide each calculated route on the map (its corridor strip and towers go with it). */
+function RouteToggles({ routes, hidden, setHidden }: {
+  routes: { id: number; name: string }[];
+  hidden: number[];
+  setHidden: (f: (h: number[]) => number[]) => void;
+}) {
+  const nOn = routes.filter((r) => !hidden.includes(r.id)).length;
+  return (
+    <div className="card" style={{ marginTop: 10 }} data-testid="route-toggles">
+      <div className="ch">
+        <h3 style={{ fontSize: 13 }}>Routes on the map</h3>
+        <span className="hint" style={{ marginLeft: "auto" }}>{nOn} of {routes.length} shown</span>
+      </div>
+      <div className="row" style={{ gap: 4, padding: "6px 9px", flexWrap: "wrap" }}>
+        <button className="mini" onClick={() => setHidden(() => [])}>All</button>
+        <button className="mini" onClick={() => setHidden(() => routes.map((r) => r.id))}>None</button>
+      </div>
+      {routes.map((r) => {
+        const v = !hidden.includes(r.id);
+        return (
+          <div key={r.id} className={`lrow ${v ? "" : "loff"}`}>
+            <label className="ln">
+              <input type="checkbox" checked={v} aria-label={`Show route ${r.id}`} data-testid={`show-route-${r.id}`}
+                onChange={() => setHidden((h) => (h.includes(r.id) ? h.filter((x) => x !== r.id) : [...h, r.id]))} />
+              <i className="sw" style={{ background: routeColour(r.id) }} />
+              <span><b>Route {r.id}</b><em>{r.name}</em></span>
+            </label>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 /** Every layer of the run, toggled under the routes. Presets: as on Review the layers, No-Go only, all, none. */
 function RouteLayers({ layers, on, setOn }: {

@@ -23,6 +23,7 @@ import {
   setRunLayerVisibility,
 } from "../components/map/style";
 import { useFitBounds, useMapLibre, useRunTiles, type Bounds } from "../components/map/useMap";
+import MapTools, { mapToolState } from "../components/map/MapTools";
 import { CeilingNote, ScaleBar, useCeiling, ZoomBar } from "../components/map/ZoomBar";
 import { Btn, ConfPill, ErrorNote, Head, Loading, Note, SourcePill } from "../components/ui";
 import { date, elapsedMin, hm, int, num, when } from "../lib/format";
@@ -186,7 +187,7 @@ function Body({ L }: { L: LayersResponse }) {
   useEffect(() => {
     if (!map) return;
     const onClick = (e: maplibregl.MapMouseEvent) => {
-      if (!map.getSource("run")) return;
+      if (mapToolState.busy || !map.getSource("run")) return;
       const ids = LAYER_ORDER.flatMap(layerIds).filter((id) => map.getLayer(id) && map.getLayoutProperty(id, "visibility") !== "none");
       const fs = map.queryRenderedFeatures(e.point, { layers: ids });
       // prefer points, then lines, then the smallest polygons (lulc last)
@@ -199,7 +200,7 @@ function Body({ L }: { L: LayersResponse }) {
       setSel({ fid, key: f.sourceLayer ?? "", lngLat: [e.lngLat.lng, e.lngLat.lat] });
     };
     const onMove = (e: maplibregl.MapMouseEvent) => {
-      if (!map.getSource("run")) return;
+      if (mapToolState.busy || !map.getSource("run")) return;
       const ids = LAYER_ORDER.flatMap(layerIds).filter((id) => map.getLayer(id));
       map.getCanvas().style.cursor = map.queryRenderedFeatures(e.point, { layers: ids }).length ? "pointer" : "";
     };
@@ -371,6 +372,7 @@ function Body({ L }: { L: LayersResponse }) {
           </div>
           <div className="mapcanvas" ref={canvasRef} data-testid="layer-map">
             <div ref={mapRef} className="mlmap" />
+            <MapTools map={map} runId={run.id} onLayersChanged={tiles.retry} />
             {swipe < 100 ? <BareMap main={map} bounds={bounds} clipRight={swipe} /> : null}
             {swipe < 100 ? (
               <div className="swipe" style={{ left: `${100 - swipe}%` }}>

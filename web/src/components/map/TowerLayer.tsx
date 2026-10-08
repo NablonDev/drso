@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { mapToolState } from "./MapTools";
 import maplibregl from "maplibre-gl";
 import type { GeoJSONSource } from "maplibre-gl";
 import { towersToGeoJSON, useTowers, type StoredTower } from "../../store/towers";
@@ -111,6 +112,7 @@ export default function TowerLayer({
     if (!map) return;
     let hovered: string | null = null;
     const onClick = (e: maplibregl.MapLayerMouseEvent) => {
+      if (mapToolState.busy) return;
       const f = e.features?.[0];
       const t = f && index.get(String(f.properties?.fid));
       if (!t) return;
@@ -126,6 +128,7 @@ export default function TowerLayer({
       setPopup({ t, el });
     };
     const onMove = (e: maplibregl.MapLayerMouseEvent) => {
+      if (mapToolState.busy) return;
       map.getCanvas().style.cursor = editable ? "grab" : "pointer";
       const id = e.features?.[0]?.id;
       if (id === undefined || String(id) === hovered) return;

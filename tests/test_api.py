@@ -515,3 +515,63 @@ def test_normalise_flattens_z_and_keeps_fields():
     assert not n.has_z.any() and list(n["class"]) == ["oil_pipeline"] * 2
     assert n["name"].iloc[0] == "MDPL" and pd.isna(n["name"].iloc[1])         # missing, not the string "nan"
     assert list(n["owner"]) == ["HPCL", "GAIL"] and "junk" not in n.columns
+
+
+def test_hand_added_shapes(client, tmp_path):
+    """Shapes drawn or loaded on the map (Vivek, 8 Oct 2026): KML / KMZ parse; temporary shapes join
+    only their run's layer; permanent shapes also reach later runs; delete takes them out again."""
+    rid = make_run(client)
+    client.post(f"/api/runs/{rid}/extract", json={})
+    assert run_next_job()["status"] == "done"
+    kml = ("<?xml version='1.0' encoding='UTF-8'?><kml xmlns='http://www.opengis.net/kml/2.2'><Document>"
+           "<Placemark><name>Farm shed</name><Polygon><outerBoundaryIs><LinearRing><coordinates>"
+           "69.700,23.430 69.701,23.430 69.701,23.431 69.700,23.431 69.700,23.430</coordinates></LinearRing>"
+           "</outerBoundaryIs></Polygon></Placemark>"
+           "<Placemark><name>Pole</name><Point><coordinates>69.702,23.432</coordinates></Point></Placemark></Document></kml>")
+    fc = client.post("/api/geo/parse", files={"file": ("a.kml", kml.encode(), "application/vnd.google-earth.kml+xml")}).json()
+    assert fc["count"] == 2 and fc["geometry_types"] == ["Point", "Polygon"]
+    assert {f["properties"]["name"] for f in fc["features"]} == {"Farm shed", "Pole"}
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("doc.kml", kml)
+    assert client.post("/api/geo/parse", files={"file": ("a.kmz", buf.getvalue(), "application/vnd.google-earth.kmz")}).json()["count"] == 2
+    assert client.post("/api/geo/parse", files={"file": ("a.txt", b"x", "text/plain")}).status_code == 400
+
+    poly = [f for f in fc["features"] if f["geometry"]["type"] == "Polygon"]
+    point = [f for f in fc["features"] if f["geometry"]["type"] == "Point"]
+    # a point cannot go into a polygon layer; an unknown class is refused
+    r = client.post(f"/api/runs/{rid}/shapes", json={"layer_key": "buildings", "name": "x", "scope": "temporary", "features": point})
+    assert r.status_code == 400 and "polygon" in r.json()["detail"]
+    r = client.post(f"/api/runs/{rid}/shapes", json={"layer_key": "buildings", "class": "nope", "name": "x", "scope": "temporary", "features": poly})
+    assert r.status_code == 400
+
+    def count(run_id, key):
+        return next(l for l in client.get(f"/api/runs/{run_id}/layers").json()["layers"] if l["key"] == key)["feature_count"]
+
+    n0 = count(rid, "buildings")
+    r = client.post(f"/api/runs/{rid}/shapes", json={"layer_key": "buildings", "name": "Farm shed", "scope": "temporary", "features": poly})
+    assert r.status_code == 201, r.text
+    tmp_id = r.json()["added"][0]
+    assert count(rid, "buildings") == n0 + 1
+    run = client.get(f"/api/runs/{rid}").json()
+    assert run["layers_ready"] and not run["layers_stale"]           # the run can be re-solved straight away
+    r = client.post(f"/api/runs/{rid}/shapes", json={"layer_key": "reservoir", "name": "New pond", "scope": "permanent", "features": poly})
+    assert r.status_code == 201, r.text
+    perm_id = r.json()["added"][0]
+    shapes = client.get(f"/api/runs/{rid}/shapes").json()["shapes"]
+    assert {s["id"]: s["scope"] for s in shapes} == {tmp_id: "temporary", perm_id: "permanent"}
+
+    # a later run over the same ground: the permanent shape comes with its extraction, the temporary one does not
+    rid2 = make_run(client)
+    client.post(f"/api/runs/{rid2}/extract", json={})
+    assert run_next_job()["status"] == "done"
+    assert [s["id"] for s in client.get(f"/api/runs/{rid2}/shapes").json()["shapes"]] == [perm_id]
+    feats = client.get(f"/api/runs/{rid2}/layers").json()
+    assert next(l for l in feats["layers"] if l["key"] == "reservoir")["feature_count"] >= 1
+
+    # delete: the temporary shape leaves its run's layer
+    assert client.delete(f"/api/runs/{rid}/shapes/{tmp_id}").status_code == 200
+    assert count(rid, "buildings") == n0
+    assert client.delete(f"/api/runs/{rid2}/shapes/{tmp_id}").status_code == 404
+    assert client.delete(f"/api/runs/{rid}/shapes/{perm_id}").status_code == 200
+    assert client.get(f"/api/runs/{rid}/shapes").json()["shapes"] == []

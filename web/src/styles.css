@@ -469,3 +469,34 @@ button.link{padding:0;background:none;border:0;font:inherit;color:var(--accent-i
 .hovertip .ht-row{display:grid;gap:1px}
 .hovertip .ht-row + .ht-row{margin-top:5px;padding-top:5px;border-top:1px solid var(--rule)}
 .hovertip .ht-row span{color:var(--ink-2)}
+
+/* map tools: copy coordinates, measure, draw / load shapes (8 Oct 2026) */
+.mt-bar{position:absolute;top:10px;left:10px;z-index:7;display:flex;flex-direction:column;gap:2px;background:var(--surface);border:1px solid var(--rule);border-radius:8px;padding:4px;box-shadow:0 1px 6px rgba(0,0,0,.18)}
+.mt-bar button{display:flex;align-items:center;gap:6px;background:transparent;border:0;border-radius:5px;padding:5px 8px;font-size:12px;color:var(--ink);text-align:left;cursor:pointer;min-width:30px}
+.mt-bar button span{font-size:11.5px;color:var(--ink-2)}
+.mt-bar button:hover{background:var(--accent-soft)}
+.mt-bar button[aria-pressed="true"]{background:var(--accent-soft);outline:1px solid var(--accent-line)}
+.mt-bar button[aria-pressed="true"] span{color:var(--accent-ink)}
+.mt-bar button:focus-visible{outline:2px solid var(--accent-line)}
+.mt-bar > i{height:1px;background:var(--rule);margin:2px 4px}
+.mt-hint{position:absolute;top:10px;left:50%;transform:translateX(-50%);z-index:7;background:var(--surface);color:var(--ink);border:1px solid var(--rule);border-radius:6px;padding:6px 11px;font-size:12px;box-shadow:0 1px 6px rgba(0,0,0,.18);max-width:calc(100% - 200px)}
+.mt-hint + .mt-hint{top:44px}
+.mt-err{border-color:var(--nogo)}
+.mt-label{background:#14202A;color:#fff;font:600 12px/1.25 var(--mono, ui-monospace, monospace);padding:4px 7px;border-radius:5px;white-space:nowrap;pointer-events:none;box-shadow:0 1px 4px rgba(0,0,0,.35)}
+.mt-label span{display:block;font-weight:400;font-size:10.5px;opacity:.8}
+.mt-menu{position:absolute;z-index:8;min-width:210px;background:var(--surface);border:1px solid var(--rule);border-radius:7px;box-shadow:0 4px 16px rgba(0,0,0,.25);padding:4px;display:grid}
+.mt-menu .mt-coords{font:500 11.5px var(--mono, ui-monospace, monospace);color:var(--ink-2);padding:5px 8px 6px;border-bottom:1px solid var(--rule);margin-bottom:3px;user-select:all}
+.mt-menu button{background:transparent;border:0;text-align:left;padding:6px 8px;border-radius:5px;font-size:12.5px;color:var(--ink);cursor:pointer}
+.mt-menu button:hover,.mt-menu button:focus-visible{background:var(--accent-soft)}
+.mt-list{position:absolute;top:10px;right:10px;z-index:7;width:min(320px,calc(100% - 140px));max-height:calc(100% - 20px);overflow:auto;background:var(--surface);border:1px solid var(--rule);border-radius:8px;box-shadow:0 2px 10px rgba(0,0,0,.22);padding:8px 10px;display:grid;gap:8px}
+.mt-list-h{display:flex;justify-content:space-between;align-items:center;font-size:13px}
+.mt-item{display:flex;gap:8px;justify-content:space-between;border-top:1px solid var(--rule);padding-top:7px;font-size:12px}
+.mt-item > div:first-child{display:grid;gap:2px;min-width:0}
+.mt-item em{font-style:normal;color:var(--ink-2);font-size:11.5px}
+.mt-actions{display:flex;flex-direction:column;gap:4px;flex:none}
+.mini.danger{border-color:var(--nogo);color:var(--nogo)}
+.mt-radio{display:flex;gap:8px;align-items:flex-start;font-size:13px;margin-top:6px;cursor:pointer}
+.mt-radio input{margin-top:3px}
+.mapcanvas.maxed .mt-list{top:52px}
+.mt-scope{border:0;padding:0;margin:0;min-width:0}
+.mt-scope legend{font-size:11.5px;color:var(--muted);font-weight:500;padding:0;margin-bottom:2px}

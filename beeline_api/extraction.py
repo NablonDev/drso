@@ -24,7 +24,7 @@ import pandas as pd
 
 from beeline_engine.config import LineSpec, load_layers, resolve_rules
 
-from . import aviation, cell_towers, db, imagery, imagery_store, layers, lulc_runner, models, osm_highways, osm_power, reference, settings, uploads
+from . import aviation, cell_towers, db, imagery, imagery_store, layers, lulc_runner, models, osm_highways, osm_power, reference, settings, uploads, user_shapes
 from .derive import derive_clusters
 from .geo import band_polygon
 from .jobs import Cancelled, Reporter
@@ -103,6 +103,7 @@ def run_extraction(job: dict, rep: Reporter):
         t0 = time.time()
         try:
             gdf, meta, cov = _extract_one(run, k, lay, mode, src, band, img, rules, sub, rep)
+            gdf = user_shapes.merge(run, k, gdf, band)          # hand-added shapes (temporary for this run, permanent)
             lv = layers.create_version(run["id"], k, mode, lay["producer"], meta, gdf, cov)
             layers.link(run["id"], k, lv)
             results[k] = {"status": "done", "features": 0 if gdf is None else len(gdf), "seconds": round(time.time() - t0, 1)}
