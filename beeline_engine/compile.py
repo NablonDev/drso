@@ -70,13 +70,32 @@ class VecRule:
         self.geoms = np.asarray(list(geoms), dtype=object)
         self.d = max(float(d), 0.0)
         self.tree = STRtree(self.geoms)
+        # approach section (8 Oct 2026): a rule compiled for the approach applies only inside it,
+        # the normal one only outside it (frame-coordinate polygons)
+        self.inside = None
+        self.outside = None
+
+    def _clip(self, geom):
+        if self.outside is not None:
+            geom = geom.difference(self.outside)
+        if self.inside is not None and not geom.is_empty:
+            geom = geom.intersection(self.inside)
+        return geom
 
     def hits(self, geom) -> bool:
+        if self.inside is not None or self.outside is not None:
+            geom = self._clip(geom)
+            if geom.is_empty:
+                return False
         if self.d > 0:
             return len(self.tree.query(geom, predicate="dwithin", distance=self.d)) > 0
         return len(self.tree.query(geom, predicate="intersects")) > 0
 
     def near_idx(self, geom, limit: int | None = None):
+        if self.inside is not None or self.outside is not None:
+            geom = self._clip(geom)
+            if geom.is_empty:
+                return np.array([], dtype=int)
         idx = (self.tree.query(geom, predicate="dwithin", distance=self.d) if self.d > 0
                else self.tree.query(geom, predicate="intersects"))
         return idx if limit is None else idx[:limit]
@@ -111,6 +130,7 @@ class Compiled:
     terminal_zone: object = None     # frame coords: go-zone discs + terminal yards (+ gantry buffer)
     terminal_yards: object = None
     relaxed: bool = False                    # compiled for the Relaxed route (last-resort rules opened)
+    approach_zone: object = None             # frame polygon of the approach sections (None = none)
     # last-resort relaxations taken in this compile: (VecRule of what was opened, approval months, label)
     relaxed_items: list = field(default_factory=list)
     # terrain on the rule raster grid (set by attach_terrain; None = no DEM)
@@ -324,6 +344,38 @@ def _tower_crossing_bans(lines, towers, epsg: int, clear_m: float) -> list:
     return out
 
 
+# rule parameters whose value is the corridor half-width (CHW) or CHW + a fixed width (Rule_Table)
+CHW_TIED = {("lake", "tower_setback_m"), ("lake", "conductor_buffer_m"), ("crz", "tower_setback_m"),
+            ("crz", "conductor_buffer_m"), ("defence", "tower_setback_m"), ("defence", "conductor_buffer_m"),
+            ("power_line", "parallel_setback_m"), ("power_line_lt", "parallel_setback_m"),
+            ("railway", "parallel_setback_m"), ("state_highway", "parallel_setback_m")}
+
+
+def merge_approach(norm: "Compiled", app: "Compiled", zone) -> "Compiled":
+    """Rules inside the approach zone (frame polygon) from the approach compile, elsewhere from the
+    normal one: rasters cell by cell, vector checks by region."""
+    f = norm.frame
+    zm = rfeatures.rasterize([(_frame_to_utm(f, zone), 1)], out_shape=norm.tower_forbidden.shape,
+                             transform=f.transform, fill=0, all_touched=False, dtype="uint8").astype(bool)
+    for attr in ("tower_forbidden", "angle_forbidden", "conductor_forbidden"):
+        setattr(norm, attr, np.where(zm, getattr(app, attr), getattr(norm, attr)))
+    app_par = {p.rule_id: p for p in app.parallels}
+    for p in norm.parallels:
+        if p.rule_id in app_par:
+            p.angle = np.where(zm, app_par[p.rule_id].angle, p.angle)
+    for lst_name in ("tower_nogo", "angle_nogo", "conductor_nogo"):
+        merged = []
+        for vr in getattr(norm, lst_name):
+            vr.outside = zone
+            merged.append(vr)
+        for vr in getattr(app, lst_name):
+            vr.inside = zone
+            merged.append(vr)
+        setattr(norm, lst_name, merged)
+    norm.approach_zone = zone
+    return norm
+
+
 LULC_COST_CLASS = {
     "agriculture": "agriculture", "agriculture_fallow": "agriculture", "orchard": "orchard",
     "social_forest": "social_forest", "reserve_forest": "forest",
@@ -361,7 +413,8 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
                   costs: dict, spec_kv: int, half_width_m: float, endpoints_go_radius_m: float | None = None,
                   design_span_m: float = 400.0, single_angle_tol_deg: float = 15.0,
                   gantry_buffer_m: float = 10.0, raster_margin_m: float = 0.0,
-                  angle_tower_rules: tuple[str, ...] = (), relaxed: bool = False) -> Compiled:
+                  angle_tower_rules: tuple[str, ...] = (), relaxed: bool = False,
+                  chw_ref_m: float | None = None) -> Compiled:
     # Terminal yards: the substation(s) the line starts / ends in. They are carved out of the
     # substation rule; the yard (+ gantry buffer) and the go-zone disc are clear for the conductor,
     # and no tower may stand inside the yard other than the dead-end towers at A and B.
@@ -438,6 +491,12 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
         if not r.enabled:
             continue
         p = r.params
+        if chw_ref_m is not None and chw_ref_m > half_width_m:
+            # approach-section compile: buffers set at the corridor half-width shrink with it
+            delta = chw_ref_m - half_width_m
+            keys = [k for (rid, k) in CHW_TIED if rid == r.id and p.get(k) is not None]
+            if keys:
+                p = {**p, **{k: max(0.0, float(p[k]) - delta) for k in keys}}
         if relaxed and r.id in ("buildings", "building_clearance"):
             # last resort (Rule_Table 18): single structures up to 10 m² may be crossed (12 months)
             bl = rules.get("buildings")

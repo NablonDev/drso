@@ -77,6 +77,8 @@ class SolverParams:
     long_ext_steps: tuple = ()                 # e.g. ((6, 400), (18, 300), (33, 270), (45, 250))
     long_ext_cost_rs_per_m: float = 0.0        # ₹ per metre of extension on one D tower
     dead_end_max_dev_deg: float | None = None  # TSD note J: 15° line side + 30° slack side
+    approach_length_m: float = 0.0             # approach section within this of each gantry (0 = none)
+    approach_span_m: float | None = None       # its design span (CEA Schedule VII)
 
 
 @dataclass
@@ -230,6 +232,14 @@ def _edge_block(compiled: Compiled, grid: Grid, p: SolverParams, rasters: "_Rast
     heading = torch.as_tensor(grid.heading_deg[kidx], device=dev, dtype=torch.float32).view(1, 1, K, 1)
 
     invalid = rasters.cond[row, col].any(dim=-1)
+    if p.approach_length_m > 0 and p.approach_span_m is not None and not require_river:
+        # approach section: spans whose midpoint lies within approach_length_m of a gantry keep to
+        # the approach design span
+        xm = (x0 + dx / 2.0).squeeze(-1)
+        ym = (y0 + dy / 2.0).squeeze(-1)
+        in_ap = (torch.hypot(xm, ym) <= p.approach_length_m) | \
+                (torch.hypot(xm - f.length_m, ym) <= p.approach_length_m)
+        invalid |= in_ap & (length > p.approach_span_m + 1e-3)
     strip = rasters.strip[row, col].mean(dim=-1)
     E = length * (compiled.conductor_rs_per_m + strip)
     if rasters.z is not None and not require_river:

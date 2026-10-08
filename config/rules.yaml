@@ -582,6 +582,15 @@ groups:
              best_guess: true}
           - {key: urban_half_width_m, label: "Urban half-width", type: num, unit: m, value: {765: 27, 400: 20, 220: 15, 132: 12}, best_guess: true}
 
+      - id: approach_section
+        name: "Approach section near substation"
+        note: "CEA Technical Standards (1st Amendment) 2025, Schedule VII: near the substation the RoW narrows (765 kV D/C 54 m) and the design span is 250 m. Applied within the set distance of each gantry (Vivek, 8 Oct 2026: 2 km); buffers tied to the corridor half-width shrink with it. The 150 m gantry go zone stays free of every rule."
+        mechanism: geometry
+        params:
+          - {key: length_m, label: "Distance from the gantry", type: num, unit: m, value: 2000}
+          - {key: half_width_m, label: "Approach half-width (RoW / 2)", type: num, unit: m, value: {765: 27, 400: 19, 220: 12, 132: 9.5}}
+          - {key: span_m, label: "Approach design span", type: num, unit: m, value: {765: 250, 400: 250, 220: 200, 132: 150}}
+
       - id: tower_type_bands
         name: "Tower type by deviation"
         note: "Band boundaries in degrees — the band a deviation falls in picks the tower"

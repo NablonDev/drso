@@ -614,3 +614,20 @@ def test_dead_end_towers_turn_at_most_45_degrees():
     r = run_solve(solve_input({"clusters": gdf([block], "builtup_cluster")}))["routes"][0]
     T = r["towers"]
     assert T[1]["deflection_deg"] <= 45 + 0.5 and T[-2]["deflection_deg"] <= 45 + 0.5, (T[1]["deflection_deg"], T[-2]["deflection_deg"])
+
+
+def test_approach_section_spans_and_free_go_zone():
+    """CEA Schedule VII approach section (Vivek, 8 Oct 2026): within 2 km of each gantry spans keep to
+    250 m; the 150 m gantry go zone is free of every rule — a pond right on the gantry point does not
+    stop the line."""
+    f = frame()
+    pond_a = frame_geom(f, Point(0, 0).buffer(120))
+    pond_b = frame_geom(f, Point(f.length_m, 0).buffer(120))
+    r = run_solve(solve_input({"pond": gdf([pond_a, pond_b], "pond", "Gantry pond")}))
+    assert r["feasible"]
+    rt = r["routes"][0]
+    pts = towers_frame(f, rt)
+    for (x0, y0), (x1, y1), s in zip(pts[1:-2], pts[2:-1], rt["spans"][1:-1]):
+        mx, my = (x0 + x1) / 2, (y0 + y1) / 2
+        if math.hypot(mx, my) <= 2000 or math.hypot(mx - f.length_m, my) <= 2000:
+            assert s["length_m"] <= 250 + 1e-6, s["length_m"]

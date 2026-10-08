@@ -60,6 +60,8 @@ class SpotParams:
     hilly_slope_deg: float | None = None
     hilly_rise_m: float | None = None      # hilly span: ground rises more than this between its towers (Route_Rules 3)
     tsd: dict | None = None                # AESL Tower Spotting Data tables for this voltage (engine.yaml tsd)
+    approach_length_m: float = 0.0         # approach section within this of each gantry (CEA Schedule VII)
+    approach_span_m: float | None = None
     section_spans: int | None = None       # TSD D: ≤ 15 spans between section points (plain)
     hilly_section_spans: int | None = None # ≤ 10 spans (hilly)
     pull_cost_tol: float = 0.01          # a straightened leg may cost at most this much more than the grid towers it replaces
@@ -150,6 +152,14 @@ class Checker:
         slope = np.degrees(np.arctan(dz / (k * step)))
         return bool(np.nanmax(slope) >= self.sp.hilly_slope_deg) if np.isfinite(slope).any() else False
 
+    def in_approach(self, p, q) -> bool:
+        """The span's midpoint lies in an approach section (within approach_length_m of a gantry)."""
+        if not self.sp.approach_length_m:
+            return False
+        mx, my = (p[0] + q[0]) / 2.0, (p[1] + q[1]) / 2.0
+        L = self.c.frame.length_m
+        return math.hypot(mx, my) <= self.sp.approach_length_m or math.hypot(mx - L, my) <= self.sp.approach_length_m
+
     def in_go_zone(self, p: Point) -> bool:
         return self.go.contains(p)
 
@@ -218,6 +228,8 @@ class Checker:
             out.append(item)
         # hard maximum: the plain design span, or the (longer) hilly one on hilly ground; rivers excepted
         limit = self.sp.span_max_m
+        if self.sp.approach_span_m is not None and self.in_approach(p, q):
+            limit = min(limit, self.sp.approach_span_m)
         if L > self.sp.design_span_m + 1e-3 and not self.is_hilly(p, q):
             limit = self.sp.design_span_m
         if L > limit + 1e-3:
@@ -262,6 +274,9 @@ def _spot_leg(chk: Checker, p, q, sp: SpotParams):
         if not all(chk.tower_ok(x, y, angle_tower=False) for x, y in pts):
             continue
         seq = [p] + pts + [q]
+        if sp.approach_span_m is not None and span > sp.approach_span_m + 1e-3 and \
+                any(chk.in_approach(a, b) for a, b in zip(seq[:-1], seq[1:])):
+            continue      # approach section: 250 m spans
         if hilly_leg and span > sp.design_span_m + 1e-3 and n > 1 and \
                 not all(chk.is_hilly(a, b) for a, b in zip(seq[:-1], seq[1:])):
             continue      # a span longer than the plain value must itself be on hilly ground

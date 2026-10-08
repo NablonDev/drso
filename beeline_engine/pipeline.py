@@ -15,7 +15,7 @@ from shapely.geometry import LineString, Point, box
 from shapely.ops import unary_union
 
 from . import dem as demmod
-from .compile import attach_terrain, compile_rules
+from .compile import merge_approach, attach_terrain, compile_rules
 from .config import TOWER_TYPES, LineSpec, load_engine, load_layers, resolve_costs, resolve_rules
 from .events import event
 from .frame import Frame
@@ -150,14 +150,31 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
     prog(0.02, "Compiling rules")
     gdfs = {k: li.gdf for k, li in inp.layers.items()}
     t = time.time()
+    # approach section near each gantry (CEA Schedule VII; Vivek, 8 Oct 2026)
+    ap_rule = rules.get("approach_section")
+    ap_len = float(ap_rule.params.get("length_m", 0) or 0) if ap_rule is not None and ap_rule.enabled else 0.0
+    ap_hw = float(ap_rule.params.get("half_width_m", hw)) if ap_len > 0 else hw
+    ap_span = float(ap_rule.params.get("span_m", design)) if ap_len > 0 else None
+    ap_zone = None
+    if ap_len > 0:
+        from shapely.geometry import Point as _Pt
+        ap_zone = unary_union([_Pt(0.0, 0.0).buffer(ap_len), _Pt(frame.length_m, 0.0).buffer(ap_len)])
+
     def _compile(relaxed: bool = False):
-        return compile_rules(frame, gdfs, rules, costs, inp.kv, hw, endpoints_go_radius_m=go_radius,
-                             design_span_m=design,
-                             single_angle_tol_deg=eng["crossings"]["single_angle_tolerance_deg"],
-                             gantry_buffer_m=float(rules["substations"].params.get("gantry_buffer_m", 10)),
-                             raster_margin_m=float(eng["grid"].get("raster_margin_m", 0.0)),
-                             angle_tower_rules=tuple(eng["crossings"].get("angle_tower_rules") or ()),
-                             relaxed=relaxed)
+        def one(half_width, chw_ref):
+            return compile_rules(frame, gdfs, rules, costs, inp.kv, half_width, endpoints_go_radius_m=go_radius,
+                                 design_span_m=design,
+                                 single_angle_tol_deg=eng["crossings"]["single_angle_tolerance_deg"],
+                                 gantry_buffer_m=float(rules["substations"].params.get("gantry_buffer_m", 10)),
+                                 raster_margin_m=float(eng["grid"].get("raster_margin_m", 0.0)),
+                                 angle_tower_rules=tuple(eng["crossings"].get("angle_tower_rules") or ()),
+                                 relaxed=relaxed, chw_ref_m=chw_ref)
+        c = one(hw, None)
+        if ap_zone is not None and ap_hw < hw:
+            c = merge_approach(c, one(ap_hw, hw), ap_zone)
+        elif ap_zone is not None:
+            c.approach_zone = ap_zone
+        return c
     comp = _compile()
     timings["compile_s"] = round(time.time() - t, 2)
     check_cancel()
@@ -214,7 +231,8 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
                         wind_span_m=float(tsd["wind_span_m"]["base"]) if tsd else None,
                         long_ext_steps=_long_ext_steps(tsd) if tsd else (),
                         long_ext_cost_rs_per_m=tower_cost["D45"] * ext_pct / 18.0,
-                        dead_end_max_dev_deg=float(tsd["dead_end_max_dev_deg"]) if tsd and tsd.get("dead_end_max_dev_deg") else None)
+                        dead_end_max_dev_deg=float(tsd["dead_end_max_dev_deg"]) if tsd and tsd.get("dead_end_max_dev_deg") else None,
+                        approach_length_m=ap_len, approach_span_m=ap_span)
     sp = SpotParams(design_span_m=design, span_max_m=smax_search,
                     min_span_m=float(rules["crossing_span_limits"].params["min_span_m"]),
                     max_dev_deg=max_dev, type_bands=bands,
@@ -230,7 +248,7 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
                     nudge_radius_m=float(eng["grid"].get("nudge_radius_m", 30)),
                     hilly_design_span_m=float(rules["design_span"].params["hilly_m"]),
                     hilly_section_km=float(rules["section_interval"].params["hilly_km"]),
-                    hilly_rise_m=hilly_rise, tsd=tsd,
+                    hilly_rise_m=hilly_rise, tsd=tsd, approach_length_m=ap_len, approach_span_m=ap_span,
                     section_spans=int(rules["section_interval"].params.get("plain_spans") or 0) or None,
                     hilly_section_spans=int(rules["section_interval"].params.get("hilly_spans") or 0) or None)
 
