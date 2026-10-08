@@ -17,7 +17,8 @@ spans:
   # max span = the rule "Design span" (plain / hilly), a hard maximum in the search and the spotting
   # (Vivek, 6 Oct 2026; was 1.125 x design span in the search only)
   # Long spans are allowed only where the span crosses a river (best guess, AESL to confirm)
-  river_crossing_max_span_m: 1000
+  # TSD span tables (8 Oct 2026): one span ≤ 60 % of the 1,200 m adjacent-span sum → 720 m
+  river_crossing_max_span_m: 720
   long_heading_limit_deg: 60
   long_heading_step_deg: 5
   long_length_step_m: 100
@@ -28,15 +29,19 @@ crossings:
   # Both towers of a span crossing these features are angle towers, at least B1; the spotting picks
   # the cheapest type that also covers the deflection there, heavier only where a rule asks (railway D,
   # major river D) (Vivek, 6 Oct 2026). Roads: national highways only.
-  angle_tower_rules: [railway, national_highway, river]
+  # River dropped 8 Oct 2026: Rule_Table 38 allows A, B or C at minor river crossings.
+  angle_tower_rules: [railway, national_highway]
 
 routes:
   # Each route is the same solver re-run with one extra internal penalty. The reported ₹ cost
   # of every route is always the true cost, never the penalised objective.
-  - {id: 1, key: least_cost,      name: "Least cost"}
-  - {id: 2, key: fewest_angles,   name: "Fewest angle points",     angle_tower_penalty_rs: 15000000}
-  - {id: 3, key: closest_beeline, name: "Closest to the bee-line", lateral_penalty_rs_per_m_per_km: 40000}
-  - {id: 4, key: least_sensitive, name: "Least sensitive land",    sensitive_multiplier: 6.0}
+  # Route_Rules item 5 (8 Oct 2026): least cost, minimum deviation from the bee-line, relaxed route
+  # (the last-resort relaxations of Rule_Table column N), second least cost (least cost kept apart
+  # from route 1).
+  - {id: 1, key: least_cost,        name: "Least cost"}
+  - {id: 2, key: min_deviation,     name: "Minimum deviation from the bee-line", lateral_penalty_rs_per_m_per_km: 40000}
+  - {id: 3, key: relaxed,           name: "Relaxed route",                       relaxed: true}
+  - {id: 4, key: second_least_cost, name: "Second least cost",                   apart_from: 1}
 
 diversity:
   min_distinct_fraction: 0.15     # a route sharing >85 % of its corridor with an earlier one is re-run
@@ -46,11 +51,38 @@ diversity:
 spotting:
   # Ground-clearance check on the Copernicus GLO-30 DEM (30 m — coarser than the 10 m the
   # research doc asks for; the report says so).
-  ground_clearance_m: {765: 15.0, 400: 8.84, 220: 7.02, 132: 6.1}
-  lowest_attachment_m: {765: 42.0, 400: 30.0, 220: 22.0, 132: 18.0}
-  sag_at_design_span_m: {765: 15.0, 400: 12.0, 220: 9.5, 132: 8.0}
+  # TSD Table-4 + note G (150 mm sag error), all voltages (8 Oct 2026)
+  ground_clearance_m: {765: 18.15, 400: 8.99, 220: 7.165, 132: 6.25}
+  # 765 kV: TSD outline drawings — KNA bottom cross-arm 39.9 m less the 7.635 m suspension string ≈ 32.6 m
+  # (EC/ED 32.55 m + 0.3 m ≈ 32.9 m; the lower figure is used for every type). Other voltages unchanged.
+  lowest_attachment_m: {765: 32.6, 400: 30.0, 220: 22.0, 132: 18.0}
+  # 765 kV: TSD sag-tension sheet, 85 °C nil wind at the 370 m normal span (the design span)
+  sag_at_design_span_m: {765: 14.278, 400: 12.0, 220: 9.5, 132: 8.0}
   simplify_tolerance_m: 30
-  hilly_slope_deg: 10
+
+# AESL Tower Spotting Data, 765 kV D/C Hexa AL59 Zebra WZ-5, R0 24 Jun 2024. Applied to 765 kV
+# lines only; other voltages keep the earlier behaviour until their sheets are delivered.
+tsd:
+  "765":
+    # permissible sum of adjacent spans (m) by deviation (°), per tower type; below the first
+    # listed deviation the first value applies ("& below"); one span ≤ single_span_fraction × sum
+    span_sum:
+      A:   [[0, 863], [1, 831], [2, 800]]
+      B1:  [[3, 1200], [4, 1183], [5, 1148], [6, 1113], [7, 1078], [8, 1043], [9, 1008], [10, 973], [11, 938], [12, 904], [13, 869], [14, 834], [15, 800]]
+      C1:  [[18, 1200], [19, 1175], [20, 1141], [21, 1106], [22, 1072], [23, 1038], [24, 1003], [25, 969], [26, 935], [27, 901], [28, 867], [29, 833], [30, 800]]
+      D45: [[32, 1200], [33, 1195], [34, 1161], [35, 1128], [36, 1095], [37, 1061], [38, 1028], [39, 995], [40, 962], [41, 930], [42, 897], [43, 864], [44, 832], [45, 800]]
+      D60: [[45, 800], [46, 758], [47, 716], [48, 674], [49, 633], [50, 592], [51, 551], [52, 510], [53, 469], [54, 428], [55, 388], [56, 348], [57, 308], [58, 268], [59, 228], [60, 189]]
+    single_span_fraction: 0.6
+    # wind span = mean of the two adjacent spans; base towers 400 m; D with body extensions
+    wind_span_m: {base: 400, d18: 300, d33: 270, d45: 250}
+    # weight span limits (m), both spans [min, max]; H/w of the conductor at 0 °C nil wind
+    # (2,013 kg / 1.254 kg/m) for the weight-span arithmetic
+    weight_span_m: {A: [200, 600], B1: [0, 600], C1: [0, 600], D45: [-200, 600], D60: [-200, 600]}
+    tension_over_weight_m: 1605
+    # body extensions available per type (m)
+    extensions_m: {A: [3, 4.5, 6], B1: [3, 6], C1: [3, 6], D45: [3, 6, 18, 33, 45], D60: [3, 6, 18, 33, 45]}
+    # dead-end towers at the gantries: deviation ≤ 15° line side + 30° slack side (note J)
+    dead_end_max_dev_deg: 45
 
 events:
   low_confidence: 0.80

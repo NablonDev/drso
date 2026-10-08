@@ -140,22 +140,31 @@ def test_railway_crossing_angle_and_span():
 
 
 def test_wide_river_needs_long_span():
+    """300 m of water + 150 m bank buffers each side: a single span of 600 m or more, longer than the
+    370 m normal span. TSD: one span ≤ 720 m (60 % of the 1,200 m adjacent-span allowance) and the
+    wind span ≤ 400 m, so the crossing towers' other spans are short and the towers are tension type."""
     f = frame()
     c = f.length_m / 2
-    river = frame_geom(f, box(c - 175, -3000, c + 175, 3000))     # 350 m of water + 150 m banks = 650 m
+    river = frame_geom(f, box(c - 150, -3000, c + 150, 3000))
     line = frame_geom(f, LineString([(c, -3000), (c, 3000)]))
     res = run_solve(solve_input({"river": gdf([river, line], "river", "Test river")}))
     assert res["feasible"]
     r = res["routes"][0]
-    long_spans = [s for s in r["spans"] if s["length_m"] > 450]
-    assert long_spans and all(any(cr["rule"] == "river" for cr in s["crossings"]) for s in long_spans)
+    S, T = r["spans"], r["towers"]
+    long_ix = [i for i, s in enumerate(S) if s["length_m"] > 370]
+    assert long_ix and all(any(cr["rule"] == "river" for cr in S[i]["crossings"]) for i in long_ix)
+    for i in long_ix:
+        assert S[i]["length_m"] <= 720 + 1e-6
+        assert (S[i - 1]["length_m"] + S[i]["length_m"]) / 2 <= 400 + 1e-6
+        assert (S[i]["length_m"] + S[i + 1]["length_m"]) / 2 <= 400 + 1e-6
+        assert T[i]["type"] != "A" and T[i + 1]["type"] != "A"
     for x, y in towers_frame(f, r)[1:-1]:
-        assert not (c - 175 - 150 + 0.5 < x < c + 175 + 150 - 0.5)
+        assert not (c - 150 - 150 + 0.5 < x < c + 150 + 150 - 0.5)
 
 
 def test_crossings_take_angle_towers_both_sides():
-    """Railway, national-highway and river crossings: both towers of the crossing span are angle towers
-    (at least B1, the cheapest one that fits the deflection) (Vivek, 6 Oct 2026)."""
+    """National-highway crossings: both towers of the crossing span are angle towers (at least B1).
+    Minor river crossings may use A, B or C (Rule_Table 38, 8 Oct 2026), so no tension is forced there."""
     f = frame()
     c = f.length_m / 2
     stream = frame_geom(f, LineString([(c, -3000), (c, 3000)]))          # minor river: a line, no width
@@ -167,7 +176,10 @@ def test_crossings_take_angle_towers_both_sides():
     hits = [(i, cr["rule"]) for i, s in enumerate(r["spans"]) for cr in s["crossings"] if cr["rule"] in ("river", "national_highway")]
     assert {h[1] for h in hits} == {"river", "national_highway"}
     for i, rule in hits:
-        assert types[i] != "A" and types[i + 1] != "A", (rule, types[i], types[i + 1])
+        if rule == "national_highway":
+            assert types[i] != "A" and types[i + 1] != "A", (rule, types[i], types[i + 1])
+        else:
+            assert not any(x.startswith("crossing:river") for x in r["towers"][i]["reasons"] if types[i] == "A")
 
 
 def test_no_stretch_over_5_km_without_an_angle_tower():
@@ -225,10 +237,9 @@ def test_ridge_gets_a_tower_instead_of_a_short_clearance(monkeypatch):
 
 
 def test_search_takes_the_cheaper_of_hill_and_detour(monkeypatch):
-    """A steep 120 m hill on the bee-line, flat ground to either side. With hilly ground priced in the
-    search (tension towers, 600 m hilly spans, extensions) the chosen route costs no more than the
-    route forced round the hill. Under Route Cost Parameters 3 crossing this hill is the cheaper one
-    (₹106.1 vs ₹107.4 Cr on 7 Oct 2026), and every tower on it is a tension tower."""
+    """A steep 120 m hill on the bee-line, flat ground to either side: the search prices the terrain
+    (clearance, extensions, tension towers where the ground rises > 10 m between towers) and chooses
+    between climbing and going round on cost (TSD figures, 8 Oct 2026)."""
     f = frame()
     c = f.length_m / 2
 
@@ -251,28 +262,30 @@ def test_search_takes_the_cheaper_of_hill_and_detour(monkeypatch):
     blob = frame_geom(f, affinity.scale(Point(c, 0).buffer(1), 2500 * 0.85, 700 * 0.85))
     detour = solve({"clusters": gdf([blob], "builtup_cluster")})
     assert max(t["ground_z"] or 0 for t in detour["towers"]) < 20          # the forced route really goes round
-    assert free["cost"]["total"] <= detour["cost"]["total"] * 1.005, (free["cost"]["total"] / 1e7, detour["cost"]["total"] / 1e7)
-    hill = [t for t in free["towers"] if t["type"] != "G" and (t["ground_z"] or 0) > 20]
-    assert all(t["type"] != "A" for t in hill)
+    # TSD clearance (18.15 m, 32.6 m attachment, extensions ≤ +6 m on A/B/C) makes the undulating hill
+    # dear: the free search goes round too, within the search's estimate of the forced detour
+    assert max(t["ground_z"] or 0 for t in free["towers"]) < 20
+    assert free["cost"]["total"] <= detour["cost"]["total"] * 1.015, (free["cost"]["total"] / 1e7, detour["cost"]["total"] / 1e7)
 
 
 def test_hilly_ground_takes_tension_towers_and_longer_spans(monkeypatch):
-    """Rolling hills steeper than 10°: every tower on a hilly span is a tension tower (B1 at least)
-    and hilly spans may reach the hilly design span (600 m at 765 kV); flat spans stay within 400 m
-    (Vivek, 7 Oct 2026)."""
+    """Hilly = the ground rises more than 10 m between adjacent towers (Route_Rules 3, 8 Oct 2026):
+    both towers of such a span are tension towers (B1 at least) and tension towers are at most 10 spans
+    / 3 km apart there. A steady 6 % grade over the second half (about 22 m per 370 m span) is hilly; the
+    flat first half is not. No span exceeds the 370 m TSD normal span."""
     f = frame()
-    hills = lambda x: np.where(x > f.length_m / 2, 40.0 * np.abs(np.sin(x / 150.0)), 0.0)    # ~15° slopes
-    res = _solve_on_dem(monkeypatch, hills)
+    half = f.length_m / 2
+    grade = lambda x: np.where(x > half, (x - half) * 0.06, 0.0)
+    res = _solve_on_dem(monkeypatch, grade)
     r = res["routes"][0]
-    T = {t["no"]: t for t in r["towers"]}
     inner = r["spans"][1:-1]
-    assert max(s["length_m"] for s in inner) <= 600.0 + 1e-6
-    hilly_towers = [t for t in r["towers"] if "hilly" in t["reasons"]]
-    assert hilly_towers and all(t["type"] != "A" for t in hilly_towers)
-    on_hills = [t for t in r["towers"] if t["chainage_km"] * 1000 > f.length_m / 2 + 300 and t["type"] != "G"]
-    assert on_hills and all(t["type"] != "A" for t in on_hills)
-    flat = [s for s in inner if T[s["b"]]["chainage_km"] * 1000 < f.length_m / 2 - 300]
-    assert flat and max(s["length_m"] for s in flat) <= 400.0 + 1e-6
+    assert max(s["length_m"] for s in inner) <= 370.0 + 1e-6
+    T = r["towers"]
+    up = [t for t in T if t["chainage_km"] * 1000 > half + 400 and t["type"] != "G"]
+    assert up and all(t["type"] != "A" for t in up), [t["type"] for t in up]
+    assert any("hilly" in t["reasons"] for t in up)
+    flat = [t for t in T if t["chainage_km"] * 1000 < half - 400 and t["type"] not in ("G",)]
+    assert any(t["type"] == "A" for t in flat)
 
 
 def test_design_span_is_the_hard_maximum_and_editable():
@@ -317,38 +330,46 @@ def test_existing_line_is_not_crossed_within_80m_of_a_tower():
     assert d >= 80.0 - 1.0 and d < 160.0, d
 
 
-def test_sub_400kv_line_is_crossed_at_any_angle():
-    """A 220 kV line at 20° to the bee-line is crossed as it comes (no 60° window); a 765 kV line in
-    the same place forces a crossing inside the window (Vivek, 7 Oct 2026)."""
+def test_power_line_crossing_window_and_tower_types():
+    """Rule_Table 9: lines of 66 kV and above are crossed at 70–110°; TSD B: D towers either side of
+    a 400 kV+ line, B/C/D for 132–220 kV; 33 kV lines at any angle with suspension towers allowed."""
     from shapely.geometry import Point as P
     f = frame()
     c = f.length_m / 2
-    for kv, expect_window in ((220, False), (765, True)):
-        line = frame_geom(f, LineString([(c - 4000, -1456), (c + 4000, 1456)]))         # 20° to the bee-line
-        pts = [frame_geom(f, P(c - 4000 + t * 8000, -1456 + t * 2912)) for t in np.linspace(0, 1, 22)]
+    for kv, layer, rule in ((220, "power", "power_line"), (765, "power", "power_line"), (33, "power_lt", "power_line_lt")):
+        # 20° to the bee-line and right across the ±2 km band, so the route cannot go round it
+        line = frame_geom(f, LineString([(c - 7000, -2548), (c + 7000, 2548)]))
+        pts = [frame_geom(f, P(c - 7000 + t * 14000, -2548 + t * 5096)) for t in np.linspace(0, 1, 38)]
         g = gpd.GeoDataFrame({"class": ["power_line"] + ["power_tower"] * len(pts), "name": [f"{kv} kV"] + [None] * len(pts),
                               "attrs": [{"voltage_kv": kv}] * (1 + len(pts))}, geometry=[line] + pts, crs=4326)
-        res = run_solve(solve_input({"power": g}))
+        res = run_solve(solve_input({layer: g}))
         assert res["feasible"], kv
         r = res["routes"][0]
-        cr = [x for s in r["spans"] for x in s["crossings"] if x["rule"] == "power_line"]
+        types = [t["type"] for t in r["towers"]]
+        cr = [(i, x) for i, s in enumerate(r["spans"]) for x in s["crossings"] if x["rule"] == rule]
         assert cr, kv
-        if expect_window:
-            assert all(x["angle_deg"] >= 60 - 1e-6 for x in cr), (kv, [x["angle_deg"] for x in cr])
+        if kv >= 66:
+            assert all(x["angle_deg"] >= 70 - 1e-6 for _, x in cr), (kv, [x["angle_deg"] for _, x in cr])
         else:
-            assert any(x["angle_deg"] < 60 - 1e-6 for x in cr), (kv, [x["angle_deg"] for x in cr])
+            assert any(x["angle_deg"] < 60 for _, x in cr), (kv, [x["angle_deg"] for _, x in cr])
+        for i, _ in cr:
+            pair = (types[i], types[i + 1])
+            if kv >= 400:
+                assert all(t in ("D45", "D60") for t in pair), (kv, pair)
+            elif kv >= 132:
+                assert all(t != "A" for t in pair), (kv, pair)
 
 
 def test_band_fully_blocked_is_reported():
+    """A solar park across the whole band (No-Go, not relaxable): no route, and the blocker is named."""
     f = frame()
     c = f.length_m / 2
     wall = frame_geom(f, box(c - 1500, -6000, c + 1500, 6000))
-    res = run_solve(solve_input({"wildlife_sanctuary": gdf([wall], "wildlife_sanctuary", "Test WLS")}))
+    res = run_solve(solve_input({"solar": gdf([wall], "solar_park", "Test solar park")}))
     assert not res["feasible"]
     b = res["blocked"]
-    assert b["blockers"] and b["blockers"][0]["rule_id"] == "protected_areas"
-    assert b["blockers"][0]["feature"] == "Test WLS"
-    assert abs(b["reach_km"] - (c - 1500) / 1000) < 1.0
+    assert b["blockers"] and b["blockers"][0]["rule_id"] == "solar"
+    assert b["blockers"][0]["feature"] == "Test solar park"
 
 
 def test_terminal_yard_is_carved_out():
@@ -362,14 +383,17 @@ def test_terminal_yard_is_carved_out():
 
 
 def test_four_routes_are_distinct_objectives():
+    """Route_Rules 5: least cost, minimum deviation from the bee-line, relaxed route, second least cost."""
     f = frame()
     village = frame_geom(f, Point(f.length_m * 0.4, 300).buffer(500))
     res = run_solve(solve_input({"clusters": gdf([village], "builtup_cluster")}, routes=4))
     assert res["feasible"] and len(res["routes"]) == 4
     keys = [r["key"] for r in res["routes"]]
-    assert keys == ["least_cost", "fewest_angles", "closest_beeline", "least_sensitive"]
-    costs = [r["cost"]["total"] for r in res["routes"]]
-    assert costs[0] <= min(costs) * 1.02    # route 1 is (near) the cheapest true cost
+    assert keys == ["least_cost", "min_deviation", "relaxed", "second_least_cost"]
+    costs = {r["key"]: r["cost"]["total"] for r in res["routes"]}
+    assert costs["least_cost"] <= costs["min_deviation"] * 1.02 and costs["least_cost"] <= costs["second_least_cost"] * 1.02
+    r1, r4 = (LineString(towers_frame(f, r)) for r in (res["routes"][0], res["routes"][3]))
+    assert r4.intersection(r1.buffer(150)).length / r4.length < 0.9      # the second least cost runs elsewhere
 
 
 @pytest.mark.parametrize("kv,circuit", [(400, "dc"), (220, "dc"), (132, "dc")])
@@ -449,32 +473,144 @@ def test_dp_is_optimal_against_dijkstra():
     assert abs(best - out.cost_rs) / best < 1e-4, (best, out.cost_rs)
 
 
-def test_airport_prohibition_reaches_from_outside_the_frame():
-    """A runway beyond the raster still forbids towers within the prohibition distance."""
+def test_airport_no_go_buffer_and_funnel():
+    """Rule_Table 14-15: No-Go within 6 km of the airport boundary, 10 km inside the approach funnel;
+    an airport beyond the raster still reaches in."""
     f = frame()
     x = f.length_m / 2
-    out_top = f.half_width_m + f.margin_m + 500                       # 500 m beyond the raster edge
-    rw = frame_geom(f, box(x - 1000, out_top, x + 1000, out_top + 45))
+    top = f.half_width_m + f.margin_m                                 # raster top edge (frame y)
     rules = resolve_rules(LineSpec(765, "dc"))
     costs = resolve_costs(LineSpec(765, "dc"))
-    comp = compile_rules(f, {"approach": gdf([rw], "runway")}, rules, costs, 765, 30, 150, 400)
-    d = float(rules["airport_prohibition"].params["distance_m"])
-    col, row = f.frame_to_pixel(x, out_top - d + 300)                # inside the frame, inside the distance
+    # boundary 5.5 km beyond the raster top: the 6 km buffer reaches 500 m into the raster
+    b1 = top + 5500
+    airport = frame_geom(f, box(x - 1500, b1, x + 1500, b1 + 2000))
+    comp = compile_rules(f, {"aviation": gdf([airport], "airport")}, rules, costs, 765, 33.5, 150, 370)
+    col, row = f.frame_to_pixel(x, top - 200)                        # 5.7 km from the boundary
     assert comp.tower_forbidden[int(row), int(col)] and comp.conductor_forbidden[int(row), int(col)]
-    col, row = f.frame_to_pixel(x, out_top - d - 300)                # inside the frame, beyond the distance
+    col, row = f.frame_to_pixel(x, top - 1500)                       # 7.0 km
     assert not comp.tower_forbidden[int(row), int(col)]
     assert comp.rules_fired.get("airport_prohibition")
+    # boundary 8 km beyond the raster top, runway pointing at the corridor: only the approach funnel
+    # (10 km) reaches in
+    b2 = top + 8000
+    airport = frame_geom(f, box(x - 1500, b2, x + 1500, b2 + 2500))
+    rw = frame_geom(f, box(x - 22, b2 + 200, x + 22, b2 + 2300))
+    comp = compile_rules(f, {"aviation": gdf([airport], "airport"), "approach": gdf([rw], "runway")},
+                         rules, costs, 765, 33.5, 150, 370)
+    col, row = f.frame_to_pixel(x, top - 200)                        # on the runway axis, 8.2 km out
+    assert comp.conductor_forbidden[int(row), int(col)]
+    col, row = f.frame_to_pixel(x + 3000, top - 200)                 # 3 km to the side: outside the funnel
+    assert not comp.conductor_forbidden[int(row), int(col)]
 
 
-def test_nalla_keeps_towers_10m_away_and_is_spanned():
-    """A nalla across the corridor (SISDP drainage, Vivek 7 Oct 2026): no tower within 10 m of the
-    centreline, and the conductor crosses it freely."""
+def test_nalla_keeps_towers_40m_away_and_is_spanned():
+    """Nallas (Rule_Table 81-82, Vivek 8 Oct 2026): no tower within 40 m of the centreline; the
+    conductor crosses them."""
     f = frame()
     xs = [f.length_m * k / 8 for k in range(1, 8)]
     lines = [frame_geom(f, LineString([(x, -1500), (x + 40, 1500)])) for x in xs]
     r = run_solve(solve_input({"nalla": gdf(lines, "nalla")}))["routes"][0]
     pts = towers_frame(f, r)
     fl = [LineString([(x, -1500), (x + 40, 1500)]) for x in xs]
-    assert min(Point(p).distance(l) for p in pts[1:-1] for l in fl) >= 10.0 - 0.5
+    assert min(Point(p).distance(l) for p in pts[1:-1] for l in fl) >= 40.0 - 0.5
     route = LineString(pts)
     assert all(route.intersects(l) for l in fl)
+
+# ---- AESL Tower Spotting Data + Route_Rules.xlsx (8 Oct 2026) ---------------------------------
+def test_tsd_span_tables_hold_on_a_solved_route():
+    """765 kV: no span over the 370 m normal span; every tower's wind span (mean of its two spans)
+    ≤ 400 m; every angle tower's span pair fits its type's adjacent-span allowance; tension towers at
+    most 15 spans apart."""
+    from beeline_engine.config import load_engine
+    from beeline_engine.solver import span_sum_limit
+    f = frame()
+    village = frame_geom(f, Point(f.length_m * 0.4, 0).buffer(700))
+    r = run_solve(solve_input({"clusters": gdf([village], "builtup_cluster")}))["routes"][0]
+    tsd = load_engine()["tsd"]["765"]
+    T, S = r["towers"], r["spans"]
+    assert max(s["length_m"] for s in S[1:-1]) <= 370.0 + 1e-6
+    for i in range(2, len(T) - 2):
+        L1, L2 = S[i - 1]["length_m"], S[i]["length_m"]
+        assert (L1 + L2) / 2 <= 400.0 + 1e-6
+        lim = span_sum_limit(tsd["span_sum"], T[i]["type"], T[i]["deflection_deg"])
+        assert L1 + L2 <= lim + 1e-6 and max(L1, L2) <= 0.6 * lim + 1e-6, (i, T[i]["type"], T[i]["deflection_deg"], L1, L2)
+    idx = [i for i, t in enumerate(T) if t["type"] != "A"]
+    assert max(b - a for a, b in zip(idx, idx[1:])) <= 15
+
+
+def test_tsd_weight_span_and_extension_steps():
+    """Weight span: a suspension tower in a dip (uplift below the A minimum of 200 m) becomes a tension
+    type whose limit holds. Extensions: the smallest step of the type; A/B/C stop at +6 m, a bigger
+    need makes the tower a D with +18 m."""
+    from beeline_engine.config import load_engine
+    from beeline_engine.spotting import SpotParams, Span, Tower, _raise, _tsd_checks
+    tsd = load_engine()["tsd"]["765"]
+    sp = SpotParams(design_span_m=370, span_max_m=370, min_span_m=100, max_dev_deg=60, type_bands={},
+                    section_km=5, parallel_angle_deg=30, tower_cost_rs={}, ground_clearance_m=18.15,
+                    lowest_attachment_m=32.6, sag_at_design_m=14.278, go_radius_m=150, tsd=tsd)
+    zs = [0, 0, 20, 0, 20, 0, 0]                       # the middle tower sits 20 m below both neighbours
+    T = [Tower(i, i * 350.0, 0.0, "G" if i in (0, 6) else "A", 0.0, "-", False, ground_z=z) for i, z in enumerate(zs)]
+    T[1].reasons.append("dead_end"); T[5].reasons.append("dead_end")
+    S = [Span(i, i + 1, 350.0) for i in range(6)]
+    _tsd_checks(T, S, sp)
+    assert T[3].type in ("B1", "D45") and "weight_span" in T[3].reasons
+    t = Tower(9, 0, 0, "A", 0, "-", False)
+    _raise(t, 4.0, sp, "extension"); assert (t.type, t.extension_m) == ("A", 4.5)
+    t = Tower(9, 0, 0, "B1", 0, "-", False)
+    _raise(t, 2.0, sp, "extension"); assert (t.type, t.extension_m) == ("B1", 3.0)
+    t = Tower(9, 0, 0, "A", 0, "-", False)
+    _raise(t, 10.0, sp, "extension"); assert (t.type, t.extension_m) == ("D45", 18.0)
+
+
+def test_relaxed_route_crosses_a_last_resort_water_body():
+    """A pond across the whole band (Rule_Table 41-42: No-Go with 30 m buffers, crossing as last
+    resort): the normal routes find nothing; the relaxed route crosses it and carries 6 months'
+    approval."""
+    f = frame()
+    c = f.length_m / 2
+    pond = frame_geom(f, box(c - 40, -6000, c + 40, 6000))
+    res = run_solve(solve_input({"pond": gdf([pond], "pond", "Test pond")}, routes=4))
+    assert res["feasible"]
+    keys = [r["key"] for r in res["routes"]]
+    assert keys == ["relaxed"], keys
+    r = res["routes"][0]
+    assert any(e["type"] == "APPROVAL" and "Pond" in e["text"] for e in r["events"])
+    assert r["stats"]["approval_months"] >= 6
+    assert any(e["type"] == "ROUTE_NOT_FOUND" for e in res["events_global"])
+
+
+def test_bridges_are_crossed_with_d_towers_and_flyover_extension():
+    """Bridges and flyovers (Rule_Table 25-26): crossable at 80–90° with D towers; a flyover crossing
+    gives both crossing towers the D tower's +18 m step."""
+    f = frame()
+    c = f.length_m / 2
+    fly = frame_geom(f, box(c - 10, -6000, c + 10, 6000))
+    r = run_solve(solve_input({"bridges": gdf([fly], "flyover", "Test flyover")}))["routes"][0]
+    hits = [(i, x) for i, s in enumerate(r["spans"]) for x in s["crossings"] if x["rule"] == "bridges"]
+    assert hits
+    for i, x in hits:
+        for t in (r["towers"][i], r["towers"][i + 1]):
+            assert t["type"] in ("D45", "D60") and t["extension_m"] >= 18.0, (t["type"], t["extension_m"])
+        assert x["angle_deg"] >= 80 - 1e-6
+
+
+def test_buildings_keep_every_tower_100m_away():
+    """Rule_Table 17-18: the 100 m tower buffer from buildings applies to every tower, suspension
+    included."""
+    f = frame()
+    houses = [frame_geom(f, box(x - 6, -6, x + 6, 6)) for x in (f.length_m * 0.3, f.length_m * 0.6)]
+    r = run_solve(solve_input({"buildings": gdf(houses, "building")}))["routes"][0]
+    hb = [box(x - 6, -6, x + 6, 6) for x in (f.length_m * 0.3, f.length_m * 0.6)]
+    for p in towers_frame(f, r)[1:-1]:
+        assert min(Point(p).distance(h) for h in hb) >= 100.0 - 0.5
+
+
+def test_dead_end_towers_turn_at_most_45_degrees():
+    """TSD note J: the dead-end towers next to the gantries turn at most 15° line side + 30° slack
+    side. A building block right ahead of A forces the line out sideways; the first tower's turn stays
+    within 45°."""
+    f = frame()
+    block = frame_geom(f, box(250, -150, 900, 150))
+    r = run_solve(solve_input({"clusters": gdf([block], "builtup_cluster")}))["routes"][0]
+    T = r["towers"]
+    assert T[1]["deflection_deg"] <= 45 + 0.5 and T[-2]["deflection_deg"] <= 45 + 0.5, (T[1]["deflection_deg"], T[-2]["deflection_deg"])

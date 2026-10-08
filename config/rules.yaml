@@ -18,7 +18,10 @@
 #                        read whole (e.g. the soil-type layers)
 #   geometry             span, deviation, tower-type and section parameters (no layer)
 
-version: "AESL-2026.10-default"
+# 8 Oct 2026 (Vivek): rules aligned to the AESL Tower Spotting Data (TSD 765 kV D/C R0 24 Jun 2024 > Route_Rules.xlsx Rule_Table > earlier settings — Vivek, 8 Oct 2026).
+# Treatment "Last resort" = No-Go in the normal routes; crossable only in the Relaxed route (route 3),
+# which also carries the approval months of Rule_Table column O.
+version: "AESL-2026.10-tsd"
 
 groups:
   - key: lock
@@ -40,13 +43,17 @@ groups:
           - {key: min_area_m2, label: "Ignore structures smaller than", type: num, unit: "m²", value: 0}
 
       - id: airport_prohibition
-        name: "Airport — EHT line prohibition"
-        note: "MoCA Height Restriction Rules 2015, Schedule I ¶1.2 — measured from the runway polygon (approach path layer), which stands in for the approach surface inner edge"
-        layer: approach
-        classes: [runway]
+        name: "Airport — no-go buffer and approach funnel"
+        note: "Rule_Table 14-15: No-Go 6 km from the airport boundary, 10 km inside the approach funnel (ICAO Annex 14 approach surface from each runway end: 300 m inner edge 60 m beyond the threshold, 15 % divergence each side). Last resort (Relaxed route): 1.5 km / 6 km, 12 months' approval"
+        layer: aviation
+        classes: [airport]
+        also_layers: [approach]            # runways give the approach funnel direction
         mechanism: airport_prohibition
         params:
-          - {key: distance_m, label: "From the runway", type: num, unit: m, value: 1500}
+          - {key: distance_m, label: "From the airport boundary", type: num, unit: m, value: 6000}
+          - {key: funnel_m, label: "Inside the approach funnel", type: num, unit: m, value: 10000}
+          - {key: last_resort_distance_m, label: "Last resort: boundary", type: num, unit: m, value: 1500}
+          - {key: last_resort_funnel_m, label: "Last resort: funnel", type: num, unit: m, value: 6000}
           - {key: applies_to, label: "Applies to", type: sel, value: "EHT and HT", options: ["EHT and HT", "EHT only", "All lines"]}
 
       - id: airport_noc
@@ -65,7 +72,7 @@ groups:
         layer: pipelines
         mechanism: tower_setback
         params:
-          - {key: setback_m, label: "Setback", type: num, unit: m, value: 25}
+          - {key: setback_m, label: "Setback", type: num, unit: m, value: 30}
           - {key: mitigation, label: "Mitigation allowed below", type: sel, value: "No", options: ["No", "Yes, with grounding"]}
 
       - id: pipeline_crossing
@@ -76,6 +83,7 @@ groups:
         params:
           - {key: min_angle_deg, label: "Minimum angle", type: num, unit: "°", value: 75}
           - {key: preferred_angle_deg, label: "Preferred angle", type: num, unit: "°", value: 90}
+          - {key: parallel_setback_m, label: "Conductor buffer, parallel run", type: num, unit: m, value: 30}
 
   - key: nogo
     title: "No-Go zones"
@@ -90,8 +98,9 @@ groups:
           - {key: tower_setback_m, label: "Tower setback", type: num, unit: m, value: 100}
           - {key: conductor_buffer, label: "Conductor buffer", type: sel, value: "Corridor half-width", options: ["Corridor half-width", "Fixed", "None"]}
           - {key: conductor_buffer_m, label: "Fixed conductor buffer", type: num, unit: m, value: 30, best_guess: true}
-          - {key: applies_to, label: "Applies to", type: sel, value: "Angular towers", options: ["Angular towers", "All towers"]}
+          - {key: applies_to, label: "Applies to", type: sel, value: "All towers", options: ["Angular towers", "All towers"]}
           - {key: min_area_m2, label: "Ignore structures smaller than", type: num, unit: "m²", value: 0}
+          - {key: last_resort_max_area_m2, label: "Last resort: cross structures up to", type: num, unit: "m²", value: 10}
 
       - id: clusters
         name: "Built-up cluster (village)"
@@ -99,8 +108,8 @@ groups:
         layer: clusters
         mechanism: nogo
         params:
-          - {key: tower_setback_m, label: "Tower buffer", type: num, unit: m, value: 120}
-          - {key: conductor_buffer_m, label: "Conductor buffer", type: num, unit: m, value: 120}
+          - {key: tower_setback_m, label: "Tower buffer", type: num, unit: m, value: 200}
+          - {key: conductor_buffer_m, label: "Conductor buffer", type: num, unit: m, value: 200}
           - {key: max_spacing_m, label: "Max spacing between buildings", type: num, unit: m, value: 50}
           - {key: min_area_m2, label: "Minimum cluster area", type: num, unit: "m²", value: 9000}
 
@@ -108,12 +117,12 @@ groups:
       # for now, so the two can be set independently later.
       - id: plotted_land
         name: "Plotted land"
-        note: "Same buffers as the built-up cluster rule for now — AESL may set its own"
+        note: "Rule_Table 19-20: 100 m tower and conductor buffer, No-Go"
         layer: plotted
         mechanism: nogo
         params:
-          - {key: tower_setback_m, label: "Tower buffer", type: num, unit: m, value: 120}
-          - {key: conductor_buffer_m, label: "Conductor buffer", type: num, unit: m, value: 120}
+          - {key: tower_setback_m, label: "Tower buffer", type: num, unit: m, value: 100}
+          - {key: conductor_buffer_m, label: "Conductor buffer", type: num, unit: m, value: 100}
 
       - id: substations
         name: "Sub-station"
@@ -128,12 +137,12 @@ groups:
 
       - id: dams
         name: "Dams"
-        note: "Placement, crossing and passing alike — no dam-structure layer yet, so this rule has no data (reservoir water is its own rule)"
+        note: "Rule_Table 21-22: 500 m tower and conductor buffer, No-Go. Dam axes + register points from the water master (8 Oct 2026)"
         layer: dams
         classes: [dam]
         mechanism: nogo
         params:
-          - {key: tower_setback_m, label: "Buffer", type: num, unit: m, value: 400}
+          - {key: tower_setback_m, label: "Buffer", type: num, unit: m, value: 500}
           - {key: crossing, label: "Crossing", type: sel, value: "Prohibited", options: ["Prohibited", "Allowed"]}
 
       - id: solar
@@ -147,28 +156,59 @@ groups:
 
       - id: creek
         name: "Creek area"
-        note: "Sandy coastal strip — largest ground-level buffer in the set"
+        note: "Rule_Table 63-64: 500 m; crossing as last resort on pile foundations (12 months)"
         layer: other_water
         classes: [creek]
         mechanism: nogo
         params:
-          - {key: tower_setback_m, label: "Buffer", type: num, unit: m, value: 2000}
-          - {key: treatment, label: "Treatment", type: sel, value: "No-Go", options: ["No-Go", "Allowed"]}
+          - {key: tower_setback_m, label: "Buffer", type: num, unit: m, value: 500}
+          - {key: treatment, label: "Treatment", type: sel, value: "Last resort", options: ["No-Go", "Last resort", "Allowed"]}
+          - {key: last_resort_towers_inside, label: "Last resort: towers inside (piles)", type: sel, value: "Yes", options: ["Yes", "No"]}
+          - {key: approval_months, label: "Approval time if crossed", type: num, unit: months, value: 12}
 
       # Rules 35-36, added 6 Oct 2026 with the water layers (Vivek): reservoir keeps towers 150 m
       # off the water (spans may cross); every "Other water" body is No-Go (switchable).
       - id: reservoir
         name: "Reservoir"
-        note: "Bank buffer like a river; the conductor may span the water"
+        note: "Rule_Table 35-36: 200 m tower and conductor buffer; crossing as last resort, towers 200 m from the water (6 months)"
         layer: reservoir
-        mechanism: tower_setback
+        mechanism: nogo
         params:
-          - {key: setback_m, label: "Bank buffer", type: num, unit: m, value: 150}
+          - {key: tower_setback_m, label: "Tower buffer", type: num, unit: m, value: 200}
+          - {key: conductor_buffer_m, label: "Conductor buffer", type: num, unit: m, value: 200}
+          - {key: treatment, label: "Treatment", type: sel, value: "Last resort", options: ["No-Go", "Last resort", "Allowed"]}
+          - {key: last_resort_towers_inside, label: "Last resort: towers inside (piles)", type: sel, value: "No", options: ["Yes", "No"]}
+          - {key: approval_months, label: "Approval time if crossed", type: num, unit: months, value: 6}
+
+      - id: lake
+        name: "Lake"
+        note: "Rule_Table 39-40: corridor half-width buffer; crossing as last resort (6 months)"
+        layer: lake
+        mechanism: nogo
+        params:
+          - {key: tower_setback_m, label: "Tower buffer", type: num, unit: m, value: {765: 33.5, 400: 23, 220: 17.5, 132: 13.5}}
+          - {key: conductor_buffer_m, label: "Conductor buffer", type: num, unit: m, value: {765: 33.5, 400: 23, 220: 17.5, 132: 13.5}}
+          - {key: treatment, label: "Treatment", type: sel, value: "Last resort", options: ["No-Go", "Last resort", "Allowed"]}
+          - {key: last_resort_towers_inside, label: "Last resort: towers inside (piles)", type: sel, value: "No", options: ["Yes", "No"]}
+          - {key: approval_months, label: "Approval time if crossed", type: num, unit: months, value: 6}
+
+      - id: pond
+        name: "Pond"
+        note: "Rule_Table 41-42: 30 m tower and conductor buffer; crossing as last resort (6 months)"
+        layer: pond
+        mechanism: nogo
+        params:
+          - {key: tower_setback_m, label: "Tower buffer", type: num, unit: m, value: 30}
+          - {key: conductor_buffer_m, label: "Conductor buffer", type: num, unit: m, value: 30}
+          - {key: treatment, label: "Treatment", type: sel, value: "Last resort", options: ["No-Go", "Last resort", "Allowed"]}
+          - {key: last_resort_towers_inside, label: "Last resort: towers inside (piles)", type: sel, value: "No", options: ["Yes", "No"]}
+          - {key: approval_months, label: "Approval time if crossed", type: num, unit: months, value: 6}
 
       - id: other_water
         name: "Other water bodies"
-        note: "Creeks, beach, coral reef, lagoons, mud flats, salt marsh, salt pans, mangroves, detected water, 25 km marine buffer — all No-Go by default"
+        note: "Beach, coral reef, lagoons, mud flats, salt marsh, mangroves, detected water, 25 km marine buffer — No-Go. Creeks and salt pans have their own last-resort rules (8 Oct 2026)"
         layer: other_water
+        classes: [beach, coral_reef, lagoon, mud_flat, salt_marsh, mangrove, detected_water, marine_buffer]
         mechanism: nogo
         params:
           - {key: tower_setback_m, label: "Tower buffer", type: num, unit: m, value: 0}
@@ -178,8 +218,8 @@ groups:
       # Not in the prototype's 29; added because Vivek set "avoid entry" for wildlife areas
       # (5 Oct 2026). Counted as rule 30 — switchable like any other.
       - id: protected_areas
-        name: "Protected areas and ESZ"
-        note: "Wildlife sanctuary, national park and eco-sensitive zone — avoid entry"
+        name: "National park and wildlife sanctuary"
+        note: "Rule_Table 69-72: crossable with forest diversion approval — ≤ 5 ha Regional Office (6 months), ≤ 40 ha REC (12), > 40 ha Conservator (18). Eco-sensitive zones and the international border are No-Go (Vivek, 8 Oct 2026) but have no data layer yet"
         # forest package: national parks + sanctuaries + reserve forest inside them; no ESZ delivered yet
         layer: national_park
         also_layers: [wildlife_sanctuary, forest_in_pa]
@@ -187,64 +227,72 @@ groups:
         params:
           - {key: tower_setback_m, label: "Tower buffer", type: num, unit: m, value: 0}
           - {key: conductor_buffer_m, label: "Conductor buffer", type: num, unit: m, value: 0}
-          - {key: treatment, label: "Treatment", type: sel, value: "No-Go", options: ["No-Go", "Allowed"]}
+          - {key: treatment, label: "Treatment", type: sel, value: "Allowed", options: ["No-Go", "Allowed"]}
 
       # Not in the prototype's 29; added 6 Oct 2026 with the CRZ layer (Vivek: sea + 500 m of land
       # No-Go, no CRZ cost). Counted as rule 34. The 500 m is measured from the edge of the
       # delivered sea polygon, which stands in for the HTL until the HTL line is delivered.
       - id: crz
         name: "Coastal regulation zone"
-        note: "CRZ Notification 2019 — sea, and 500 m landward of the shoreline; measured from the sea polygon edge until the HTL is delivered"
+        note: "Rule_Table 61-62: corridor half-width buffer; crossing as last resort on pile foundations (12 months). Measured from the sea polygon edge until the HTL is delivered"
         layer: crz
-        classes: [crz_water]
+        classes: [crz_ia, crz_ia_mangrove_buffer, crz_ib, crz_ii, crz_iii_ndz, crz_iiia, crz_iiib, crz_iva, crz_ivb, crz_water]
         mechanism: nogo
         params:
-          - {key: tower_setback_m, label: "Tower buffer from the sea", type: num, unit: m, value: 500}
-          - {key: conductor_buffer_m, label: "Conductor buffer from the sea", type: num, unit: m, value: 500}
-          - {key: treatment, label: "Treatment", type: sel, value: "No-Go", options: ["No-Go", "Allowed"]}
-
-      # Added 6 Oct 2026 with the Bridges layer (Vivek: No-Go for tower and conductor). Counted as
-      # rule 38. Buffers start at 0 m (the deck footprint); set a setback here if one is agreed.
-      - id: bridges
-        name: "Bridges"
-        note: "Road and rail bridges, flyovers and underpasses — no tower on the structure, no conductor over it"
-        layer: bridges
-        classes: [road_bridge, rail_bridge, flyover, underpass]
-        mechanism: nogo
-        params:
-          - {key: tower_setback_m, label: "Tower buffer", type: num, unit: m, value: 0}
-          - {key: conductor_buffer_m, label: "Conductor buffer", type: num, unit: m, value: 0}
-          - {key: treatment, label: "Treatment", type: sel, value: "No-Go", options: ["No-Go", "Allowed"]}
+          - {key: tower_setback_m, label: "Tower buffer from the sea", type: num, unit: m, value: {765: 33.5, 400: 23, 220: 17.5, 132: 13.5}}
+          - {key: conductor_buffer_m, label: "Conductor buffer from the sea", type: num, unit: m, value: {765: 33.5, 400: 23, 220: 17.5, 132: 13.5}}
+          - {key: treatment, label: "Treatment", type: sel, value: "Last resort", options: ["No-Go", "Last resort", "Allowed"]}
+          - {key: last_resort_towers_inside, label: "Last resort: towers inside (piles)", type: sel, value: "Yes", options: ["Yes", "No"]}
+          - {key: approval_months, label: "Approval time if crossed", type: num, unit: months, value: 12}
 
       # Not in the prototype's 29; added 5 Oct 2026 with the Tarang Sanchar cell tower layer.
       # Counted as rule 31. No regulation found — the setback is a falling-structure placeholder.
       - id: cell_towers
         name: "Cell tower"
-        note: "Tower kept clear of mobile tower sites (Tarang Sanchar) — distance pending AESL"
+        note: "Rule_Table 13: 200 m tower and conductor buffer from a 10 m radial base (210 m from the site point)"
         layer: telecom
         classes: [cell_tower]
-        mechanism: tower_setback
+        mechanism: nogo
         params:
-          - {key: setback_m, label: "Tower setback", type: num, unit: m, value: 50, best_guess: true}
+          - {key: tower_setback_m, label: "Tower buffer", type: num, unit: m, value: 210}
+          - {key: conductor_buffer_m, label: "Conductor buffer", type: num, unit: m, value: 210}
 
       # Rules 32-33, added 5 Oct 2026 with the LULC model layers. Values confirmed by Vivek as
       # placeholders (5 Oct 2026) until AESL gives blade-throw / road-clearance distances.
       - id: wind_turbines
         name: "Wind turbine"
-        note: "Tower and conductor kept clear of turbines (blade-throw / fall distance) — AESL to confirm"
+        note: "Rule_Table 3-4: 200 m tower and conductor buffer from a 10 m radial base (210 m from the turbine point)"
         layer: wind_turbines
         mechanism: nogo
         params:
-          - {key: tower_setback_m, label: "Tower buffer", type: num, unit: m, value: 300, best_guess: true}
-          - {key: conductor_buffer_m, label: "Conductor buffer", type: num, unit: m, value: 200, best_guess: true}
+          - {key: tower_setback_m, label: "Tower buffer", type: num, unit: m, value: 210}
+          - {key: conductor_buffer_m, label: "Conductor buffer", type: num, unit: m, value: 210}
 
       - id: village_roads
         name: "Village road"
-        note: "Towers kept off village road carriageways; the conductor may cross at any angle"
+        note: "Rule_Table 31-32 (MDR, village roads, CT): 30 m tower buffer; the conductor may cross at any angle"
         layer: village_roads
         mechanism: tower_setback
         params:
-          - {key: setback_m, label: "Tower setback", type: num, unit: m, value: 15, best_guess: true}
+          - {key: setback_m, label: "Tower setback", type: num, unit: m, value: 30}
+
+      - id: defence
+        name: "Defence land"
+        note: "Rule_Table 57-58: corridor half-width buffer; crossing No-Go"
+        layer: defence
+        mechanism: nogo
+        params:
+          - {key: tower_setback_m, label: "Tower buffer", type: num, unit: m, value: {765: 33.5, 400: 23, 220: 17.5, 132: 13.5}}
+          - {key: conductor_buffer_m, label: "Conductor buffer", type: num, unit: m, value: {765: 33.5, 400: 23, 220: 17.5, 132: 13.5}}
+
+      - id: monuments
+        name: "Monument and fort"
+        note: "Rule_Table 93-94: 100 m tower and conductor buffer; crossing No-Go"
+        layer: monuments
+        mechanism: nogo
+        params:
+          - {key: tower_setback_m, label: "Tower buffer", type: num, unit: m, value: 100}
+          - {key: conductor_buffer_m, label: "Conductor buffer", type: num, unit: m, value: 100}
 
   - key: cross
     title: "Crossings"
@@ -252,93 +300,124 @@ groups:
     rules:
       - id: railway
         name: "Railway line"
-        note: "Setback follows structure height plus the railway allowance; angle towers on both sides (at least B1)"
+        note: "TSD A: crossing span ≤ 300 m, right angles, D towers, crossing tower ≥ tower height + 6 m from the track centre (78.5 m at 765 kV); Rule_Table 7-8: 100 m tower buffer from the track edge (7.5 m half-width → 107.5 m from the centreline), conductor parallel buffer CHW, angle 80–100°; angle towers both sides"
         layer: rail
         mechanism: crossing
         params:
-          - {key: tower_setback_m, label: "Tower setback", type: num, unit: m, value: 86}
-          - {key: height_allowance_m, label: "Structure height allowance", type: num, unit: m, value: 6}
-          - {key: angle_deg, label: "Crossing angle", type: rng, unit: "°", value: [70, 110]}
+          - {key: tower_setback_m, label: "Tower setback from the track centreline", type: num, unit: m, value: 107.5}
+          - {key: parallel_setback_m, label: "Conductor buffer, parallel run", type: num, unit: m, value: {765: 41, 400: 30.5, 220: 25, 132: 21}}
+          - {key: angle_deg, label: "Crossing angle", type: rng, unit: "°", value: [80, 100]}
           - {key: max_span_m, label: "Max crossing span", type: num, unit: m, value: 300}
           - {key: tower_type, label: "Crossing tower type", type: sel, value: "D", options: ["B", "C", "D", "B/C/D"]}
           - {key: pct_design_span, label: "Or % of design span", type: num, unit: "%", value: 80}
 
       - id: national_highway
         name: "National highway"
-        note: "Tension-type towers required at all national highways; angle towers on both sides (at least B1)"
+        note: "TSD H: tension towers, crossing span ≤ 250 m; Rule_Table 23-24: tower at tower height from the road edge (72.5 + 20 m half-carriageway = 92.5 m from the centreline at 765 kV), parallel 300 m + 20 m, angle 80–90°"
         layer: roads
         classes: [nh]
         mechanism: crossing
         params:
-          - {key: tower_setback_m, label: "Tower setback", type: num, unit: m, value: 80}
-          - {key: parallel_setback_m, label: "Parallel-run setback", type: num, unit: m, value: 300}
+          - {key: tower_setback_m, label: "Tower setback from the centreline", type: num, unit: m, value: {765: 92.5, 400: 80, 220: 80, 132: 80}}
+          - {key: parallel_setback_m, label: "Parallel-run setback", type: num, unit: m, value: 320}
           - {key: angle_deg, label: "Crossing angle", type: rng, unit: "°", value: [80, 100]}
           - {key: max_span_m, label: "Max crossing span", type: num, unit: m, value: 250}
           - {key: tower_type, label: "Crossing tower type", type: sel, value: "B/C/D", options: ["B", "C", "D", "B/C/D"]}
 
+      - id: state_highway
+        name: "State highway"
+        note: "Rule_Table 29-30: 80 m tower buffer from the road edge (7 m half-carriageway → 87 m from the centreline), conductor parallel buffer CHW, angle 70–90°; no crossing tower type set (TSD H 'important road crossings' not defined for SH)"
+        layer: roads
+        classes: [sh]
+        mechanism: crossing
+        params:
+          - {key: tower_setback_m, label: "Tower setback from the centreline", type: num, unit: m, value: 87}
+          - {key: parallel_setback_m, label: "Conductor buffer, parallel run", type: num, unit: m, value: {765: 40.5, 400: 30, 220: 24.5, 132: 20.5}}
+          - {key: angle_deg, label: "Crossing angle", type: rng, unit: "°", value: [70, 110]}
+          - {key: tower_type, label: "Crossing tower type", type: sel, value: "A/B/C/D", options: ["A/B/C/D", "B/C/D", "D"]}
+
+      - id: bridges
+        name: "Bridges and flyovers"
+        note: "Rule_Table 25-26: crossable at 80–90°, span ≤ 250 m, D towers; flyover crossings carry a tower extension (7 m needed → the D tower's +18 m step, TSD); no tower on the structure"
+        layer: bridges
+        classes: [road_bridge, rail_bridge, flyover, underpass]
+        mechanism: crossing
+        params:
+          - {key: tower_setback_m, label: "Tower buffer", type: num, unit: m, value: 0}
+          - {key: angle_deg, label: "Crossing angle", type: rng, unit: "°", value: [80, 100]}
+          - {key: max_span_m, label: "Max crossing span", type: num, unit: m, value: 250}
+          - {key: tower_type, label: "Crossing tower type", type: sel, value: "D", options: ["B", "C", "D", "B/C/D"]}
+          - {key: flyover_extension_m, label: "Flyover: crossing tower extension", type: num, unit: m, value: 18}
+
       - id: river
         name: "River"
-        note: "Major and minor crossings take different tower types; angle towers on both banks (at least B1)"
+        note: "Rule_Table 37-38: 150 m tower and parallel conductor buffer, 90°, major (≥ 600 m wide) D, minor A, B or C; the longest span follows the TSD span tables"
         layer: river
         mechanism: crossing
         params:
           - {key: tower_setback_m, label: "Bank buffer, each side", type: num, unit: m, value: 150}
+          - {key: parallel_setback_m, label: "Conductor buffer, parallel run", type: num, unit: m, value: 150}
           - {key: angle_deg, label: "Crossing angle", type: num, unit: "°", value: 90}
           - {key: major_threshold_m, label: "Major crossing threshold", type: num, unit: m, value: 600}
           - {key: major_tower_type, label: "Major tower type", type: sel, value: "D", options: ["B", "C", "D", "B/C/D"]}
-          - {key: tower_type, label: "Minor tower type", type: sel, value: "B/C/D", options: ["B", "C", "D", "B/C/D"]}
+          - {key: tower_type, label: "Minor tower type", type: sel, value: "A/B/C", options: ["A/B/C", "B", "C", "D", "B/C/D"]}
 
       - id: canal
         name: "Canal"
-        note: "30 m tower and parallel-running buffer (Vivek, 7 Oct 2026; the 150 m guess closed the strip beside the existing 765 kV lines)"
+        note: "Rule_Table 79-80: 30 m from the canal edge, canal 10 m wide → 35 m from the centreline, tower and parallel conductor; A, B or C"
         layer: canal
         mechanism: crossing
         params:
-          - {key: tower_setback_m, label: "Tower buffer", type: num, unit: m, value: 30}
-          - {key: parallel_setback_m, label: "Conductor buffer", type: num, unit: m, value: 30}
+          - {key: tower_setback_m, label: "Tower buffer from the centreline", type: num, unit: m, value: 35}
+          - {key: parallel_setback_m, label: "Conductor buffer from the centreline", type: num, unit: m, value: 35}
           - {key: angle_deg, label: "Crossing angle", type: sel, value: "Any", options: ["Any", "90°", "75–90°", "80–100°"]}
           - {key: tower_type, label: "Tower type", type: sel, value: "A/B/C", options: ["A", "B", "C", "D", "A/B/C"]}
 
       - id: nalla
         name: "Nalla"
-        note: "Seasonal streams (SISDP Phase II 1:10k drainage): no tower within 10 m of the centreline; spans cross freely (Vivek, 7 Oct 2026)"
+        note: "Rule_Table 81-82: 30 m from the nalla edge, nalla 20 m wide → 40 m from the centreline, tower and parallel conductor; crossed at any angle, A, B or C (Vivek, 8 Oct 2026)"
         layer: nalla
-        mechanism: nogo
+        mechanism: crossing
         params:
-          - {key: tower_setback_m, label: "Tower buffer", type: num, unit: m, value: 10}
-          - {key: conductor_may_cross, label: "Conductor may cross", type: sel, value: "Yes", options: ["Yes", "No"]}
-          - {key: treatment, label: "Treatment", type: sel, value: "No-Go", options: ["No-Go", "Allowed"]}
+          - {key: tower_setback_m, label: "Tower buffer from the centreline", type: num, unit: m, value: 40}
+          - {key: parallel_setback_m, label: "Conductor buffer from the centreline", type: num, unit: m, value: 40}
+          - {key: angle_deg, label: "Crossing angle", type: sel, value: "Any", options: ["Any", "90°", "75–90°", "80–100°"]}
+          - {key: tower_type, label: "Tower type", type: sel, value: "A/B/C", options: ["A", "B", "C", "D", "A/B/C"]}
 
       - id: power_line
         name: "High tension power line"
-        note: "765 / 400 / 220 / 132 kV — the existing wire may be crossed anywhere except within the set distance of an existing tower (Vivek, 8 Oct 2026; replaces the mid-span null point); the crossing-angle window applies from 400 kV, lower voltages are crossed at any angle (Vivek, 7 Oct 2026)"
+        note: "765 / 400 / 220 / 132 kV — the wire may be crossed anywhere except within 80 m of an existing tower (Vivek, 8 Oct 2026); angle 70–110° and span ≤ 300 m (Rule_Table 9-11); D towers both sides of lines ≥ 400 kV, B/C/D for 132–220 kV (TSD B.1-2); our towers ≥ 92.5 m from theirs at 765 kV (72.5 m tower height between 20 × 20 m bases)"
         layer: power
         classes: [power_line, power_tower]
         mechanism: crossing
         params:
-          - {key: tower_setback_m, label: "Tower to existing tower", type: num, unit: m, value: 100}
+          - {key: tower_setback_m, label: "Tower to existing tower (centre to centre)", type: num, unit: m, value: {765: 92.5, 400: 100, 220: 100, 132: 100}}
           - {key: crossing_tower_clear_m, label: "No crossing within, of an existing tower", type: num, unit: m, value: 80}
-          - {key: angle_deg, label: "Crossing angle", type: rng, unit: "°", value: [60, 120]}
-          - {key: angle_min_kv, label: "Crossing angle applies from", type: num, unit: kV, value: 400}
-          - {key: max_span_m, label: "Max crossing span", type: num, unit: m, value: 250}
-          - {key: tower_type, label: "Tower type", type: sel, value: "B/C/D", options: ["B", "C", "D", "B/C/D"]}
+          - {key: angle_deg, label: "Crossing angle", type: rng, unit: "°", value: [70, 110]}
+          - {key: angle_min_kv, label: "Crossing angle applies from", type: num, unit: kV, value: 66}
+          - {key: max_span_m, label: "Max crossing span", type: num, unit: m, value: 300}
+          - {key: tower_type, label: "Tower type", type: sel, value: "B/C/D", options: ["A/B/C/D", "B", "C", "D", "B/C/D"]}
+          - {key: tower_type_400kv, label: "Tower type, lines of 400 kV and above", type: sel, value: "D", options: ["B/C/D", "D"]}
+          - {key: parallel_setback_m, label: "Conductor buffer, parallel run", type: num, unit: m, value: {765: 33.5, 400: 23, 220: 17.5, 132: 13.5}}
           - {key: max_dev_adjacent_deg, label: "Max deviation at n±1", type: num, unit: "°", value: 45}
 
       # Added 6 Oct 2026 with the HT / LT split (Vivek): same values as the high tension rule for
       # now, set independently. Same shutdown crossing cost.
       - id: power_line_lt
         name: "Low tension power line"
-        note: "66 / 33 kV — the existing wire may be crossed anywhere except within the set distance of an existing tower / pole (Vivek, 8 Oct 2026; replaces the mid-span null point)"
+        note: "66 / 33 kV — crossed anywhere except within 80 m of a tower / pole; suspension or tension towers either side (TSD B.3); angle 70–110° from 66 kV (Rule_Table 9)"
         layer: power_lt
         classes: [power_line, power_tower]
         mechanism: crossing
         params:
-          - {key: tower_setback_m, label: "Tower to existing tower", type: num, unit: m, value: 100}
+          - {key: tower_setback_m, label: "Tower to existing tower (centre to centre)", type: num, unit: m, value: {765: 92.5, 400: 100, 220: 100, 132: 100}}
           - {key: crossing_tower_clear_m, label: "No crossing within, of an existing tower", type: num, unit: m, value: 80}
-          - {key: angle_deg, label: "Crossing angle", type: rng, unit: "°", value: [60, 120]}
-          - {key: angle_min_kv, label: "Crossing angle applies from", type: num, unit: kV, value: 400}
-          - {key: max_span_m, label: "Max crossing span", type: num, unit: m, value: 250}
-          - {key: tower_type, label: "Tower type", type: sel, value: "B/C/D", options: ["B", "C", "D", "B/C/D"]}
+          - {key: angle_deg, label: "Crossing angle", type: rng, unit: "°", value: [70, 110]}
+          - {key: angle_min_kv, label: "Crossing angle applies from", type: num, unit: kV, value: 66}
+          - {key: max_span_m, label: "Max crossing span", type: num, unit: m, value: 300}
+          - {key: tower_type, label: "Tower type", type: sel, value: "A/B/C/D", options: ["A/B/C/D", "B", "C", "D", "B/C/D"]}
+          - {key: tower_type_400kv, label: "Tower type, lines of 400 kV and above", type: sel, value: "D", options: ["B/C/D", "D"]}
+          - {key: parallel_setback_m, label: "Conductor buffer, parallel run", type: num, unit: m, value: {765: 33.5, 400: 23, 220: 17.5, 132: 13.5}}
           - {key: max_dev_adjacent_deg, label: "Max deviation at n±1", type: num, unit: "°", value: 45}
 
   - key: gng
@@ -373,28 +452,69 @@ groups:
 
       - id: orchard
         name: "Orchard and plantation"
-        note: "Compensated per tree, so the cost rate carries the difference — not a weight here"
+        note: "Rule_Table 85-86: corridor half-width buffer; crossing as last resort, with the orchard cost"
         layer: lulc
         classes: [orchard]
         mechanism: landclass
         cost_class: orchard
         params:
-          - {key: treatment, label: "Treatment", type: sel, value: "Allowed", options: ["Allowed", "No-Go"]}
+          - {key: treatment, label: "Treatment", type: sel, value: "Last resort", options: ["Allowed", "Last resort", "No-Go"]}
+          - {key: last_resort_towers_inside, label: "Last resort: towers inside", type: sel, value: "Yes", options: ["Yes", "No"]}
           - {key: buffer, label: "Buffer", type: sel, value: "Corridor half-width", options: ["Corridor half-width", "Fixed", "None"]}
           - {key: buffer_m, label: "Fixed buffer", type: num, unit: m, value: 0}
 
       - id: marsh
         name: "Marshy land"
-        note: "Construction cost and long-term settlement risk"
+        note: "Rule_Table 77-78: 50 m buffer; crossing as last resort on pile foundations"
         layer: lulc
-        classes: [marsh, salt_pan]
-        also_layers: [marshy_land, salt_pans, wet_land]   # soil-type layers + Wet Land (Vivek, 6 Oct 2026)
+        classes: [marsh]
+        also_layers: [marshy_land]
         mechanism: landclass
         cost_class: barren
         params:
-          - {key: treatment, label: "Treatment", type: sel, value: "Allowed", options: ["Allowed", "No-Go"]}
+          - {key: treatment, label: "Treatment", type: sel, value: "Last resort", options: ["Allowed", "Last resort", "No-Go"]}
           - {key: buffer, label: "Buffer", type: sel, value: "Fixed", options: ["Corridor half-width", "Fixed", "None"]}
           - {key: buffer_m, label: "Buffer", type: num, unit: m, value: 50}
+          - {key: last_resort_towers_inside, label: "Last resort: towers inside (piles)", type: sel, value: "Yes", options: ["Yes", "No"]}
+
+      - id: salt_pans
+        name: "Salt pans"
+        note: "Rule_Table 59-60: 200 m buffer; crossing as last resort on pile foundations (12 months)"
+        layer: lulc
+        classes: [salt_pan]
+        also_layers: [salt_pans]
+        mechanism: landclass
+        cost_class: barren
+        params:
+          - {key: treatment, label: "Treatment", type: sel, value: "Last resort", options: ["Allowed", "Last resort", "No-Go"]}
+          - {key: buffer, label: "Buffer", type: sel, value: "Fixed", options: ["Corridor half-width", "Fixed", "None"]}
+          - {key: buffer_m, label: "Buffer", type: num, unit: m, value: 200}
+          - {key: last_resort_towers_inside, label: "Last resort: towers inside (piles)", type: sel, value: "Yes", options: ["Yes", "No"]}
+          - {key: approval_months, label: "Approval time if crossed", type: num, unit: months, value: 12}
+
+      - id: salt_pan_water
+        name: "Salt pans (water bodies)"
+        note: "Salt pans mapped in the water layers: Rule_Table 59-60, 200 m buffer, crossing as last resort on piles (12 months)"
+        layer: other_water
+        classes: [salt_pan]
+        mechanism: nogo
+        params:
+          - {key: tower_setback_m, label: "Tower buffer", type: num, unit: m, value: 200}
+          - {key: conductor_buffer_m, label: "Conductor buffer", type: num, unit: m, value: 200}
+          - {key: treatment, label: "Treatment", type: sel, value: "Last resort", options: ["No-Go", "Last resort", "Allowed"]}
+          - {key: last_resort_towers_inside, label: "Last resort: towers inside (piles)", type: sel, value: "Yes", options: ["Yes", "No"]}
+          - {key: approval_months, label: "Approval time if crossed", type: num, unit: months, value: 12}
+
+      - id: wetland
+        name: "Wetland"
+        note: "Rule_Table 75-76: routable; towers on pile foundations (no foundation within 50 m of the 10-year mean high-flood level — no HFL data yet)"
+        layer: wet_land
+        mechanism: landclass
+        cost_class: barren
+        params:
+          - {key: treatment, label: "Treatment", type: sel, value: "Allowed", options: ["Allowed", "Last resort", "No-Go"]}
+          - {key: buffer, label: "Buffer", type: sel, value: "None", options: ["Corridor half-width", "Fixed", "None"]}
+          - {key: buffer_m, label: "Buffer", type: num, unit: m, value: 0}
 
       - id: social_forest
         name: "Social forest"
@@ -406,7 +526,7 @@ groups:
           - {key: treatment, label: "Treatment", type: sel, value: "Allowed", options: ["Allowed", "No-Go"]}
           - {key: buffer, label: "Buffer", type: sel, value: "Fixed", options: ["Corridor half-width", "Fixed", "None"]}
           - {key: buffer_m, label: "Buffer", type: num, unit: m, value: 0}
-          - {key: strip_width_m, label: "Strip width from infrastructure", type: num, unit: m, value: 100}
+          - {key: strip_width_m, label: "Strip width from infrastructure", type: num, unit: m, value: 30}
 
       - id: barren
         name: "Shrubs, barren and hard rock"
@@ -434,11 +554,12 @@ groups:
 
       - id: design_span
         name: "Design span"
-        note: "Hard maximum span per voltage, used by the route search and the tower spotting alike: no span is longer than the plain value, or the hilly value where the DEM slope reaches 10°. River crossings excepted (Vivek, 6 Oct 2026). On hilly ground every tower is a tension tower (B1 at least), which allows the longer hilly span (Vivek, 7 Oct 2026)"
+        note: "Hard maximum span per voltage: the TSD normal span (370 m for 765 kV D/C base towers). Hilly = the ground rises more than 10 m between adjacent towers (Route_Rules 3); towers on a hilly span are tension towers (B1 at least). The TSD span tables (sum of adjacent spans by deviation, wind span ≤ 400 m) apply on top. River crossings excepted."
         mechanism: geometry
         params:
-          - {key: plain_m, label: "Plain terrain", type: num, unit: m, value: {765: 400, 400: 400, 220: 350, 132: 320}, best_guess: true}
-          - {key: hilly_m, label: "Hilly terrain", type: num, unit: m, value: {765: 600, 400: 600, 220: 550, 132: 500}, best_guess: true}
+          - {key: plain_m, label: "Plain terrain", type: num, unit: m, value: {765: 370, 400: 400, 220: 350, 132: 320}}
+          - {key: hilly_m, label: "Hilly terrain", type: num, unit: m, value: {765: 370, 400: 400, 220: 350, 132: 320}}
+          - {key: hilly_rise_m, label: "Hilly: ground rise between towers over", type: num, unit: m, value: 10}
           - {key: urban_m, label: "Urban / populated", type: num, unit: m, value: {765: 250, 400: 250, 220: 225, 132: 200}, best_guess: true}
 
       - id: section_interval
@@ -448,6 +569,8 @@ groups:
         params:
           - {key: plain_km, label: "Plain terrain", type: num, unit: km, value: 5}
           - {key: hilly_km, label: "Hilly terrain", type: num, unit: km, value: 3}
+          - {key: plain_spans, label: "Plain terrain, spans", type: num, unit: spans, value: 15}
+          - {key: hilly_spans, label: "Hilly terrain, spans", type: num, unit: spans, value: 10}
 
       - id: corridor_half_width
         name: "Corridor half-width"
@@ -465,7 +588,7 @@ groups:
         mechanism: geometry
         params:
           # five types of Route Cost Parameters 3 (B2, C2 dropped — Vivek, 7 Oct 2026)
-          - {key: A, label: "A up to", type: num, unit: "°", value: 1}
+          - {key: A, label: "A up to", type: num, unit: "°", value: 2}
           - {key: B1, label: "B1 up to", type: num, unit: "°", value: 15}
           - {key: C1, label: "C1 up to", type: num, unit: "°", value: 30}
           - {key: D45, label: "D45 up to", type: num, unit: "°", value: 45}

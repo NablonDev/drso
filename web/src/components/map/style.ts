@@ -13,6 +13,7 @@ export const LAYER_COLOURS: Record<string, string> = {
   lake: "#5DA9E9",
   canal: "#2F9C95",
   reservoir: "#1F5F8B",
+  dams: "#2B4C7E",
   nalla: "#8FB8C9",
   wet_land: "#6FA88E",
   other_water: "#5B8FA8",
@@ -122,6 +123,7 @@ export const LAYER_ORDER = [
   "other_water",
   "wet_land",
   "reservoir",
+  "dams",
   "lake",
   "pond",
   "river",
@@ -155,6 +157,7 @@ export const DEFAULT_ON = new Set([
   "lake",
   "canal",
   "reservoir",
+  "dams",
   "nalla",
   "wet_land",
   "other_water",
@@ -178,7 +181,7 @@ export const DEFAULT_ON = new Set([
 ]);
 
 /** Layers the route map shows under "No-Go features". */
-export const NOGO_LAYERS = ["clusters", "buildings", "national_park", "wildlife_sanctuary", "forest_in_pa", "crz", "bridges", "other_water", "defence", "aviation", "approach", "substations", "solar", "monuments"];
+export const NOGO_LAYERS = ["clusters", "buildings", "plotted", "crz", "other_water", "reservoir", "lake", "pond", "dams", "defence", "aviation", "approach", "substations", "solar", "monuments"];
 
 /** Route colours: the prototype's four hues, lifted for contrast over satellite imagery. */
 export const ROUTE_COLOURS = ["#4FA3CF", "#9C82D6", "#E3AA45", "#6CC08A"];

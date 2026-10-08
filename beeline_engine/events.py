@@ -29,6 +29,9 @@ TEMPLATES = {
     "RULE_OFF": "Rule “{rule}” was switched off for this run.",
     "BAND_BLOCKED": "No route inside the ± {band_km:g} km band: the corridor is closed at km {from_km:.1f} – {to_km:.1f} by {feature}.",
     "DEM_NOTICE": "Ground clearance was checked on {dem}; the research spec asks for 10 m or finer.",
+    "APART_FROM": "Route {route} is the second least-cost route: the least-cost line kept out of route {other}'s corridor.",
+    "ROUTE_NOT_FOUND": "Route {route} ({name}) could not be found under its rules: {why}",
+    "APPROVAL": "Approval: {item} — about {months:g} months.",
     "DIVERSITY": "Route {route} first came out within {overlap_pct:.0f}% of route {other}'s corridor; it was re-solved with that corridor priced up to give a distinct alternative.",
 }
 

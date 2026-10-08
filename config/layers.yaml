@@ -62,9 +62,9 @@ layers:
   # notification: each feature keeps its legal_status and positional precision.
   - key: pond
     name: "Pond"
-    kind: polygon
+    kind: any
     producer: reference
-    desc: "Tanks, ponds and aquaculture ponds — NWIA 2019 + GatiShakti + OSM"
+    desc: "Ponds and tanks — GatiShakti footprints + Jal Dharohar census points + NWIA aquaculture ponds (water master, 8 Oct 2026)"
     minutes_per_km2: 0.002
     default_confidence: 0.85
     classes: [pond, aquaculture_pond]
@@ -105,6 +105,15 @@ layers:
     default_confidence: 0.85
     classes: [reservoir]
 
+
+  - key: dams
+    name: "Dams"
+    kind: any
+    producer: reference
+    desc: "Dam axes (OSM waterway=dam) + NRLD / NDSA register points — water master, 8 Oct 2026"
+    minutes_per_km2: 0.002
+    default_confidence: 0.85
+    classes: [dam]
   - key: nalla
     name: "Nalla"
     kind: any
@@ -122,7 +131,7 @@ layers:
     minutes_per_km2: 0.002
     default_confidence: 0.80
     classes: [wetland, waterlogged]
-
+    foundation_class: wet_submerged   # pile foundation (Rule_Table, 8 Oct 2026)
   - key: other_water
     name: "Other water"
     kind: polygon
@@ -154,7 +163,7 @@ layers:
     desc: "Cached — NGLM 2005-06 active dunes, cross-checked"
     default_confidence: 0.85
     classes: [sand_dunes]
-
+    foundation_class: wet_submerged   # pile foundation (Rule_Table, 8 Oct 2026)
   - key: sandy_plain
     name: "Soil — sandy plain (top strata)"
     kind: polygon
@@ -319,10 +328,10 @@ layers:
     name: "Coastal regulation zone"
     kind: polygon
     producer: reference
-    desc: "Cached — sea / Gulf water side (HTL and CRZ I-IV zones to follow)"
+    desc: "CRZ zones — CZMP 2019 (GCZMA signed sheets, digitised); water master 8 Oct 2026"
     minutes_per_km2: 0.002
     default_confidence: 0.90
-    classes: [crz_water]
+    classes: [crz_ia, crz_ia_mangrove_buffer, crz_ib, crz_ii, crz_iii_ndz, crz_iiia, crz_iiib, crz_iva, crz_ivb, crz_water]
 
   # Bridges (transfers/bridges/OUTPUT.gpkg): the open `structures` layer (OSM + NHAI + SOI, 24,681
   # decks) plus — for the DEMO ONLY — HERE bridges / tunnels, Mappls elevated / underground roads and

@@ -58,6 +58,10 @@ class SpotParams:
     hilly_design_span_m: float | None = None
     hilly_section_km: float | None = None
     hilly_slope_deg: float | None = None
+    hilly_rise_m: float | None = None      # hilly span: ground rises more than this between its towers (Route_Rules 3)
+    tsd: dict | None = None                # AESL Tower Spotting Data tables for this voltage (engine.yaml tsd)
+    section_spans: int | None = None       # TSD D: ≤ 15 spans between section points (plain)
+    hilly_section_spans: int | None = None # ≤ 10 spans (hilly)
     pull_cost_tol: float = 0.01          # a straightened leg may cost at most this much more than the grid towers it replaces
 
 
@@ -123,6 +127,13 @@ class Checker:
         return t, self.dem.sample(lon, lat), L
 
     def is_hilly(self, p, q) -> bool:
+        if self.sp.hilly_rise_m is not None:
+            # Route_Rules item 3 (8 Oct 2026): the ground rises more than hilly_rise_m between the towers
+            if self.dem is None or not self.dem.ok:
+                return False
+            lon, lat = self.c.frame.frame_to_lonlat(np.array([p[0], q[0]]), np.array([p[1], q[1]]))
+            z = self.dem.sample(lon, lat)
+            return bool(np.isfinite(z).all() and abs(float(z[1] - z[0])) > self.sp.hilly_rise_m)
         if self.sp.hilly_slope_deg is None:
             return False
         pr = self.profile(p, q)
@@ -188,6 +199,10 @@ class Checker:
             acute = min(d, 180.0 - d)
             item = {"rule": cr.rule_id, "name": cr.name, "angle_deg": round(acute, 1), "span_m": round(L, 1),
                     "min_type": cr.min_type, "cost_rs": cr.cost_rs, "major": False}
+            if getattr(cr, "extension_m", 0):
+                item["extension_m"] = cr.extension_m
+            if getattr(cr, "long_span", False):
+                item["long_span"] = True
             if cr.window is not None and acute < cr.window[0] - 1e-3:
                 ok = False
                 item["violation"] = "angle"
@@ -206,7 +221,7 @@ class Checker:
         if L > self.sp.design_span_m + 1e-3 and not self.is_hilly(p, q):
             limit = self.sp.design_span_m
         if L > limit + 1e-3:
-            if L > self.sp.river_max_span_m + 1e-3 or not any(c["rule"] == "river" for c in out):
+            if L > self.sp.river_max_span_m + 1e-3 or not any(c.get("long_span") for c in out):
                 ok = False
         for pr in self.c.parallels:
             a, _ = self._sample(pr.angle, p, q)
@@ -319,6 +334,8 @@ def pull_string(chk: Checker, grid_pts: list[tuple[float, float]], sp: SpotParam
             inner = _spot_leg(chk, grid_pts[i], q, sp)
             if inner is None:
                 continue
+            if sp.tsd and not _tsd_leg_ok(chk, sp, prev, grid_pts[i], inner, q, is_last=(j == n - 1)):
+                continue
             # not dearer than the grid towers it replaces (their types from their own deflections)
             seg = grid_pts[i:j + 1]
             gtypes = [tower_type_for(_deflection(seg[m - 1], seg[m], seg[m + 1])[0], sp.type_bands) or "D60"
@@ -346,6 +363,37 @@ def pull_string(chk: Checker, grid_pts: list[tuple[float, float]], sp: SpotParam
     if not pulled_any:
         return None
     return aps, towers
+
+
+def _tsd_leg_ok(chk: Checker, sp: SpotParams, prev, start, inner, q, is_last: bool) -> bool:
+    """A straightened leg must keep the TSD limits the search kept: the dead-end turn at the first
+    and last towers (≤ dead_end_max_dev_deg against the gantry slack span), and at the leg's start
+    tower the adjacent-span table and the wind span for its deviation."""
+    from .config import tower_type_for
+    from .solver import fit_type_for_spans
+    T = sp.tsd
+    lim = T.get("dead_end_max_dev_deg")
+    first = inner[0] if inner else q
+    A, B = (0.0, 0.0), (chk.c.frame.length_m, 0.0)
+    if prev is None:
+        if lim is not None and _deflection(A, start, first)[0] > float(lim) + 1e-6:
+            return False
+    else:
+        d, _ = _deflection(prev, start, first)
+        L1 = math.hypot(start[0] - prev[0], start[1] - prev[1])
+        L2 = math.hypot(first[0] - start[0], first[1] - start[1])
+        long_span = max(L1, L2) > sp.design_span_m + 1e-3
+        if not long_span:
+            t = tower_type_for(d, sp.type_bands) or "D60"
+            if fit_type_for_spans(T["span_sum"], t, d, L1, L2, float(T.get("single_span_fraction", 0.6))) is None:
+                return False
+            if (L1 + L2) / 2.0 > float((T.get("wind_span_m") or {}).get("base", 400)) + 1e-3:
+                return False
+    if is_last and lim is not None:
+        last_prev = inner[-1] if inner else start
+        if _deflection(last_prev, q, B)[0] > float(lim) + 1e-6:
+            return False
+    return True
 
 
 def _nudge(chk: Checker, p, q, nxt, prev, sp: SpotParams, is_last: bool):
@@ -380,6 +428,9 @@ def build_route(chk: Checker, pts: list[tuple[float, float]], angle_set: set[int
     """Tower list from points; angle_set = indices that are angle points (None = all with deflection)."""
     comp = chk.c
     added = set()
+    if sp.tsd:
+        pts = _wind_span_fix(chk, pts, sp)
+        pts = _angle_span_fix(chk, pts, sp)
     if dem is not None and dem.ok:
         pts = _split_hilly(chk, pts, sp)
         pts, added = _respot_for_clearance(chk, pts, sp)
@@ -420,6 +471,12 @@ def build_route(chk: Checker, pts: list[tuple[float, float]], angle_set: set[int
                     if nt != t.type:
                         t.type = nt
                     t.reasons.append(f"crossing:{c['rule']}")
+            if c.get("extension_m"):
+                for ti in (s.a, s.b):
+                    t = towers[ti]
+                    if t.type != "G" and t.extension_m < c["extension_m"]:
+                        t.extension_m = float(c["extension_m"])
+                        t.reasons.append(f"crossing_extension:{c['rule']}")
             if c["rule"] in sp.max_dev_adjacent_power_deg:
                 lim = sp.max_dev_adjacent_power_deg[c["rule"]]
                 for ti in (s.a - 1, s.b + 1):
@@ -437,22 +494,28 @@ def build_route(chk: Checker, pts: list[tuple[float, float]], angle_set: set[int
                     t.reasons.append("hilly")
     # section points (hilly interval once the stretch since the last tension tower has a hilly span)
     run = 0.0
+    nspans = 0
     hilly_run = False
     for i in range(1, len(towers)):
         run += spans[i - 1].length_m
+        nspans += 1
         hilly_run = hilly_run or spans[i - 1].hilly
         t = towers[i]
         if t.type != "A":
             run = 0.0
+            nspans = 0
             hilly_run = False
             continue
         nxt = spans[i].length_m if i < len(spans) else 0
-        limit = sp.hilly_section_km if (sp.hilly_section_km and (hilly_run or (i < len(spans) and spans[i].hilly))) \
-            else sp.section_km
-        if run + nxt > limit * 1000.0:
+        hilly_now = bool(sp.hilly_section_km) and (hilly_run or (i < len(spans) and spans[i].hilly))
+        limit = sp.hilly_section_km if hilly_now else sp.section_km
+        max_spans = sp.hilly_section_spans if hilly_now else sp.section_spans
+        # TSD D: ≤ 15 spans or 5 km (plain), ≤ 10 spans or 3 km (hilly) between section points
+        if run + nxt > limit * 1000.0 or (max_spans and nspans + 1 > max_spans):
             t.type = "B1"
-            t.reasons.append("section_hilly" if limit != sp.section_km else "section")
+            t.reasons.append("section_hilly" if hilly_now else "section")
             run = 0.0
+            nspans = 0
             hilly_run = False
     # exact tower checks
     for i, t in enumerate(towers):
@@ -470,8 +533,103 @@ def build_route(chk: Checker, pts: list[tuple[float, float]], angle_set: set[int
             t.ground_z = None if not np.isfinite(z) else round(float(z), 1)
         for s in spans:
             _clearance(comp, dem, towers, s, sp)
+    if sp.tsd:
+        _tsd_checks(towers, spans, sp)
     cost, stats = route_cost(comp, towers, spans, sp)
     return SpottedRoute(towers, spans, cost, stats, "pulled" if angle_set is None else "grid")
+
+
+def _wind_span_fix(chk: Checker, pts, sp: SpotParams):
+    """TSD wind span ≤ 400 m: next to a span longer than the design span (a river crossing), put a
+    tower on the neighbouring span close enough that the crossing tower's mean span stays within the
+    limit (e.g. 700 m crossing → neighbour ≤ 100 m). Gantry spans are left alone."""
+    wind = float((sp.tsd.get("wind_span_m") or {}).get("base", 400))
+    pts = list(pts)
+    i = 1
+    while i < len(pts) - 2:
+        p, q = pts[i], pts[i + 1]
+        L = math.hypot(q[0] - p[0], q[1] - p[1])
+        if L <= sp.design_span_m + 1e-3:
+            i += 1
+            continue
+        w = wind
+        if chk.dem is not None and getattr(chk.dem, "ok", False):
+            # the crossing towers will carry the extension this span's sag needs; its step sets
+            # their wind span (TSD: +18 / +33 / +45 m → 300 / 270 / 250 m)
+            c0, _ = _span_clearance(chk, p, q, sp)
+            need = 0.0 if c0 is None else max(0.0, sp.ground_clearance_m - c0)
+            ws = sp.tsd.get("wind_span_m", {})
+            steps = [x for x in _ext_steps(sp, "D45") if x >= need - 1e-6]
+            st = min(steps) if steps else 45.0
+            if need > 0 and st >= 18:
+                w = float(ws.get("d18", 300) if st < 33 else ws.get("d33", 270) if st < 45 else ws.get("d45", 250))
+        allow = 2 * w - L                            # longest neighbour span at each crossing tower
+        for side in (-1, +1):
+            k = i if side < 0 else i + 1             # the crossing tower
+            nb = k - 1 if side < 0 else k + 1        # its other neighbour
+            if nb <= 0 or nb >= len(pts) - 1:
+                continue
+            a, b = pts[k], pts[nb]
+            Ln = math.hypot(b[0] - a[0], b[1] - a[1])
+            if Ln <= allow + 1e-3 or allow < sp.min_span_m:
+                continue
+            for dd in (allow, allow - 10, allow - 20, allow - 30):
+                if dd < sp.min_span_m:
+                    break
+                t = dd / Ln
+                x, y = a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])
+                if chk.tower_ok(x, y, angle_tower=False) and chk.span_crossings(a, (x, y))[0] \
+                        and chk.span_crossings((x, y), b)[0]:
+                    pos = k if side < 0 else k + 1
+                    pts.insert(pos, (x, y))
+                    if side < 0:
+                        i += 1                       # the crossing span moved one place on
+                    break
+        i += 1
+    return pts
+
+
+def _angle_span_fix(chk: Checker, pts, sp: SpotParams):
+    """TSD adjacent-span tables at angle towers: where the two spans at a tower exceed its type's
+    allowance at that deviation (e.g. 189 m in total at 60°), put towers on the neighbouring spans,
+    in line, close enough to the angle tower that the pair fits. The dead-end towers are left alone."""
+    from .config import tower_type_for
+    from .solver import fit_type_for_spans, span_sum_limit
+    T = sp.tsd
+    frac = float(T.get("single_span_fraction", 0.6))
+    pts = list(pts)
+    i = 2
+    while i < len(pts) - 2:
+        p0, p1, p2 = pts[i - 1], pts[i], pts[i + 1]
+        d, _ = _deflection(p0, p1, p2)
+        t = tower_type_for(d, sp.type_bands) or "D60"
+        L1 = math.hypot(p1[0] - p0[0], p1[1] - p0[1])
+        L2 = math.hypot(p2[0] - p1[0], p2[1] - p1[1])
+        if fit_type_for_spans(T["span_sum"], t, d, L1, L2, frac) is not None:
+            i += 1
+            continue
+        lim = span_sum_limit(T["span_sum"], "D60" if t in ("D45", "D60") and d > 45 else t, d) or 0.0
+        a = max(sp.min_span_m, min(lim / 2.0, frac * lim))
+        inserted = 0
+        for side, (q, L) in ((-1, (p0, L1)), (+1, (p2, L2))):
+            if L <= a + 1e-3:
+                continue
+            for dd in (a, a - 10, a - 20):
+                if dd < sp.min_span_m:
+                    break
+                tt = dd / L
+                x, y = p1[0] + tt * (q[0] - p1[0]), p1[1] + tt * (q[1] - p1[1])
+                if chk.tower_ok(x, y, angle_tower=False) and chk.span_crossings(p1, (x, y))[0] \
+                        and chk.span_crossings((x, y), q)[0]:
+                    if side < 0:
+                        pts.insert(i, (x, y))
+                        i += 1
+                    else:
+                        pts.insert(i + 1, (x, y))
+                    inserted += 1
+                    break
+        i += 1
+    return pts
 
 
 def _span_clearance(chk: Checker, p, q, sp: SpotParams, ext_a=0.0, ext_b=0.0):
@@ -518,8 +676,8 @@ def _split_hilly(chk: Checker, pts, sp: SpotParams):
 
 
 def _respot_for_clearance(chk: Checker, pts, sp: SpotParams, max_new: int = 200):
-    """Insert suspension towers where a span cannot clear the ground even with the +18 m extension
-    on both towers: at the worst point (a ridge), or the nearest allowed spot along the span.
+    """Insert suspension towers where a span cannot clear the ground even with the largest A/B/C
+    extension (+6 m, TSD; +18 m without TSD data) on both towers: at the worst point (a ridge), or the nearest allowed spot along the span.
     Gantry spans and long single crossing spans are left alone. Returns (points, inserted indices)."""
     pts = list(pts)
     flags = [False] * len(pts)
@@ -527,7 +685,8 @@ def _respot_for_clearance(chk: Checker, pts, sp: SpotParams, max_new: int = 200)
     while i < len(pts) - 2 and new < max_new:
         p, q = pts[i], pts[i + 1]
         L = math.hypot(q[0] - p[0], q[1] - p[1])
-        c, tw = _span_clearance(chk, p, q, sp, EXTENSION_M, EXTENSION_M)
+        e = _max_ext(sp, "C1")
+        c, tw = _span_clearance(chk, p, q, sp, e, e)
         if c is None or c >= sp.ground_clearance_m or L < 2 * sp.min_span_m or L > sp.span_max_m + 1e-3:
             i += 1
             continue
@@ -568,26 +727,121 @@ def _clearance(comp, dem, towers, s: Span, sp: SpotParams):
 
     c = min_clear()
     if c < sp.ground_clearance_m and s.length_m > sp.span_max_m + 1e-3:
-        # long crossing span: both crossing towers are raised by what the sag needs (6 m steps)
+        # long crossing span: both crossing towers are raised by what the sag needs
         need = sp.ground_clearance_m - c
-        ext = math.ceil(need / 6.0) * 6.0
         for tw in (ta, tb):
-            tw.extension_m = max(tw.extension_m, ext)
-            if "crossing_tower" not in tw.reasons:
-                tw.reasons.append("crossing_tower")
+            _raise(tw, tw.extension_m + need, sp, "crossing_tower")
         c = min_clear()
     if c < sp.ground_clearance_m:
+        # the lower tower first, then both, each to the smallest extension step its type has; a
+        # tower whose type cannot reach is made a D (TSD: +18 / +33 / +45 m on D only)
         low = ta if (ta.ground_z + ta.extension_m) <= (tb.ground_z + tb.extension_m) else tb
         high = tb if low is ta else ta
-        if low.extension_m < EXTENSION_M:
-            low.extension_m = EXTENSION_M
-            c = min_clear()
-        if c < sp.ground_clearance_m and high.extension_m < EXTENSION_M:
-            high.extension_m = EXTENSION_M        # both towers extended (the re-spotting assumed so)
+        for tw in (low, high):
+            if c >= sp.ground_clearance_m:
+                break
+            _raise(tw, tw.extension_m + (sp.ground_clearance_m - c) * (1.0 if tw is low else 2.0), sp, "extension")
             c = min_clear()
         if c < sp.ground_clearance_m:
             ta.warnings.append("ground_clearance")
     s.min_clearance_m = round(c, 1)
+
+
+def _ext_steps(sp: SpotParams, t: str) -> list[float]:
+    if sp.tsd and sp.tsd.get("extensions_m"):
+        return [float(x) for x in sp.tsd["extensions_m"].get(t, [])]
+    return [EXTENSION_M] if t != "G" else []
+
+
+def _max_ext(sp: SpotParams, t: str) -> float:
+    st = _ext_steps(sp, t)
+    return max(st) if st else 0.0
+
+
+def _raise(tw, need_m: float, sp: SpotParams, reason: str) -> None:
+    """Give the tower the smallest extension step ≥ need_m; upgrade A/B/C to D45 if their steps
+    do not reach (the cost difference is in the type price)."""
+    if tw.type == "G" or need_m <= tw.extension_m:
+        return
+    steps = [x for x in _ext_steps(sp, tw.type) if x >= need_m - 1e-6]
+    if not steps and tw.type not in ("D45", "D60") and sp.tsd:
+        dsteps = [x for x in _ext_steps(sp, "D45") if x >= need_m - 1e-6]
+        if dsteps:
+            tw.type = "D45"
+            tw.reasons.append("extension_type")
+            steps = dsteps
+    if not steps:
+        steps = [_max_ext(sp, tw.type)] if _ext_steps(sp, tw.type) else []
+    if steps:
+        tw.extension_m = max(tw.extension_m, min(steps))
+        if reason not in tw.reasons:
+            tw.reasons.append(reason)
+
+
+def _tsd_checks(towers: list[Tower], spans: list[Span], sp: SpotParams) -> None:
+    """AESL Tower Spotting Data checks on the spotted line (8 Oct 2026):
+    - sum of adjacent spans by tower type and deviation, one span ≤ 60 % of it;
+    - wind span (mean of the adjacent spans) ≤ 400 m, D with +18/+33/+45 m: 300/270/250 m;
+    - weight span within the type's limits — a tower in a dip (uplift) is upgraded to a type
+      whose limit holds (A → B1 → D45), else flagged;
+    - dead-end towers: deviation ≤ 15° line side + 30° slack side (note J).
+    Breaches that a type upgrade cannot fix are warnings ("verify on site")."""
+    from .solver import fit_type_for_spans, span_sum_limit
+    T = sp.tsd
+    n = len(towers)
+    frac = float(T.get("single_span_fraction", 0.6))
+    ws = T.get("wind_span_m", {})
+    wl = T.get("weight_span_m", {})
+    hw = float(T.get("tension_over_weight_m", 1605))
+    order = ["A", "B1", "C1", "D45", "D60"]
+
+    def wind_limit(t):
+        if t.type in ("D45", "D60") and t.extension_m >= 45:
+            return ws.get("d45", 250)
+        if t.type in ("D45", "D60") and t.extension_m >= 33:
+            return ws.get("d33", 270)
+        if t.type in ("D45", "D60") and t.extension_m >= 18:
+            return ws.get("d18", 300)
+        return ws.get("base", 400)
+
+    for i in range(1, n - 1):
+        t = towers[i]
+        if t.type == "G":
+            continue
+        L1, L2 = spans[i - 1].length_m, spans[i].length_m
+        dead_end = "dead_end" in t.reasons
+        if dead_end:
+            if t.deflection_deg > float(T.get("dead_end_max_dev_deg", 180)) + 1e-6:
+                t.warnings.append(f"dead_end_deviation:{t.deflection_deg:.0f}deg")
+            continue
+        nt = fit_type_for_spans(T["span_sum"], t.type, t.deflection_deg, L1, L2, frac)
+        if nt is None:
+            lim = span_sum_limit(T["span_sum"], t.type, t.deflection_deg)
+            t.warnings.append(f"span_sum:{L1 + L2:.0f}/{lim:.0f}m")
+        elif nt != t.type:
+            t.type = nt
+            t.reasons.append("span_table")
+        if (L1 + L2) / 2.0 > wind_limit(t) + 1e-3:
+            t.warnings.append(f"wind_span:{(L1 + L2) / 2:.0f}m")
+        a, b = towers[i - 1], towers[i + 1]
+        if t.ground_z is None or a.ground_z is None or b.ground_z is None or L1 <= 0 or L2 <= 0:
+            continue
+        att = sp.lowest_attachment_m
+        h = t.ground_z + att + t.extension_m
+        ha = a.ground_z + (0.0 if a.type == "G" else att + a.extension_m)
+        hb = b.ground_z + (0.0 if b.type == "G" else att + b.extension_m)
+        w = (L1 + L2) / 2.0 + hw * ((h - ha) / L1 + (h - hb) / L2)
+        lo, hi = wl.get(t.type, [-1e9, 1e9])
+        if w < lo:
+            for nt in order[order.index(t.type) + 1:]:
+                if w >= wl.get(nt, [-1e9])[0]:
+                    t.type = nt
+                    t.reasons.append("weight_span")
+                    break
+            else:
+                t.warnings.append(f"weight_span:{w:.0f}m")
+        elif w > hi:
+            t.warnings.append(f"weight_span:{w:.0f}m")
 
 
 def route_cost(comp: Compiled, towers: list[Tower], spans: list[Span], sp: SpotParams):

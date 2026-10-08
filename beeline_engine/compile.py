@@ -49,6 +49,8 @@ class CrossingRaster:
     major_threshold_m: float | None = None
     major_type: str | None = None
     major_cost_rs: float = 0.0
+    extension_m: float = 0.0               # body extension each crossing tower carries (flyovers)
+    long_span: bool = False                # spans longer than the design span may cross it (rivers; relaxed water)
 
 
 @dataclass
@@ -108,6 +110,9 @@ class Compiled:
     costs: dict = field(default_factory=dict)
     terminal_zone: object = None     # frame coords: go-zone discs + terminal yards (+ gantry buffer)
     terminal_yards: object = None
+    relaxed: bool = False                    # compiled for the Relaxed route (last-resort rules opened)
+    # last-resort relaxations taken in this compile: (VecRule of what was opened, approval months, label)
+    relaxed_items: list = field(default_factory=list)
     # terrain on the rule raster grid (set by attach_terrain; None = no DEM)
     ground_z: np.ndarray | None = None       # m, NaN where the DEM has no value
     hilly: np.ndarray | None = None          # bool: slope >= hilly_slope_deg over ~100 m
@@ -163,7 +168,16 @@ class _Rasterizer:
                 kv = g["attrs"].map(lambda a: (a or {}).get("voltage_kv")).astype(float)
                 hi = kv.isna() | (kv >= min_kv)
                 self.layers[key] = g[hi] if at_least else g[~hi]
-            self.base_layer[key] = layer
+            self.base_layer[key] = self.base_layer.get(layer, layer)
+        return key
+
+    def class_subset(self, layer: str, classes: list[str]) -> str:
+        """Key of a copy of `layer` holding only the given classes (e.g. flyovers among bridges)."""
+        key = f"{layer}|cls={','.join(classes)}"
+        if key not in self.layers:
+            g = self.layers.get(layer)
+            self.layers[key] = None if g is None or not len(g) else g[g["class"].isin(classes)]
+            self.base_layer[key] = self.base_layer.get(layer, layer)
         return key
 
     def filtered(self, layer: str | None, min_area_m2: float) -> str | None:
@@ -347,7 +361,7 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
                   costs: dict, spec_kv: int, half_width_m: float, endpoints_go_radius_m: float | None = None,
                   design_span_m: float = 400.0, single_angle_tol_deg: float = 15.0,
                   gantry_buffer_m: float = 10.0, raster_margin_m: float = 0.0,
-                  angle_tower_rules: tuple[str, ...] = ()) -> Compiled:
+                  angle_tower_rules: tuple[str, ...] = (), relaxed: bool = False) -> Compiled:
     # Terminal yards: the substation(s) the line starts / ends in. They are carved out of the
     # substation rule; the yard (+ gantry buffer) and the go-zone disc are clear for the conductor,
     # and no tower may stand inside the yard other than the dead-end towers at A and B.
@@ -388,6 +402,23 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
                                [g for g in fg if g is not None and not g.is_empty], d))
 
     hw = half_width_m
+    relaxed_items: list = []
+
+    def relaxed_note(r: ResolvedRule, layer, classes, d: float, months: float, label: str | None = None):
+        fg = R.frame_geoms(layer, classes)
+        if fg is not None and len(fg):
+            relaxed_items.append((VecRule(r.id, R.base_layer.get(layer, layer),
+                                          [g for g in fg if g is not None and not g.is_empty], d),
+                                  float(months or 0), label or r.name))
+
+    def last_resort(r: ResolvedRule) -> str:
+        """'nogo' (normal routes), 'open' (relaxed: towers may stand inside), 'span' (relaxed: the
+        conductor may cross, towers keep the buffer)."""
+        if r.params.get("treatment") != "Last resort":
+            return "nogo"
+        if not relaxed:
+            return "nogo"
+        return "open" if r.params.get("last_resort_towers_inside") == "Yes" else "span"
 
     def cond_buffer(r: ResolvedRule) -> float:
         b = r.params.get("buffer") or r.params.get("conductor_buffer")
@@ -407,6 +438,14 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
         if not r.enabled:
             continue
         p = r.params
+        if relaxed and r.id in ("buildings", "building_clearance"):
+            # last resort (Rule_Table 18): single structures up to 10 m² may be crossed (12 months)
+            bl = rules.get("buildings")
+            lr = float((bl.params if bl else {}).get("last_resort_max_area_m2", 0) or 0)
+            if lr > float(p.get("min_area_m2") or 0):
+                p = {**p, "min_area_m2": lr}
+                if r.id == "buildings":
+                    relaxed_note(r, r.layer, r.classes, cond_buffer(r), 12, f"Structures up to {lr:g} m² crossed")
         if p.get("min_area_m2"):
             from dataclasses import replace as _replace
             r = _replace(r, layer=R.filtered(r.layer, float(p["min_area_m2"])))
@@ -424,11 +463,24 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
             if applies == "EHT only" and spec_kv < 220:
                 continue
             d = float(p["distance_m"])
-            mk = R.buffer_mask(r.layer, r.classes, d)
+            fd = float(p.get("funnel_m") or 0)
+            if relaxed and p.get("last_resort_distance_m"):
+                # last resort (Rule_Table 14-15): 1.5 km / 6 km, 12 months' approval
+                nd, nf = float(p["last_resort_distance_m"]), float(p.get("last_resort_funnel_m") or fd)
+                zone_full = _airport_zone(R, frame, r.layer, r.classes, d, fd)
+                if zone_full is not None:
+                    relaxed_items.append((VecRule(r.id, r.layer, [zone_full], 0.0), 12.0,
+                                          f"Airport buffer reduced to {nd / 1000:g} km / {nf / 1000:g} km"))
+                d, fd = nd, nf
+            z = _airport_zone(R, frame, r.layer, r.classes, d, fd)
+            if z is None:
+                continue
+            mk = rfeatures.rasterize([(_frame_to_utm(frame, z), 1)], out_shape=shape,
+                                     transform=frame.transform, fill=0, all_touched=True, dtype="uint8").astype(bool)
             add(mk, tower_forbidden, r.id)
             add(mk, conductor_forbidden, r.id)
-            vec(tower_geoms, r.id, r.layer, r.classes, d)
-            vec(cond_geoms, r.id, r.layer, r.classes, d)
+            tower_geoms.append(VecRule(r.id, r.layer, [z], 0.0))
+            cond_geoms.append(VecRule(r.id, r.layer, [z], 0.0))
         elif m == "flag_radius":
             pass  # events only
         elif m == "tower_setback":
@@ -445,6 +497,21 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
                 vec(cond_geoms, r.id, r.layer, r.classes, 0)
         elif m == "nogo":
             if p.get("treatment") == "Allowed":
+                continue
+            lr = last_resort(r)
+            if lr != "nogo":
+                relaxed_note(r, r.layer, r.classes, float(p.get("conductor_buffer_m", p.get("tower_setback_m", 0)) or 0),
+                             p.get("approval_months", 0))
+                if lr == "open":
+                    continue
+                td = float(p.get("tower_setback_m", 0))         # "span": towers keep the buffer
+                add(_within(R.dist(r.layer, r.classes), td), tower_forbidden, r.id)
+                vec(tower_geoms, r.id, r.layer, r.classes, td)
+                # the water may be spanned like a river (the TSD span tables still apply)
+                ang = R.angle_nearest(r.layer, r.classes, within_m=frame.res_m * 1.5)
+                if ang is not None:
+                    crossings.append(CrossingRaster(rule_id=r.id, name=r.name, angle=ang, window=None,
+                                                    max_span_m=None, min_type="A", cost_rs=0.0, long_span=True))
                 continue
             td = float(p.get("tower_setback_m", 0))
             dist = R.dist(r.layer, r.classes)
@@ -488,18 +555,27 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
                 add(_within(dist, cd), conductor_forbidden, r.id)
                 vec(cond_geoms, r.id, r.layer, r.classes, cd)
         elif m == "landclass":
-            if p.get("treatment") != "No-Go":
+            if p.get("treatment") not in ("No-Go", "Last resort"):
                 continue
             cb = cond_buffer(r)
+            lr = last_resort(r)
+            if lr != "nogo":
+                for lyr, cls in ((r.layer, r.classes), *((extra, None) for extra in (r.also_layers or []))):
+                    relaxed_note(r, lyr, cls, cb, p.get("approval_months", 0))
+                    if lr == "span":
+                        add(_within(R.dist(lyr, cls), cb), tower_forbidden, r.id)
+                        vec(tower_geoms, r.id, lyr, cls, cb)
+                continue
+            tb = cb if p.get("treatment") == "Last resort" else 0.0      # Rule_Table: the buffer holds towers too
             for lyr, cls in ((r.layer, r.classes), ("lulc", r.also_lulc_classes),
                              *((extra, None) for extra in (r.also_layers or []))):
                 if lyr == "lulc" and cls is None and r.layer != "lulc":
                     continue
                 dist = R.dist(lyr, cls)
                 add(_within(dist, cb), conductor_forbidden, r.id)
-                add(_within(dist, 0), tower_forbidden, r.id)
+                add(_within(dist, tb), tower_forbidden, r.id)
                 vec(cond_geoms, r.id, lyr, cls, cb)
-                vec(tower_geoms, r.id, lyr, cls, 0)
+                vec(tower_geoms, r.id, lyr, cls, tb)
         elif m == "crossing":
             td = float(p.get("tower_setback_m", 0))
             classes = r.classes
@@ -530,30 +606,49 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
                     cond_geoms.append(VecRule(r.id, r.layer, [frame.geom_utm_to_frame(g) for g in bans], 0.0))
                 line_classes = ["power_line"]
             else:
-                if td > 0:
+                if td > 0 or r.id == "bridges":         # bridges: no tower on the structure
                     add(_within(R.dist(r.layer, classes), td), tower_forbidden, r.id)
                     vec(tower_geoms, r.id, r.layer, classes, td)
                 line_classes = classes
             window = _angle_window(r, tol)
             # Power lines: the crossing-angle window applies only from `angle_min_kv` upwards; lower
             # voltages are crossed at any angle (Vivek, 7 Oct 2026). Two rasters, same rule id.
-            parts = [(r.layer, window)]
-            if r.id in ("power_line", "power_line_lt") and p.get("angle_min_kv") is not None and window is not None:
-                kv_min = float(p["angle_min_kv"])
-                parts = [(R.by_voltage(r.layer, kv_min, True), window), (R.by_voltage(r.layer, kv_min, False), None)]
+            base_type = forced_min_type(p.get("tower_type"))
+            parts = [(r.layer, window, base_type, 0.0)]
+            if r.id in ("power_line", "power_line_lt"):
+                # crossing-angle window from angle_min_kv (Rule_Table 9: lines ≥ 66 kV); crossing
+                # towers by the crossed line's voltage (TSD B): D at ≥ 400 kV, the rule's type below
+                akv = float(p["angle_min_kv"]) if p.get("angle_min_kv") is not None and window is not None else None
+                hi_type = forced_min_type(p.get("tower_type_400kv")) if p.get("tower_type_400kv") else None
+                parts = []
+                above = r.layer
+                if akv is not None:
+                    parts.append((R.by_voltage(r.layer, akv, False), None, base_type, 0.0))
+                    above = R.by_voltage(r.layer, akv, True)
+                if hi_type is not None:
+                    parts.append((R.by_voltage(above, 400.0, False), window if akv is not None else None, base_type, 0.0))
+                    parts.append((R.by_voltage(above, 400.0, True), window if akv is not None else None,
+                                  max_type(base_type, hi_type), 0.0))
+                else:
+                    parts.append((above, window if akv is not None else None, base_type, 0.0))
+            elif r.id == "bridges" and p.get("flyover_extension_m"):
+                ext = float(p["flyover_extension_m"])
+                parts = [(r.layer if not classes else R.class_subset(r.layer, [c for c in classes if c != "flyover"]),
+                          window, base_type, 0.0),
+                         (R.class_subset(r.layer, ["flyover"]), window, base_type, ext)]
             max_span = p.get("max_span_m")
             if p.get("pct_design_span") is not None:
                 pct_span = float(p["pct_design_span"]) / 100.0 * design_span_m
                 max_span = pct_span if max_span is None else min(float(max_span), pct_span)
             cost = 0.0          # no crossing charges (Route Cost Parameters 3); the heavier towers are priced by type
             built = []
-            for lyr, win in parts:
-                ang = R.angle_nearest(lyr, line_classes, within_m=frame.res_m * 1.5)
+            for lyr, win, mt, ext in parts:
+                ang = R.angle_nearest(lyr, None if (r.id == "bridges") else line_classes, within_m=frame.res_m * 1.5)
                 if ang is None:
                     continue
                 built.append(CrossingRaster(rule_id=r.id, name=r.name, angle=ang, window=win,
                                             max_span_m=None if max_span is None else float(max_span),
-                                            min_type=forced_min_type(p.get("tower_type")), cost_rs=cost))
+                                            min_type=mt, cost_rs=cost, extension_m=ext))
             if not built:
                 continue
             fired[r.id] = fired.get(r.id, 0) + 1
@@ -563,6 +658,7 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
                     extra.min_type = max_type(extra.min_type, "B1")
                 crossings.append(extra)
             if r.id == "river":
+                cr.long_span = True
                 cr.width_raster = R.mask(r.layer, classes)
                 cr.major_threshold_m = float(p.get("major_threshold_m", 600))
                 cr.major_type = forced_min_type(p.get("major_tower_type"))
@@ -697,7 +793,49 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
                     half_width_m=hw, conductor_rs_per_m=conductor_rs_per_m,
                     tower_nogo=tower_geoms, angle_nogo=angle_geoms,
                     conductor_nogo=cond_geoms, rules_fired=fired, costs=costs,
-                    terminal_zone=zone, terminal_yards=yards)
+                    terminal_zone=zone, terminal_yards=yards, relaxed=relaxed, relaxed_items=relaxed_items)
+
+
+def _airport_zone(R: "_Rasterizer", frame: Frame, layer: str, classes, d: float, funnel_m: float):
+    """No-go zone around airports, frame coords (Rule_Table 14-15): within d of the airport boundary,
+    and within funnel_m of it inside the approach funnel of each runway end. The funnel follows the
+    ICAO Annex 14 approach surface (code 4): inner edge 300 m wide, 60 m beyond the runway end,
+    diverging 15 % each side."""
+    from shapely import affinity
+    from shapely.geometry import Polygon
+    ap = R.subset(layer, classes)
+    if ap is None or not len(ap):
+        return None
+    au = ap.to_crs(frame.epsg)
+    zone = unary_union([g.buffer(d) for g in au.geometry if g is not None and not g.is_empty])
+    if funnel_m > d:
+        rw = R.subset("approach", ["runway"])
+        if rw is not None and len(rw):
+            reach = unary_union([g.buffer(funnel_m) for g in au.geometry if g is not None and not g.is_empty])
+            funnels = []
+            for g in rw.to_crs(frame.epsg).geometry:
+                if g is None or g.is_empty or g.distance(reach) > 0:
+                    continue
+                rect = g.minimum_rotated_rectangle
+                xs, ys = rect.exterior.coords.xy
+                c = [(xs[k], ys[k]) for k in range(4)]
+                e = [((c[k][0] + c[(k + 1) % 4][0]) / 2, (c[k][1] + c[(k + 1) % 4][1]) / 2) for k in range(4)]
+                l01 = math.dist(c[0], c[1]); l12 = math.dist(c[1], c[2])
+                ends = (e[1], e[3]) if l01 > l12 else (e[0], e[2])     # midpoints of the short sides
+                for p0, p1 in (ends, ends[::-1]):
+                    ux, uy = (p0[0] - p1[0]), (p0[1] - p1[1])
+                    n = math.hypot(ux, uy) or 1.0
+                    ux, uy = ux / n, uy / n
+                    vx, vy = -uy, ux
+                    L = funnel_m
+                    s0x, s0y = p0[0] + 60 * ux, p0[1] + 60 * uy
+                    w0, w1 = 150.0, 150.0 + 0.15 * L
+                    funnels.append(Polygon([(s0x + w0 * vx, s0y + w0 * vy), (s0x - w0 * vx, s0y - w0 * vy),
+                                            (s0x + L * ux - w1 * vx, s0y + L * uy - w1 * vy),
+                                            (s0x + L * ux + w1 * vx, s0y + L * uy + w1 * vy)]))
+            if funnels:
+                zone = unary_union([zone, unary_union(funnels).intersection(reach)])
+    return frame.geom_utm_to_frame(zone)
 
 
 def _frame_to_utm(frame: Frame, g):

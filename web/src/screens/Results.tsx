@@ -394,6 +394,7 @@ function Body({ s }: { s: Solve }) {
                       <span className="nm">Route {r.id} — {r.name}</span>
                       <span className="sub">
                         {num(r.stats.length_km, 1)} km · {int(r.stats.towers)} towers · {num(r.stats.forest_ha, 1)} ha forest
+                        {r.stats.approval_months ? ` · approvals ~${r.stats.approval_months} months` : ""}
                       </span>
                     </span>
                     <span className="cost">{crore(r.cost.total, { unit: false, digits: 1 })}<span>₹ Cr</span></span>

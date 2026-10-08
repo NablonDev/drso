@@ -176,7 +176,9 @@ def _extract_one(run, k, lay, mode, src, band, img, rules, progress, rep):
         elif lay["producer"] in ("esri_airports", "osm_runways"):
             is_ap = lay["producer"] == "esri_airports"
             rid, pk, scale = ("airport_noc", "radius_km", 1000.0) if is_ap else ("airport_prohibition", "distance_m", 1.0)
-            reach = max(float(lay.get("reach_m", 0)), float((rules[rid].params if rid in rules else {}).get(pk, 0)) * scale)
+            rp = rules[rid].params if rid in rules else {}
+            reach = max(float(lay.get("reach_m", 0)), float(rp.get(pk, 0)) * scale,
+                        0.0 if is_ap else float(rp.get("funnel_m", 0) or 0))      # runways out to the approach funnel
             if _refresh_requested(rep):
                 res = (aviation.refresh_airports if is_ap else aviation.refresh_runways)(
                     tuple(aviation._reach(band, reach).bounds), run_id=run["id"], progress=lambda f, st: progress(0.8 * f))

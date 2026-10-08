@@ -132,11 +132,8 @@ def test_full_flow(client):
     fid = dec["buildings"]["features"][0]["properties"]["id"]
     ft = client.get(f"/api/runs/{rid}/features/{fid}").json()
     assert ft["layer_key"] == "buildings" and ft["model"] == "corridor footprint delivery" and ft["chainage_km"]
-    # solve. The test corridor crosses the Kachchh Desert Sanctuary (forest package, 6 Oct 2026), which
-    # is No-Go by default and closes the ±5 km band at km 36.4–37.0: allowed here, with a reason.
-    r = client.put(f"/api/runs/{rid}/rules/protected_areas",
-                   json={"enabled": True, "params": {"treatment": "Allowed"}, "reason": "test corridor crosses the sanctuary"})
-    assert r.status_code == 200, r.text
+    # solve. The test corridor crosses the Kachchh Desert Sanctuary; national parks and sanctuaries
+    # are crossable with approval since 8 Oct 2026 (Rule_Table 69-72).
     assert client.post(f"/api/runs/{rid}/solve").status_code == 202
     j = run_next_job()
     assert j["status"] == "done", j["error"]
@@ -164,7 +161,7 @@ def test_full_flow(client):
     assert r.status_code == 400 and "reason" in r.json()["detail"].lower()
     r = client.put(f"/api/runs/{rid2}/rules/clusters", json={"enabled": True, "params": {"tower_setback_m": 80},
                                                               "reason": "client call"})
-    assert r.status_code == 200 and r.json()["n_changed"] == 2          # + protected areas, carried over
+    assert r.status_code == 200 and r.json()["n_changed"] == 1
     assert client.post(f"/api/runs/{rid2}/solve").status_code == 202
     assert run_next_job()["status"] == "done"
     cmp = client.get(f"/api/runs/{rid2}/compare").json()
@@ -186,7 +183,7 @@ def test_rules_and_costs_validation(client):
     assert r.json()["n_off"] == 1
     assert client.delete(f"/api/runs/{rid}/rules").json()["n_off"] == 0
     rules = client.get(f"/api/runs/{rid}/rules").json()
-    assert rules["n_rules"] == 39          # 29 prototype + 11 added (incl. low tension power line, bridges, nalla) - notified wetland
+    assert rules["n_rules"] == 47          # 8 Oct 2026: + state highway, lake, pond, defence, monuments, salt pans (land + water), wetland
     r = client.put(f"/api/runs/{rid}/costs", json={"tower_price": {"A": "abc"}})
     assert r.status_code == 400
     r = client.put(f"/api/runs/{rid}/costs", json={"tower_price": {"B2": 1}})
@@ -458,7 +455,7 @@ def test_aviation_layers_and_refresh_from_ui(client):
     assert "Airport — NOC radius" in ap["rules"]
     assert rw["name"] == "Airport approach path" and rw["refreshable"] and rw["refresh_label"] == "OSM"
     assert rw["status"] == "done"
-    assert "Airport — EHT line prohibition" in rw["rules"] and rw["stats"]["reach_m"] >= 1500
+    assert "Airport — no-go buffer and approach funnel" in rw["rules"] and rw["stats"]["reach_m"] >= 10000
     names = [r["name"] for r in db.all_("""select f.name from features f join run_layers rl on rl.layer_version_id=f.layer_version_id
                                            where rl.run_id=%s and rl.layer_key='aviation'""", (rid,))]
     assert "Bhuj Airport" in names

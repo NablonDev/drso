@@ -67,6 +67,16 @@ class SolverParams:
     hilly_span_max_m: float | None = None
     plain_span_max_m: float | None = None    # spans with no hilly ground stay within this (hilly may be longer)
     hilly_tower_extra_rs: float = 0.0        # hilly ground: towers are tension (B1), ₹ over an A per span
+    hilly_rise_m: float = 10.0               # hilly span: ground rises more than this between its towers (Route_Rules 3)
+    extension_pct: float = 0.0               # body extension price, % of the tower price per +18 m
+    # TSD span tables (765 kV): {type: [[deg, sum_m], ...]}; None = not applied
+    span_sum: dict | None = None
+    single_span_fraction: float = 0.6
+    wind_span_m: float | None = None
+    # long (river) spans under the TSD: D extension steps and the wind span each step allows
+    long_ext_steps: tuple = ()                 # e.g. ((6, 400), (18, 300), (33, 270), (45, 250))
+    long_ext_cost_rs_per_m: float = 0.0        # ₹ per metre of extension on one D tower
+    dead_end_max_dev_deg: float | None = None  # TSD note J: 15° line side + 30° slack side
 
 
 @dataclass
@@ -116,18 +126,23 @@ def make_grid(compiled: Compiled, p: SolverParams) -> Grid:
     n_short = len(offs)
     if p.river_max_span_m > p.span_max_m:
         seen = set(offs)
+        lengths = []
         Lv = p.span_max_m + p.long_length_step_m
         while Lv <= p.river_max_span_m + 1e-6:
+            lengths.append(Lv)
+            Lv += p.long_length_step_m
+        if not lengths or lengths[-1] < p.river_max_span_m - 1e-6:
+            lengths.append(p.river_max_span_m)          # the limit itself (TSD: 720 m)
+        for Lv in lengths:
             th = -p.long_heading_limit_deg
             while th <= p.long_heading_limit_deg + 1e-6:
                 dc = int(round(Lv * math.cos(math.radians(th)) / sx))
                 dr = int(round(Lv * math.sin(math.radians(th)) / sy))
                 L = math.hypot(dc * sx, dr * sy)
-                if dc >= 1 and L > p.span_max_m + 1e-6 and (dc, dr) not in seen:
+                if dc >= 1 and p.span_max_m + 1e-6 < L <= p.river_max_span_m + 1e-6 and (dc, dr) not in seen:
                     seen.add((dc, dr))
                     offs.append((dc, dr))
                 th += p.long_heading_step_deg
-            Lv += p.long_length_step_m
     offs = np.array(offs, dtype=np.int64)
     head = np.degrees(np.arctan2(offs[:, 1] * sy, offs[:, 0] * sx))
     length = np.hypot(offs[:, 0] * sx, offs[:, 1] * sy)
@@ -175,7 +190,7 @@ class _Rasters:
     def set_river_cols(self, compiled: Compiled, grid: "Grid", p: SolverParams):
         """Grid columns from which a long span could reach a river."""
         f = compiled.frame
-        riv = [cr for cr in compiled.crossings if cr.rule_id == "river"]
+        riv = [cr for cr in compiled.crossings if getattr(cr, "long_span", cr.rule_id == "river")]
         if not riv or p.river_max_span_m <= p.span_max_m:
             return
         has = np.zeros(f.width, bool)
@@ -230,7 +245,8 @@ def _edge_block(compiled: Compiled, grid: Grid, p: SolverParams, rasters: "_Rast
         one = (need > 0) & (need <= p.extension_m * 0.5)                 # one tower raised (mid-span gains ~half)
         two = (need > p.extension_m * 0.5) & (need <= p.extension_m)
         invalid |= need > p.extension_m
-        hil_any = rasters.hilly[row, col].any(dim=-1)
+        # hilly span: the ground rises more than hilly_rise_m between its towers (Route_Rules item 3)
+        hil_any = (torch.nan_to_num((zb - za).abs().squeeze(-1), nan=0.0) > p.hilly_rise_m)
         ext = torch.where(hil_any, torch.full_like(E, p.extension_cost_hilly_rs), torch.full_like(E, p.extension_cost_rs))
         E = E + one.float() * ext + two.float() * (2 * ext)
         if p.hilly_span_max_m is not None:
@@ -239,6 +255,23 @@ def _edge_block(compiled: Compiled, grid: Grid, p: SolverParams, rasters: "_Rast
             invalid |= ~hil_any & (length > p.plain_span_max_m + 1e-3)
         # hilly ground: every tower is a tension tower (Vivek, 7 Oct 2026); one tower's extra per span
         E = E + hil_any.float() * p.hilly_tower_extra_rs
+    if rasters.z is not None and require_river and p.long_ext_steps:
+        # long crossing span (TSD): both crossing towers raised to clear the ground at this span's
+        # sag; the extension step sets the wind span the towers allow, so the span plus a minimum
+        # neighbour span must fit 2 × wind span; beyond the largest step the span is not allowed
+        zs = rasters.z[row, col]
+        za, zb = zs[..., :1], zs[..., -1:]
+        sag = p.sag_at_design_m * (length.unsqueeze(-1) / p.design_span_m) ** 2
+        line = (1 - tt) * (za + p.lowest_attachment_m) + tt * (zb + p.lowest_attachment_m) - 4 * sag * tt * (1 - tt)
+        need = (p.ground_clearance_m - torch.nan_to_num(line - zs, nan=1e9).amin(dim=-1)).clamp(min=0.0)
+        ok_any = torch.zeros_like(invalid)
+        ext_used = torch.zeros_like(E)
+        for step, wind in sorted(p.long_ext_steps):
+            fits = (~ok_any) & (need <= step + 1e-6) & (length + p.span_min_m <= 2 * wind + 1e-6)
+            ext_used = torch.where(fits, torch.where(need > 0, torch.full_like(E, float(step)), torch.zeros_like(E)), ext_used)
+            ok_any |= fits
+        invalid |= ~ok_any
+        E = E + 2 * ext_used * p.long_ext_cost_rs_per_m
     crossed_river = torch.zeros_like(invalid)
 
     tA = p.tower_cost_rs["A"]
@@ -267,7 +300,9 @@ def _edge_block(compiled: Compiled, grid: Grid, p: SolverParams, rasters: "_Rast
             add = torch.where(major, torch.full_like(E, surcharge_major), torch.full_like(E, surcharge_minor))
         else:
             add = torch.full_like(E, 2 * max(0.0, p.tower_cost_rs[min_type] - tA) + cost)
-        if cr.rule_id == "river":
+        if getattr(cr, "extension_m", 0):
+            add = add + 2 * p.tower_cost_rs[min_type] * p.extension_pct / 100.0 * cr.extension_m / 18.0
+        if getattr(cr, "long_span", cr.rule_id == "river"):
             crossed_river |= crossed
         E = E + torch.where(crossed, add, torch.zeros_like(E))
         invalid |= crossed & bad
@@ -319,6 +354,30 @@ def site_costs(compiled: Compiled, grid: Grid, p: SolverParams) -> tuple[np.ndar
     return S.astype(np.float32), compiled.angle_forbidden[row, col]
 
 
+def span_sum_limit(table: dict, t: str, d: float) -> float | None:
+    """Permissible sum of adjacent spans (m) for tower type t at deviation d (TSD table 3). Below
+    the first tabulated angle the first value applies; between entries the stricter (next) one."""
+    rows = table.get(t)
+    if not rows:
+        return None
+    if d <= rows[0][0]:
+        return float(rows[0][1])
+    for (a0, v0), (a1, v1) in zip(rows[:-1], rows[1:]):
+        if d <= a1:
+            return float(v1)
+    return float(rows[-1][1])
+
+
+def fit_type_for_spans(table: dict, t: str, d: float, L1: float, L2: float, frac: float) -> str | None:
+    """Lightest type from t upward whose adjacent-span allowance at deviation d takes spans L1, L2."""
+    from .config import TOWER_TYPES
+    for tt in TOWER_TYPES[TOWER_TYPES.index(t):]:
+        lim = span_sum_limit(table, tt, d)
+        if lim is None or (L1 + L2 <= lim + 1e-6 and max(L1, L2) <= frac * lim + 1e-6):
+            return tt
+    return None
+
+
 def transition_matrix(grid: Grid, p: SolverParams) -> tuple[np.ndarray, np.ndarray]:
     """T[k, k'] ₹ tower cost by deflection type; TA: same but only type A allowed."""
     h = grid.heading_deg
@@ -345,6 +404,15 @@ def transition_matrix(grid: Grid, p: SolverParams) -> tuple[np.ndarray, np.ndarr
             t = tower_type_for(0.0 if d <= slack[i, j] else d, p.type_bands)
             if t is None:
                 continue
+            if p.span_sum is not None:
+                # TSD: the span pair must fit the type's adjacent-span table at this deviation; a
+                # heavier type with a longer allowance is taken when the banded one does not fit
+                Li, Lj = float(grid.length_m[i]), float(grid.length_m[j])
+                if p.wind_span_m is not None and (Li + Lj) / 2.0 > p.wind_span_m + 1e-6:
+                    continue
+                t = fit_type_for_spans(p.span_sum, t, d, Li, Lj, p.single_span_fraction)
+                if t is None:
+                    continue
             c = p.tower_cost_rs[t]
             if t != "A":
                 c += p.angle_tower_penalty_rs
@@ -444,6 +512,8 @@ def solve(compiled: Compiled, p: SolverParams, cancel_check=None, progress=None)
     end_k = torch.zeros((nc + 1, R), dtype=torch.int64, device=dev)
     end_cols = set(np.nonzero(np.isfinite(seedB).any(axis=1))[0].tolist())
     start_marker = torch.tensor(-1, dtype=torch.int16, device=dev)
+    ys_t = torch.as_tensor((np.arange(R) - grid.r0) * grid.sy, device=dev, dtype=torch.float32)
+    head_t = torch.as_tensor(grid.heading_deg, device=dev, dtype=torch.float32)
 
     budget = 1.25e8 if rasters.z is not None else 2.5e8               # terrain doubles the gathered samples
     chunk = max(1, min(32, int(budget // max(1, R * K * n_samples))))
@@ -462,7 +532,13 @@ def solve(compiled: Compiled, p: SolverParams, cancel_check=None, progress=None)
             V = torch.where(row_ok & ok_c.view(1, K), V, torch.full_like(V, INF))
             reach[c] = torch.isfinite(V).any()
         if c in end_cols:
-            vmin, vk = V.min(dim=1)
+            if p.dead_end_max_dev_deg is not None:
+                hs = torch.rad2deg(torch.atan2(-ys_t, torch.full_like(ys_t, max(compiled.frame.length_m - c * grid.sx, 1.0)))).view(R, 1)
+                dev_ok = (head_t.view(1, K) - hs).abs() <= p.dead_end_max_dev_deg + 1e-6
+                Vend = torch.where(dev_ok, V, torch.full_like(V, INF))
+            else:
+                Vend = V
+            vmin, vk = Vend.min(dim=1)
             end_tot[c] = vmin + SB[c]
             end_k[c] = vk
         if c == nc:
@@ -476,6 +552,12 @@ def solve(compiled: Compiled, p: SolverParams, cancel_check=None, progress=None)
         am = am.to(torch.int16)
         del tot, totA
         seed = SA[c].view(R, 1).expand(R, K)
+        if p.dead_end_max_dev_deg is not None:
+            # TSD note J: the first dead-end tower turns at most dead_end_max_dev_deg between the
+            # gantry slack span and the line
+            hs = torch.rad2deg(torch.atan2(ys_t, torch.full_like(ys_t, max(c * grid.sx, 1.0)))).view(R, 1)
+            dev_ok = (head_t.view(1, K) - hs).abs() <= p.dead_end_max_dev_deg + 1e-6
+            seed = torch.where(dev_ok, seed, torch.full_like(seed, INF))
         use_seed = seed < M
         M = torch.where(use_seed, seed, M)
         am = torch.where(use_seed, start_marker, am)

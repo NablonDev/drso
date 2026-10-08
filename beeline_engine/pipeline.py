@@ -150,12 +150,15 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
     prog(0.02, "Compiling rules")
     gdfs = {k: li.gdf for k, li in inp.layers.items()}
     t = time.time()
-    comp = compile_rules(frame, gdfs, rules, costs, inp.kv, hw, endpoints_go_radius_m=go_radius,
-                         design_span_m=design,
-                         single_angle_tol_deg=eng["crossings"]["single_angle_tolerance_deg"],
-                         gantry_buffer_m=float(rules["substations"].params.get("gantry_buffer_m", 10)),
-                         raster_margin_m=float(eng["grid"].get("raster_margin_m", 0.0)),
-                         angle_tower_rules=tuple(eng["crossings"].get("angle_tower_rules") or ()))
+    def _compile(relaxed: bool = False):
+        return compile_rules(frame, gdfs, rules, costs, inp.kv, hw, endpoints_go_radius_m=go_radius,
+                             design_span_m=design,
+                             single_angle_tol_deg=eng["crossings"]["single_angle_tolerance_deg"],
+                             gantry_buffer_m=float(rules["substations"].params.get("gantry_buffer_m", 10)),
+                             raster_margin_m=float(eng["grid"].get("raster_margin_m", 0.0)),
+                             angle_tower_rules=tuple(eng["crossings"].get("angle_tower_rules") or ()),
+                             relaxed=relaxed)
+    comp = _compile()
     timings["compile_s"] = round(time.time() - t, 2)
     check_cancel()
 
@@ -181,7 +184,11 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
         attach_terrain(comp, dem, float(eng["spotting"].get("hilly_slope_deg", 10)))
         timings["terrain_s"] = round(time.time() - t, 2)
     hilly_m = float(rules["design_span"].params["hilly_m"])
+    hilly_rise = float(rules["design_span"].params.get("hilly_rise_m", 10))
     ext_pct = float(costs["tower"]["extension_pct"]) / 100.0
+    # AESL Tower Spotting Data (765 kV D/C, 8 Oct 2026): span tables, wind / weight span, extension steps
+    tsd = (eng.get("tsd") or {}).get(str(inp.kv))
+    ext_max_abc = max(tsd["extensions_m"]["C1"]) if tsd else 18.0      # A/B/C reach +6 m; D goes further
     # with terrain, hilly spans (all-tension) may be longer than plain ones: the grid offers up to the
     # longer of the two and the edge test keeps non-hilly spans within the plain value
     smax_search = max(smax, hilly_m) if terrain else smax
@@ -196,11 +203,18 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
                         ground_clearance_m=float(eng["spotting"]["ground_clearance_m"][inp.kv]),
                         lowest_attachment_m=float(eng["spotting"]["lowest_attachment_m"][inp.kv]),
                         sag_at_design_m=float(eng["spotting"]["sag_at_design_span_m"][inp.kv]),
-                        design_span_m=design,
-                        extension_cost_rs=tower_cost["A"] * ext_pct,
-                        extension_cost_hilly_rs=tower_cost["B1"] * ext_pct,
+                        design_span_m=design, extension_m=ext_max_abc,
+                        extension_cost_rs=tower_cost["A"] * ext_pct * ext_max_abc / 18.0,
+                        extension_cost_hilly_rs=tower_cost["B1"] * ext_pct * ext_max_abc / 18.0,
                         hilly_span_max_m=hilly_m, plain_span_max_m=smax,
-                        hilly_tower_extra_rs=max(0.0, tower_cost["B1"] - tower_cost["A"]))
+                        hilly_tower_extra_rs=max(0.0, tower_cost["B1"] - tower_cost["A"]),
+                        hilly_rise_m=hilly_rise, extension_pct=ext_pct * 100.0,
+                        span_sum=tsd["span_sum"] if tsd else None,
+                        single_span_fraction=float(tsd.get("single_span_fraction", 0.6)) if tsd else 0.6,
+                        wind_span_m=float(tsd["wind_span_m"]["base"]) if tsd else None,
+                        long_ext_steps=_long_ext_steps(tsd) if tsd else (),
+                        long_ext_cost_rs_per_m=tower_cost["D45"] * ext_pct / 18.0,
+                        dead_end_max_dev_deg=float(tsd["dead_end_max_dev_deg"]) if tsd and tsd.get("dead_end_max_dev_deg") else None)
     sp = SpotParams(design_span_m=design, span_max_m=smax_search,
                     min_span_m=float(rules["crossing_span_limits"].params["min_span_m"]),
                     max_dev_deg=max_dev, type_bands=bands,
@@ -216,7 +230,9 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
                     nudge_radius_m=float(eng["grid"].get("nudge_radius_m", 30)),
                     hilly_design_span_m=float(rules["design_span"].params["hilly_m"]),
                     hilly_section_km=float(rules["section_interval"].params["hilly_km"]),
-                    hilly_slope_deg=float(eng["spotting"].get("hilly_slope_deg", 10)))
+                    hilly_rise_m=hilly_rise, tsd=tsd,
+                    section_spans=int(rules["section_interval"].params.get("plain_spans") or 0) or None,
+                    hilly_section_spans=int(rules["section_interval"].params.get("hilly_spans") or 0) or None)
 
     findex = FeatureIndex(frame, inp.layers, layer_names)
     rule_layer = {r.id: r.layer for r in rules.values()}
@@ -225,6 +241,9 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
     variants = eng["routes"][: max(1, min(4, inp.routes_wanted))]
     routes = []
     prev_lines = []
+    lines_by_id: dict[int, LineString] = {}
+    blocked_first = None
+    comp_relaxed = None
     n_var = len(variants)
     for vi, var in enumerate(variants):
         check_cancel()
@@ -232,51 +251,107 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
         span_frac = 0.8 / n_var
         prog(frac0, f"Solving route {var['id']} — {var['name']}")
         p = _variant_params(base, var, design)
+        cv = comp
+        if var.get("relaxed"):
+            # Relaxed route: the last-resort relaxations of Rule_Table column N, all at once
+            if comp_relaxed is None:
+                prog(frac0, f"Compiling the relaxed rules — route {var['id']}")
+                comp_relaxed = _compile(relaxed=True)
+                if terrain:
+                    attach_terrain(comp_relaxed, dem, float(eng["spotting"].get("hilly_slope_deg", 10)))
+            cv = comp_relaxed
 
         def sub(f, _f0=frac0, _sf=span_frac, _v=var):
             prog(_f0 + _sf * 0.7 * f, f"Solving route {_v['id']} — {_v['name']}")
 
         t = time.time()
-        out = solve(comp, p, cancel_check=check_cancel, progress=sub)
-        solve_s = time.time() - t
         diversity_ev = None
-        if out.feasible and prev_lines:
+        apart = var.get("apart_from")
+        if apart and apart in lines_by_id:
+            # second least cost: least cost kept out of route `apart_from`'s corridor
+            p.extra_strip_rs_per_m = _penalty_raster(cv, [lines_by_id[apart]], eng["diversity"])
+            diversity_ev = event("APART_FROM", {"route": var["id"], "other": apart})
+        out = solve(cv, p, cancel_check=check_cancel, progress=sub)
+        solve_s = time.time() - t
+        if out.feasible and prev_lines and not apart and not var.get("relaxed"):
             line = _outcome_line(out)
             overlap, other = _max_overlap(line, prev_lines, eng["diversity"]["corridor_m"])
             if overlap > 1 - eng["diversity"]["min_distinct_fraction"]:
-                pen = _penalty_raster(comp, prev_lines, eng["diversity"])
+                pen = _penalty_raster(cv, prev_lines, eng["diversity"])
                 p.extra_strip_rs_per_m = pen
-                out2 = solve(comp, p, cancel_check=check_cancel, progress=sub)
+                out2 = solve(cv, p, cancel_check=check_cancel, progress=sub)
                 if out2.feasible:
                     out = out2
                     diversity_ev = event("DIVERSITY", {"route": var["id"], "overlap_pct": overlap * 100,
                                                        "other": other + 1})
                 solve_s = time.time() - t
         if not out.feasible:
-            blocked = _blocked(inp, frame, comp, out, findex, rules)
-            prog(1.0, "No viable route")
-            return {"feasible": False, "blocked": blocked, "routes": [], "events_global": global_events,
-                    "timings": {**timings, "total_s": round(time.time() - t_start, 2)},
-                    "frame": _frame_info(frame), "rules_fired": comp.rules_fired}
+            # the band is closed under this route's rules; the relaxed route may still get through
+            if blocked_first is None:
+                blocked_first = _blocked(inp, frame, cv, out, findex, rules)
+            global_events.append(event("ROUTE_NOT_FOUND", {"route": var["id"], "name": var["name"],
+                                                           "why": blocked_first["event"]["text"]}))
+            continue
         prog(frac0 + span_frac * 0.75, f"Spotting towers — route {var['id']}")
         pts = [out.grid.site_xy(c, r) for c, r in out.sites]
         pts = [(float(x), float(y)) for x, y in pts]
         t = time.time()
-        sr = spot(comp, pts, sp, dem=dem)
+        sr = spot(cv, pts, sp, dem=dem)
         spot_s = time.time() - t
         line = LineString([(tw.x, tw.y) for tw in sr.towers])
         prev_lines.append(line)
-        evs = _route_events(sr, frame, comp, findex, rules, sp, layer_names, inp, dem,
+        lines_by_id[var["id"]] = line
+        _approvals(sr, cv, rules)
+        evs = _route_events(sr, frame, cv, findex, rules, sp, layer_names, inp, dem,
                             [e for e in global_events if e["type"] == "BEELINE_BLOCKER"])
+        for a in sr.stats.get("approval_items", []):
+            evs.append(event("APPROVAL", a, chainage_km=None))
         if diversity_ev:
             evs.insert(0, diversity_ev)
         routes.append(_route_json(var, sr, frame, evs, solve_s, spot_s, out))
+    if not routes:
+        prog(1.0, "No viable route")
+        return {"feasible": False, "blocked": blocked_first, "routes": [], "events_global": global_events,
+                "timings": {**timings, "total_s": round(time.time() - t_start, 2)},
+                "frame": _frame_info(frame), "rules_fired": comp.rules_fired}
     prog(1.0, "Done")
     timings["total_s"] = round(time.time() - t_start, 2)
     return {"feasible": True, "routes": routes, "events_global": global_events, "timings": timings,
             "frame": _frame_info(frame), "rules_fired": comp.rules_fired,
             "line": {"kv": inp.kv, "circuit": inp.circuit, "half_width_m": hw, "design_span_m": design,
                      "span_min_m": smin, "span_max_m": smax}}
+
+
+def _long_ext_steps(tsd: dict) -> tuple:
+    """(extension step m, wind span m) pairs for D crossing towers: base towers up to +6 m keep the
+    base wind span; +18 / +33 / +45 m have their own (TSD)."""
+    ws = tsd.get("wind_span_m", {})
+    out = []
+    for st in tsd["extensions_m"]["D45"]:
+        w = ws.get("base", 400) if st < 18 else ws.get("d18", 300) if st < 33 else ws.get("d33", 270) if st < 45 else ws.get("d45", 250)
+        out.append((float(st), float(w)))
+    return tuple(out)
+
+
+def _approvals(sr, comp, rules) -> None:
+    """Approval items and months for a spotted route (Rule_Table column O): forest diversion by
+    area (≤ 5 ha 6 months, ≤ 40 ha 12, more 18), and every last-resort relaxation the route uses."""
+    items = []
+    fha = float(sr.stats.get("forest_ha", 0) or 0)
+    fr = rules.get("forest")
+    ro = float((fr.params if fr else {}).get("ro_threshold_ha", 5))
+    cons = float((fr.params if fr else {}).get("conservator_threshold_ha", 40))
+    if fha > 0.01:
+        lvl, mo = (("Regional Office", 6) if fha <= ro else ("Regional Empowered Committee", 12) if fha <= cons
+                   else ("Conservator of Forests", 18))
+        items.append({"item": f"Forest diversion, {fha:.1f} ha — {lvl}", "months": mo})
+    if comp.relaxed_items:
+        line = LineString([(t.x, t.y) for t in sr.towers])
+        for vr, months, label in comp.relaxed_items:
+            if vr.hits(line):
+                items.append({"item": f"Last resort: {label}", "months": months})
+    sr.stats["approval_items"] = items
+    sr.stats["approval_months"] = max([i["months"] for i in items], default=0)
 
 
 def _variant_params(base: SolverParams, var: dict, design: float) -> SolverParams:

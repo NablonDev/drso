@@ -471,6 +471,9 @@ export interface RouteStats {
   warnings: number;
   max_lateral_m: number;
   areas_ha?: Record<string, number>;
+  /** Rule_Table column O: approvals the route needs (forest diversion, last-resort relaxations) */
+  approval_months?: number;
+  approval_items?: { item: string; months: number }[];
 }
 
 export interface Route {
