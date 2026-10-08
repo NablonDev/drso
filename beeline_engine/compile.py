@@ -292,38 +292,22 @@ def _within(dist: np.ndarray | None, d: float) -> np.ndarray | None:
 
 
 # ----------------------------------------------------------------------------------------
-NULL_POINT_MAX_SPAN_M = 700.0      # a longer gap between mapped towers probably hides one: left open
-
-
-def _null_point_bans(lines, towers, epsg: int, tol: float) -> list:
-    """Parts of existing spans the new conductor may not cross (UTM): everything outside
-    mid-span ± tol x span. Spans come from the mapped towers along each line; stretches without a
-    tower at both ends, or longer than NULL_POINT_MAX_SPAN_M, are left open (unknown)."""
-    from shapely.ops import linemerge, substring
-    if lines is None or towers is None or not len(lines) or not len(towers):
+def _tower_crossing_bans(lines, towers, epsg: int, clear_m: float) -> list:
+    """Parts of the existing conductors the new line may not cross (UTM): the wire within clear_m
+    of an existing tower. The rest of the wire may be crossed anywhere (Vivek, 8 Oct 2026; replaces
+    the mid-span null-point window)."""
+    if lines is None or towers is None or not len(lines) or not len(towers) or clear_m <= 0:
         return []
-    lu = lines.geometry.to_crs(epsg)
-    tu = towers.geometry.to_crs(epsg)
-    u = unary_union([g for g in lu if g is not None and not g.is_empty])
-    merged = linemerge(u) if u.geom_type == "MultiLineString" else u
-    tree_pts = list(tu)
-    from shapely import STRtree
-    tree = STRtree(tree_pts)
-    keep = max(0.0, 0.5 - tol)
+    lu = unary_union([g for g in lines.geometry.to_crs(epsg) if g is not None and not g.is_empty])
     out = []
-    for ln in getattr(merged, "geoms", [merged]):
-        if ln.geom_type != "LineString" or ln.length < 1:
+    for t in towers.geometry.to_crs(epsg):
+        if t is None or t.is_empty:
             continue
-        idx = tree.query(ln, predicate="dwithin", distance=25.0)
-        pos = sorted({round(ln.project(tree_pts[i]), 1) for i in idx})
-        pos = [s for k, s in enumerate(pos) if k == 0 or s - pos[k - 1] > 20.0]
-        for s0, s1 in zip(pos[:-1], pos[1:]):
-            L = s1 - s0
-            if L > NULL_POINT_MAX_SPAN_M or keep <= 0:
-                continue
-            out.append(substring(ln, s0, s0 + keep * L))             # tower -> window start
-            out.append(substring(ln, s1, s1 - keep * L))             # tower -> window end (reversed)
-    return [g for g in out if g is not None and not g.is_empty and g.length > 0]
+        piece = lu.intersection(t.buffer(clear_m, quad_segs=16))
+        for g in getattr(piece, "geoms", [piece]):
+            if g.geom_type == "LineString" and g.length > 0:
+                out.append(g)
+    return out
 
 
 LULC_COST_CLASS = {
@@ -521,34 +505,29 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
             classes = r.classes
             if r.id in ("power_line", "power_line_lt"):
                 # towers keep clear of existing towers and of the existing conductors;
-                # the new conductor keeps the null-point radius from existing towers
                 # "Tower to existing tower" applies to towers. Existing conductors: a new tower
                 # keeps the new line's corridor half-width clear of them (interpretation, flagged).
                 add(_within(R.dist(r.layer, ["power_tower"]), td), tower_forbidden, r.id)
                 vec(tower_geoms, r.id, r.layer, ["power_tower"], td)
                 add(_within(R.dist(r.layer, ["power_line"]), hw), tower_forbidden, r.id)
                 vec(tower_geoms, r.id, r.layer, ["power_line"], hw)
-                nr = float(p.get("null_point_radius_m", 0))
-                add(_within(R.dist(r.layer, ["power_tower"]), nr), conductor_forbidden, r.id)
-                vec(cond_geoms, r.id, r.layer, ["power_tower"], nr)
-                # null point: the existing span may be crossed only within ± tol of its mid-span
-                tol = p.get("null_point_tolerance_pct")
-                if tol is not None:
-                    bans = _null_point_bans(R.subset(r.layer, ["power_line"]), R.subset(r.layer, ["power_tower"]),
-                                            frame.epsg, float(tol) / 100.0)
-                    if bans:
-                        # raster: permissive by one cell at the window ends (a 20 m raster cannot hold an
-                        # 80 m window exactly); the exact segments go to the spotting's vector check
-                        from shapely.ops import substring as _sub
-                        loose = [_sub(g, 0, max(0.0, g.length - frame.res_m)) if g.length > frame.res_m else None
-                                 for g in bans]
-                        loose = [g for g in loose if g is not None and not g.is_empty]
-                        if loose:
-                            mk = rfeatures.rasterize([(g, 1) for g in loose], out_shape=shape,
-                                                     transform=frame.transform, fill=0, all_touched=False,
-                                                     dtype="uint8").astype(bool)
-                            add(mk, conductor_forbidden, r.id)
-                        cond_geoms.append(VecRule(r.id, r.layer, [frame.geom_utm_to_frame(g) for g in bans], 0.0))
+                # the new conductor may cross the existing wire anywhere except within
+                # `crossing_tower_clear_m` of an existing tower (Vivek, 8 Oct 2026)
+                cl = float(p.get("crossing_tower_clear_m", 0))
+                bans = _tower_crossing_bans(R.subset(r.layer, ["power_line"]), R.subset(r.layer, ["power_tower"]),
+                                            frame.epsg, cl)
+                if bans:
+                    # raster: one cell shorter at each end (a 20 m raster cannot hold the ends exactly);
+                    # the exact pieces go to the spotting's vector check
+                    from shapely.ops import substring as _sub
+                    loose = [_sub(g, frame.res_m, g.length - frame.res_m) for g in bans if g.length > 2 * frame.res_m]
+                    loose = [g for g in loose if g is not None and not g.is_empty]
+                    if loose:
+                        mk = rfeatures.rasterize([(g, 1) for g in loose], out_shape=shape,
+                                                 transform=frame.transform, fill=0, all_touched=False,
+                                                 dtype="uint8").astype(bool)
+                        add(mk, conductor_forbidden, r.id)
+                    cond_geoms.append(VecRule(r.id, r.layer, [frame.geom_utm_to_frame(g) for g in bans], 0.0))
                 line_classes = ["power_line"]
             else:
                 if td > 0:

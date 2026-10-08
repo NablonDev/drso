@@ -7,7 +7,7 @@ from __future__ import annotations
 
 TEMPLATES = {
     "TURN_TO_AVOID": "At km {chainage_km:.1f}, the route turns {deflection:.0f}° {dir} at tower {tower} ({type}) to clear {feature} by {clearance_m:.0f} m.",
-    "TURN_TO_CROSS": "At km {chainage_km:.1f}, the route turns {deflection:.0f}° {dir} at tower {tower} ({type}) to cross {feature} within the permitted angle.",
+    "TURN_TO_CROSS": "At km {chainage_km:.1f}, the route turns {deflection:.0f}° {dir} at tower {tower} ({type}) to cross {feature} under its crossing rule ({crossing_note}).",
     "RULE_WARNING": "Tower {tower} at km {chainage_km:.1f} {what}.",
     "DETOUR": "Between km {from_km:.1f} and km {to_km:.1f} the route runs up to {max_offset_m:.0f} m {side} of the bee-line to clear {feature}; closest approach {clearance_m:.0f} m.",
     "TURN_TO_KEEP_CLEAR": "At km {chainage_km:.1f}, the route turns {deflection:.0f}° {dir} at tower {tower} ({type}) to keep clear of {feature} ahead, passing it at {clearance_m:.0f} m.",

@@ -436,6 +436,26 @@ def _detours(T, blockers, findex, frame):
     return out
 
 
+def _crossing_note(r) -> str:
+    """The conditions of a crossing rule, for the turn-to-cross sentence (no claim about which bound)."""
+    if r is None:
+        return "crossing conditions"
+    p = r.params
+    bits = []
+    a = p.get("angle_deg")
+    if isinstance(a, (list, tuple)):
+        bits.append(f"angle {a[0]:g}–{a[1]:g}°" + (f" for lines of {float(p['angle_min_kv']):g} kV and above" if p.get("angle_min_kv") else ""))
+    elif a and a != "Any":
+        bits.append(f"angle {a}")
+    if p.get("max_span_m"):
+        bits.append(f"crossing span up to {float(p['max_span_m']):g} m")
+    if p.get("crossing_tower_clear_m"):
+        bits.append(f"wire crossed at least {float(p['crossing_tower_clear_m']):g} m from its towers")
+    if p.get("tower_type") and p.get("tower_type") != "A":
+        bits.append(f"type {p['tower_type']} towers either side")
+    return "; ".join(bits) or "crossing conditions"
+
+
 def _route_events(sr, frame, comp, findex, rules, sp, layer_names, inp, dem, blockers=()):
     evs = []
     T = sr.towers
@@ -511,6 +531,7 @@ def _route_events(sr, frame, comp, findex, rules, sp, layer_names, inp, dem, blo
                         clearance_m=clearance, rule_id=rid)
             if rid in CROSSING_RULES and min(local, clearance) < 1.0:
                 kind = "TURN_TO_CROSS"
+                data["crossing_note"] = _crossing_note(rules.get(rid))
             elif clearance > 300:
                 kind = "TURN_TO_KEEP_CLEAR"
             else:

@@ -284,29 +284,37 @@ def test_design_span_is_the_hard_maximum_and_editable():
         assert max(s["length_m"] for s in inner) <= cap + 1e-6, (cap, max(s["length_m"] for s in inner))
 
 
-def test_existing_line_is_crossed_at_the_null_point():
-    """An existing 400 kV line across the corridor, towers every 400 m: the new line crosses it within
-    mid-span ± 10 % (160-240 m from an existing tower)."""
+def _existing_400(f, c, ys):
     from shapely.geometry import Point as P
-    f = frame()
-    c = f.length_m / 2 + 37.0
-    ys = np.arange(-1800.0, 1801.0, 400.0) + 130.0          # tower rows offset so mid-spans avoid y = 0
     line = frame_geom(f, LineString([(c, -2000), (c, 2000)]))
     towers = [frame_geom(f, P(c, y)) for y in ys]
-    g = gpd.GeoDataFrame({"class": ["power_line"] + ["power_tower"] * len(towers),
-                          "name": ["Existing 400 kV"] + [None] * len(towers),
-                          "attrs": [{"voltage_kv": 400}] * (1 + len(towers))},
-                         geometry=[line] + towers, crs=4326)
-    res = run_solve(solve_input({"power": g}))
-    assert res["feasible"]
-    r = res["routes"][0]
-    pts = towers_frame(f, r)
-    route = LineString(pts)
+    return gpd.GeoDataFrame({"class": ["power_line"] + ["power_tower"] * len(towers),
+                             "name": ["Existing 400 kV"] + [None] * len(towers),
+                             "attrs": [{"voltage_kv": 400}] * (1 + len(towers))},
+                            geometry=[line] + towers, crs=4326)
+
+
+def test_existing_line_is_not_crossed_within_80m_of_a_tower():
+    """Existing 400 kV line across the corridor, towers every 400 m (Vivek, 8 Oct 2026): the wire may
+    be crossed anywhere except within 80 m of an existing tower; the mid-span is no longer required."""
+    f = frame()
+    c = f.length_m / 2 + 37.0
     ex = LineString([(c, -2000), (c, 2000)])
-    x = route.intersection(ex)
+    # (1) a tower 30 m from the bee-line: the crossing keeps 80 m from it
+    ys = np.arange(-1800.0, 1801.0, 400.0) + 30.0
+    r = run_solve(solve_input({"power": _existing_400(f, c, ys)}))["routes"][0]
+    x = LineString(towers_frame(f, r)).intersection(ex)
     assert x.geom_type == "Point"
     d = min(abs(x.y - y) for y in ys)
-    assert 160.0 - 1.0 <= d <= 240.0 + 1.0, d
+    assert d >= 80.0 - 1.0, d
+    # (2) the nearest tower 110 m from the bee-line: outside the old mid-span window (160-240 m) but
+    # more than 80 m from the tower, so the line crosses where it runs, close to the bee-line
+    ys = np.arange(-1800.0, 1801.0, 400.0) + 110.0
+    r = run_solve(solve_input({"power": _existing_400(f, c, ys)}))["routes"][0]
+    x = LineString(towers_frame(f, r)).intersection(ex)
+    assert x.geom_type == "Point"
+    d = min(abs(x.y - y) for y in ys)
+    assert d >= 80.0 - 1.0 and d < 160.0, d
 
 
 def test_sub_400kv_line_is_crossed_at_any_angle():
@@ -320,7 +328,7 @@ def test_sub_400kv_line_is_crossed_at_any_angle():
         pts = [frame_geom(f, P(c - 4000 + t * 8000, -1456 + t * 2912)) for t in np.linspace(0, 1, 22)]
         g = gpd.GeoDataFrame({"class": ["power_line"] + ["power_tower"] * len(pts), "name": [f"{kv} kV"] + [None] * len(pts),
                               "attrs": [{"voltage_kv": kv}] * (1 + len(pts))}, geometry=[line] + pts, crs=4326)
-        res = run_solve(solve_input({"power": g}, overrides={"power_line": {"params": {"null_point_tolerance_pct": 50}}}))
+        res = run_solve(solve_input({"power": g}))
         assert res["feasible"], kv
         r = res["routes"][0]
         cr = [x for s in r["spans"] for x in s["crossings"] if x["rule"] == "power_line"]
