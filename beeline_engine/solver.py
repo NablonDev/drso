@@ -50,6 +50,8 @@ class SolverParams:
     sensitive_multiplier: float = 1.0
     extra_strip_rs_per_m: np.ndarray | None = None   # raster, ₹ per metre of line (diversity)
     proximity_discount: float = 0.0          # search-only discount on line + RoW cost near existing lines
+    ext_zero_tol_m: float = 0.0              # closest-step rounding: shortfall met by no extension
+    ext_round_tol_m: float = 0.0             # ... beyond the largest A/B/C step, met by that step
     # Heading quantisation (6 Oct 2026): consecutive span vectors that differ by no more than the grid's
     # own heading step (atan(site spacing / span length), 7.1° at 400 m) stand for a straight line at
     # an in-between heading, which the spotting straightens into suspension towers. Pricing them as
@@ -258,9 +260,13 @@ def _edge_block(compiled: Compiled, grid: Grid, p: SolverParams, rasters: "_Rast
         line = (1 - tt) * (za + p.lowest_attachment_m) + tt * (zb + p.lowest_attachment_m) - 4 * sag * tt * (1 - tt)
         clear = torch.nan_to_num(line - zs, nan=1e9).amin(dim=-1)        # no DEM value: no penalty
         need = p.ground_clearance_m - clear
-        one = (need > 0) & (need <= p.extension_m * 0.5)                 # one tower raised (mid-span gains ~half)
-        two = (need > p.extension_m * 0.5) & (need <= p.extension_m)
-        invalid |= need > p.extension_m
+        # closest-step extensions (9 Oct 2026): a shortfall below half the smallest step needs none;
+        # one raised tower gains ~half its extension at mid-span; the largest A/B/C step (+6 m) is
+        # taken up to halfway to the next step (+18 m), i.e. a 12 m shortfall
+        z0, cover = p.ext_zero_tol_m, p.extension_m + p.ext_round_tol_m
+        one = (need > z0) & (need <= cover * 0.5)
+        two = (need > cover * 0.5) & (need <= cover)
+        invalid |= need > cover
         # hilly span: the ground rises more than hilly_rise_m between its towers (Route_Rules item 3)
         hil_any = (torch.nan_to_num((zb - za).abs().squeeze(-1), nan=0.0) > p.hilly_rise_m)
         ext = torch.where(hil_any, torch.full_like(E, p.extension_cost_hilly_rs), torch.full_like(E, p.extension_cost_rs))
@@ -282,9 +288,14 @@ def _edge_block(compiled: Compiled, grid: Grid, p: SolverParams, rasters: "_Rast
         need = (p.ground_clearance_m - torch.nan_to_num(line - zs, nan=1e9).amin(dim=-1)).clamp(min=0.0)
         ok_any = torch.zeros_like(invalid)
         ext_used = torch.zeros_like(E)
-        for step, wind in sorted(p.long_ext_steps):
-            fits = (~ok_any) & (need <= step + 1e-6) & (length + p.span_min_m <= 2 * wind + 1e-6)
-            ext_used = torch.where(fits, torch.where(need > 0, torch.full_like(E, float(step)), torch.zeros_like(E)), ext_used)
+        # the closest step (0 included): step s serves shortfalls between the midpoints to its neighbours
+        steps = sorted(p.long_ext_steps)
+        sv = [0.0] + [float(s_) for s_, _ in steps]
+        ok_any |= need <= sv[1] / 2.0 + 1e-6                    # rounds to no extension
+        for j, (step, wind) in enumerate(steps, start=1):
+            hi_ = (sv[j] + sv[j + 1]) / 2.0 if j + 1 < len(sv) else sv[j] + (sv[j] - sv[j - 1]) / 2.0
+            fits = (~ok_any) & (need <= hi_ + 1e-6) & (length + p.span_min_m <= 2 * wind + 1e-6)
+            ext_used = torch.where(fits, torch.full_like(E, float(step)), ext_used)
             ok_any |= fits
         invalid |= ~ok_any
         E = E + 2 * ext_used * p.long_ext_cost_rs_per_m

@@ -63,6 +63,7 @@ class SpotParams:
     approach_length_m: float = 0.0         # approach section within this of each gantry (CEA Schedule VII)
     approach_span_m: float | None = None
     proximity_discount: float = 0.0         # search-only discount near existing lines (string pulling)
+    extension_pct: float = 9.4              # body extension price, % of the tower per +18 m
     section_spans: int | None = None       # TSD D: ≤ 15 spans between section points (plain)
     hilly_section_spans: int | None = None # ≤ 10 spans (hilly)
     pull_cost_tol: float = 0.01          # a straightened leg may cost at most this much more than the grid towers it replaces
@@ -714,7 +715,10 @@ def _respot_for_clearance(chk: Checker, pts, sp: SpotParams, max_new: int = 200)
         L = math.hypot(q[0] - p[0], q[1] - p[1])
         e = _max_ext(sp, "C1")
         c, tw = _span_clearance(chk, p, q, sp, e, e)
-        if c is None or c >= sp.ground_clearance_m or L < 2 * sp.min_span_m or L > sp.span_max_m + 1e-3:
+        # closest-step rule (9 Oct 2026): +6 m on both meets a shortfall up to halfway to the next step
+        nxt = [x for x in _ext_steps(sp, "D45") if x > e] if sp.tsd else []
+        tol = (min(nxt) - e) / 2.0 if nxt else 0.0
+        if c is None or c >= sp.ground_clearance_m - tol or L < 2 * sp.min_span_m or L > sp.span_max_m + 1e-3:
             i += 1
             continue
         placed = None
@@ -753,24 +757,37 @@ def _clearance(comp, dem, towers, s: Span, sp: SpotParams):
         return float(np.nanmin(line - ground))
 
     c = min_clear()
-    if c < sp.ground_clearance_m and s.length_m > sp.span_max_m + 1e-3:
-        # long crossing span: both crossing towers are raised by what the sag needs
-        need = sp.ground_clearance_m - c
-        for tw in (ta, tb):
-            _raise(tw, tw.extension_m + need, sp, "crossing_tower")
-        c = min_clear()
     if c < sp.ground_clearance_m:
-        # the lower tower first, then both, each to the smallest extension step its type has; a
-        # tower whose type cannot reach is made a D (TSD: +18 / +33 / +45 m on D only)
-        low = ta if (ta.ground_z + ta.extension_m) <= (tb.ground_z + tb.extension_m) else tb
-        high = tb if low is ta else ta
-        for tw in (low, high):
-            if c >= sp.ground_clearance_m:
-                break
-            _raise(tw, tw.extension_m + (sp.ground_clearance_m - c) * (1.0 if tw is low else 2.0), sp, "extension")
+        # Closest-step extensions (9 Oct 2026): one raised tower or both, whichever is cheaper; each
+        # extension is the step closest to what the shortfall asks, so a small shortfall may remain
+        # (the DEM and the sag are estimates). Gain at the worst point: e × (1 - t) on a, e × t on b.
+        line_needed = sp.ground_clearance_m - c
+        za = ta.ground_z + sp.lowest_attachment_m + ta.extension_m
+        zb = tb.ground_z + sp.lowest_attachment_m + tb.extension_m
+        lin = (1 - t) * za + t * zb - 4 * sag * t * (1 - t)
+        k = int(np.nanargmin(lin - ground))
+        fa, fb = max(1e-3, 1.0 - t[k]), max(1e-3, t[k])
+        reason = "crossing_tower" if s.length_m > sp.span_max_m + 1e-3 else "extension"
+        cands = []
+        reachable = False
+        for tw, frac in ((ta, fa), (tb, fb)):
+            o = _ext_option(tw, tw.extension_m + line_needed / frac, sp)
+            reachable |= o is not None
+            if o is not None and o[1] > tw.extension_m + 1e-9:
+                cands.append(((_tower_rs(sp, *o) - _tower_rs(sp, tw.type, tw.extension_m)), [(tw, o)]))
+        oa = _ext_option(ta, ta.extension_m + line_needed, sp)
+        ob = _ext_option(tb, tb.extension_m + line_needed, sp)
+        reachable |= oa is not None and ob is not None
+        if oa is not None and ob is not None and (oa[1] > ta.extension_m + 1e-9 or ob[1] > tb.extension_m + 1e-9):
+            cands.append(((_tower_rs(sp, *oa) - _tower_rs(sp, ta.type, ta.extension_m))
+                          + (_tower_rs(sp, *ob) - _tower_rs(sp, tb.type, tb.extension_m)), [(ta, oa), (tb, ob)]))
+        if cands:
+            cands.sort(key=lambda x: (x[0], len(x[1])))
+            for tw, o in cands[0][1]:
+                _apply_ext(tw, o, reason)
             c = min_clear()
-        if c < sp.ground_clearance_m:
-            ta.warnings.append("ground_clearance")
+        if not reachable:
+            ta.warnings.append("ground_clearance")      # beyond what the closest step can meet
     s.min_clearance_m = round(c, 1)
 
 
@@ -780,29 +797,84 @@ def _ext_steps(sp: SpotParams, t: str) -> list[float]:
     return [EXTENSION_M] if t != "G" else []
 
 
+def nearest_step(need_m: float, steps) -> float | None:
+    """Body extension rounded to the closest available step, 0 included (Vivek, 9 Oct 2026: 6-12 m
+    is met by +6 m, above 12 m by +18 m — the DEM and sag figures are estimates, so the extension
+    is not maximised). Beyond the largest step: the largest if within half the last gap, else None."""
+    opts = sorted({0.0, *[float(x) for x in steps]})
+    if need_m <= 0:
+        return 0.0
+    if need_m > opts[-1]:
+        gap = opts[-1] - opts[-2] if len(opts) > 1 else 0.0
+        return opts[-1] if need_m - opts[-1] <= gap / 2 + 1e-9 else None
+    best = None
+    for o in opts:            # ties go to the higher step
+        if best is None or abs(need_m - o) < abs(need_m - best) - 1e-9 or \
+                (abs(abs(need_m - o) - abs(need_m - best)) <= 1e-9 and o > best):
+            best = o
+    return best
+
+
+def rounding_cover(steps) -> float:
+    """The largest shortfall the closest-step rule still meets with these steps (e.g. +6 m below an
+    +18 m step: up to 12 m)."""
+    opts = sorted({0.0, *[float(x) for x in steps]})
+    return opts[-1] + ((opts[-1] - opts[-2]) / 2 if len(opts) > 1 else 0.0)
+
+
 def _max_ext(sp: SpotParams, t: str) -> float:
     st = _ext_steps(sp, t)
     return max(st) if st else 0.0
 
 
-def _raise(tw, need_m: float, sp: SpotParams, reason: str) -> None:
-    """Give the tower the smallest extension step ≥ need_m; upgrade A/B/C to D45 if their steps
-    do not reach (the cost difference is in the type price)."""
-    if tw.type == "G" or need_m <= tw.extension_m:
-        return
-    steps = [x for x in _ext_steps(sp, tw.type) if x >= need_m - 1e-6]
-    if not steps and tw.type not in ("D45", "D60") and sp.tsd:
-        dsteps = [x for x in _ext_steps(sp, "D45") if x >= need_m - 1e-6]
-        if dsteps:
-            tw.type = "D45"
-            tw.reasons.append("extension_type")
-            steps = dsteps
-    if not steps:
-        steps = [_max_ext(sp, tw.type)] if _ext_steps(sp, tw.type) else []
-    if steps:
-        tw.extension_m = max(tw.extension_m, min(steps))
+def _ext_option(tw, need_m: float, sp: SpotParams):
+    """(type, extension) for a tower that needs need_m in total: its own type's closest step, else a
+    D45's closest step; None if neither reaches by rounding."""
+    if tw.type == "G":
+        return None
+    own = _ext_steps(sp, tw.type)
+    e = nearest_step(need_m, own)
+    if own and sp.tsd and tw.type not in ("D45", "D60"):
+        # one ladder: above the type's largest step the next rung is a D's (+18 m), so the largest
+        # step serves up to halfway there (6-12 m -> +6 m; Vivek, 9 Oct 2026)
+        top = max(own)
+        nxt = [x for x in _ext_steps(sp, "D45") if x > top]
+        if need_m > top:
+            e = top if nxt and need_m <= (top + min(nxt)) / 2.0 + 1e-9 else None
+    if e is not None:
+        return tw.type, max(tw.extension_m, e)
+    if tw.type not in ("D45", "D60") and sp.tsd:
+        e = nearest_step(need_m, _ext_steps(sp, "D45"))
+        if e is not None:
+            return "D45", max(tw.extension_m, e)
+    return None
+
+
+def _apply_ext(tw, opt, reason: str) -> None:
+    t, e = opt
+    if t != tw.type:
+        tw.type = t
+        tw.reasons.append("extension_type")
+    if e > tw.extension_m + 1e-9:
+        tw.extension_m = e
         if reason not in tw.reasons:
             tw.reasons.append(reason)
+
+
+def _tower_rs(sp: SpotParams, t: str, ext: float) -> float:
+    return sp.tower_cost_rs.get(t, 0.0) * (1.0 + sp.extension_pct / 100.0 * ext / 18.0)
+
+
+def _raise(tw, need_m: float, sp: SpotParams, reason: str) -> None:
+    """Give the tower the closest extension step to need_m (rounded, not maximised); a D45 when its
+    own type's steps cannot reach."""
+    if tw.type == "G" or need_m <= tw.extension_m:
+        return
+    opt = _ext_option(tw, need_m, sp)
+    if opt is None:
+        st = _ext_steps(sp, "D45" if sp.tsd else tw.type)
+        opt = ("D45" if sp.tsd and tw.type not in ("D45", "D60") else tw.type, max(st) if st else tw.extension_m)
+    _apply_ext(tw, opt, reason)
 
 
 def _tsd_checks(towers: list[Tower], spans: list[Span], sp: SpotParams) -> None:
@@ -860,13 +932,28 @@ def _tsd_checks(towers: list[Tower], spans: list[Span], sp: SpotParams) -> None:
         w = (L1 + L2) / 2.0 + hw * ((h - ha) / L1 + (h - hb) / L2)
         lo, hi = wl.get(t.type, [-1e9, 1e9])
         if w < lo:
-            for nt in order[order.index(t.type) + 1:]:
-                if w >= wl.get(nt, [-1e9])[0]:
+            # uplift (a tower lower than its neighbours, e.g. next to a raised crossing tower): the
+            # cheapest of raising this tower by a body extension step or a stronger type (9 Oct 2026:
+            # fewer angle-type towers on straight line). Raising it by e adds hw·e·(1/L1 + 1/L2).
+            gain = hw * (1.0 / L1 + 1.0 / L2)
+            best = None
+            for nt in order[order.index(t.type):]:
+                for e in sorted({t.extension_m, *[x for x in _ext_steps(sp, nt) if x >= t.extension_m]}):
+                    if w + gain * (e - t.extension_m) >= wl.get(nt, [-1e9])[0] - 1e-6:
+                        rs = _tower_rs(sp, nt, e)
+                        if best is None or rs < best[0] - 1e-6:
+                            best = (rs, nt, e)
+                        break                       # the smallest step that holds for this type
+            if best is None:
+                t.warnings.append(f"weight_span:{w:.0f}m")
+            else:
+                _, nt, e = best
+                if nt != t.type:
                     t.type = nt
                     t.reasons.append("weight_span")
-                    break
-            else:
-                t.warnings.append(f"weight_span:{w:.0f}m")
+                if e > t.extension_m + 1e-9:
+                    t.extension_m = e
+                    t.reasons.append("weight_span_extension")
         elif w > hi:
             t.warnings.append(f"weight_span:{w:.0f}m")
 

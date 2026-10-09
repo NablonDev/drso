@@ -260,6 +260,14 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
     # AESL Tower Spotting Data (765 kV D/C, 8 Oct 2026): span tables, wind / weight span, extension steps
     tsd = (eng.get("tsd") or {}).get(str(inp.kv))
     ext_max_abc = max(tsd["extensions_m"]["C1"]) if tsd else 18.0      # A/B/C reach +6 m; D goes further
+    # closest-step extensions (Vivek, 9 Oct 2026): rounding tolerances for the search
+    if tsd:
+        _abc = sorted(float(x) for t in ("A", "B1", "C1") for x in tsd["extensions_m"].get(t, []))
+        _nxt = [float(x) for x in tsd["extensions_m"]["D45"] if float(x) > ext_max_abc]
+        ext_zero_tol = _abc[0] / 2.0 if _abc else 0.0
+        ext_round_tol = (min(_nxt) - ext_max_abc) / 2.0 if _nxt else 0.0
+    else:
+        ext_zero_tol = ext_round_tol = 0.0
     # with terrain, hilly spans (all-tension) may be longer than plain ones: the grid offers up to the
     # longer of the two and the edge test keeps non-hilly spans within the plain value
     smax_search = max(smax, hilly_m) if terrain else smax
@@ -286,7 +294,8 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
                         long_ext_steps=_long_ext_steps(tsd) if tsd else (),
                         long_ext_cost_rs_per_m=tower_cost["D45"] * ext_pct / 18.0,
                         dead_end_max_dev_deg=float(tsd["dead_end_max_dev_deg"]) if tsd and tsd.get("dead_end_max_dev_deg") else None,
-                        approach_length_m=ap_len, approach_span_m=ap_span, proximity_discount=prox_disc)
+                        approach_length_m=ap_len, approach_span_m=ap_span, proximity_discount=prox_disc,
+                        ext_zero_tol_m=ext_zero_tol, ext_round_tol_m=ext_round_tol)
     sp = SpotParams(design_span_m=design, span_max_m=smax_search,
                     min_span_m=float(rules["crossing_span_limits"].params["min_span_m"]),
                     max_dev_deg=max_dev, type_bands=bands,
@@ -303,7 +312,7 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
                     hilly_design_span_m=float(rules["design_span"].params["hilly_m"]),
                     hilly_section_km=float(rules["section_interval"].params["hilly_km"]),
                     hilly_rise_m=hilly_rise, tsd=tsd, approach_length_m=ap_len, approach_span_m=ap_span,
-                    proximity_discount=prox_disc,
+                    proximity_discount=prox_disc, extension_pct=ext_pct * 100.0,
                     section_spans=int(rules["section_interval"].params.get("plain_spans") or 0) or None,
                     hilly_section_spans=int(rules["section_interval"].params.get("hilly_spans") or 0) or None)
 

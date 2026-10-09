@@ -266,7 +266,9 @@ def test_search_takes_the_cheaper_of_hill_and_detour(monkeypatch):
     # TSD clearance (18.15 m, 32.6 m attachment, extensions ≤ +6 m on A/B/C) makes the undulating hill
     # dear: the free search goes round too, within the search's estimate of the forced detour
     assert max(t["ground_z"] or 0 for t in free["towers"]) < 20
-    assert free["cost"]["total"] <= detour["cost"]["total"] * 1.015, (free["cost"]["total"] / 1e7, detour["cost"]["total"] / 1e7)
+    # 2 %: since closest-step extensions (9 Oct 2026) the search skirts nearer the hill's fringe and the
+    # spotting may add a tower there (measured 1.52 %)
+    assert free["cost"]["total"] <= detour["cost"]["total"] * 1.02, (free["cost"]["total"] / 1e7, detour["cost"]["total"] / 1e7)
 
 
 def test_hilly_ground_takes_tension_towers_and_longer_spans(monkeypatch):
@@ -541,27 +543,31 @@ def test_tsd_span_tables_hold_on_a_solved_route():
 
 
 def test_tsd_weight_span_and_extension_steps():
-    """Weight span: a suspension tower in a dip (uplift below the A minimum of 200 m) becomes a tension
-    type whose limit holds. Extensions: the smallest step of the type; A/B/C stop at +6 m, a bigger
-    need makes the tower a D with +18 m."""
+    """Weight span: a suspension tower in a dip (uplift below the A minimum of 200 m) is raised by a body
+    extension or made a stronger type, whichever is cheaper while the limit holds. Extensions: the
+    step closest to the need (9 Oct 2026): A/B/C reach +6 m, which serves needs up to 12 m; above
+    that the tower becomes a D with +18 m."""
     from beeline_engine.config import load_engine
     from beeline_engine.spotting import SpotParams, Span, Tower, _raise, _tsd_checks
     tsd = load_engine()["tsd"]["765"]
     sp = SpotParams(design_span_m=370, span_max_m=370, min_span_m=100, max_dev_deg=60, type_bands={},
-                    section_km=5, parallel_angle_deg=30, tower_cost_rs={}, ground_clearance_m=18.15,
+                    section_km=5, parallel_angle_deg=30,
+                    tower_cost_rs={"A": 4.765e6, "B1": 6.886e6, "C1": 7.803e6, "D45": 9.754e6, "D60": 11.085e6},
+                    ground_clearance_m=18.15,
                     lowest_attachment_m=32.6, sag_at_design_m=14.278, go_radius_m=150, tsd=tsd)
     zs = [0, 0, 20, 0, 20, 0, 0]                       # the middle tower sits 20 m below both neighbours
     T = [Tower(i, i * 350.0, 0.0, "G" if i in (0, 6) else "A", 0.0, "-", False, ground_z=z) for i, z in enumerate(zs)]
     T[1].reasons.append("dead_end"); T[5].reasons.append("dead_end")
     S = [Span(i, i + 1, 350.0) for i in range(6)]
     _tsd_checks(T, S, sp)
-    assert T[3].type in ("B1", "D45") and "weight_span" in T[3].reasons
-    t = Tower(9, 0, 0, "A", 0, "-", False)
-    _raise(t, 4.0, sp, "extension"); assert (t.type, t.extension_m) == ("A", 4.5)
-    t = Tower(9, 0, 0, "B1", 0, "-", False)
-    _raise(t, 2.0, sp, "extension"); assert (t.type, t.extension_m) == ("B1", 3.0)
-    t = Tower(9, 0, 0, "A", 0, "-", False)
-    _raise(t, 10.0, sp, "extension"); assert (t.type, t.extension_m) == ("D45", 18.0)
+    # the dip tower: an A raised +4.5 m (weight span ≥ 200 m) is cheaper than a B1 or D45
+    assert (T[3].type, T[3].extension_m) == ("A", 4.5) and "weight_span_extension" in T[3].reasons
+    for typ, need, want in (("A", 4.0, ("A", 4.5)), ("B1", 2.0, ("B1", 3.0)), ("A", 1.0, ("A", 0.0)),
+                            ("A", 10.0, ("A", 6.0)), ("A", 12.5, ("D45", 18.0)), ("D45", 23.0, ("D45", 18.0)),
+                            ("D45", 26.0, ("D45", 33.0))):
+        t = Tower(9, 0, 0, typ, 0, "-", False)
+        _raise(t, need, sp, "extension")
+        assert (t.type, t.extension_m) == want, (typ, need, t.type, t.extension_m)
 
 
 def test_relaxed_route_crosses_a_last_resort_water_body():
