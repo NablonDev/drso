@@ -180,6 +180,9 @@ class Checker:
 
     def conductor_ok(self, p, q) -> bool:
         line = LineString([p, q])
+        # go zone: crossings of >= 220 kV lines near their towers stay banned (clipped to the zone)
+        if self.c.go_conductor and any(r.hits(line) for r in self.c.go_conductor):
+            return False
         if line.intersects(self.go):
             line = line.difference(self.go)
             if line.is_empty:

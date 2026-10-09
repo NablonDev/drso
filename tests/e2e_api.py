@@ -21,7 +21,7 @@ def ok(r, code=200):
     return r.json()
 
 
-A = {"lat": 23.4525, "lon": 69.5924, "name": "Bhujpool"}
+A = {"lat": 23.456596, "lon": 69.591253, "name": "Bhujpool"}   # gantry moved 9 Oct 2026
 B = {"lat": 23.3932, "lon": 70.5955, "name": "Shivlaka"}
 v = ok(c.post("/api/geo/validate", json={"a": A, "b": B, "band_km": 5}))
 print("validate", [x["text"] for x in v["checks"]])

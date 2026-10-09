@@ -2,8 +2,8 @@ import { expect, type APIRequestContext, type Page } from "@playwright/test";
 
 export const TEST_CORRIDOR = {
   name: "PW test corridor",
-  a: { lat: 23.4525, lon: 69.5924, name: "PW test A" },
-  b: { lat: 23.3932, lon: 70.5955, name: "PW test B" },
+  a: { lat: 23.456596, lon: 69.591253, name: "PW test A" },   // gantry points moved 8–9 Oct 2026
+  b: { lat: 23.394667, lon: 70.594966, name: "PW test B" },
   kv: 400,
   circuit: "dc",
   band_km: 5,

@@ -449,6 +449,8 @@ def gantry_seeds(compiled: Compiled, grid: Grid, p: SolverParams, S_np: np.ndarr
                 minx, miny, maxx, maxy = y.bounds
                 yard_extent = max(yard_extent, max(abs(minx - ex), abs(maxx - ex), abs(miny), abs(maxy)) * math.sqrt(2))
     reach = min(3000.0, p.span_max_m + yard_extent)
+    if p.approach_length_m > 0 and p.approach_span_m is not None:
+        reach = min(reach, p.approach_span_m)     # the gantry span keeps the approach span (9 Oct 2026)
     seeds = np.full(S_np.shape, INF, np.float32)
     cs = np.arange(grid.nc + 1)
     xs = cs * grid.sx

@@ -6,6 +6,7 @@ import math
 
 import geopandas as gpd
 import numpy as np
+import pandas as pd
 import pytest
 import torch
 from shapely.geometry import LineString, Point, box
@@ -374,12 +375,13 @@ def test_band_fully_blocked_is_reported():
 
 def test_terminal_yard_is_carved_out():
     f = frame()
-    yard = frame_geom(f, box(-350, -350, 350, 350))          # A sits in the middle of a 700 m yard
+    # A sits in a 700 m yard, 100 m inside its east fence (the gantry span keeps to 250 m, 9 Oct 2026)
+    yard = frame_geom(f, box(-600, -350, 100, 350))
     res = run_solve(solve_input({"substations": gdf([yard], "substation", "Start S/S")}))
     assert res["feasible"]
     r = res["routes"][0]
     first = towers_frame(f, r)[1]
-    assert not box(-350, -350, 350, 350).contains(Point(first))
+    assert not box(-600, -350, 100, 350).contains(Point(first))
 
 
 def test_four_routes_are_distinct_objectives():
@@ -631,6 +633,8 @@ def test_approach_section_spans_and_free_go_zone():
         mx, my = (x0 + x1) / 2, (y0 + y1) / 2
         if math.hypot(mx, my) <= 2000 or math.hypot(mx - f.length_m, my) <= 2000:
             assert s["length_m"] <= 250 + 1e-6, s["length_m"]
+    # the gantry spans keep the approach span too (Vivek, 9 Oct 2026)
+    assert rt["spans"][0]["length_m"] <= 250 + 1e-6 and rt["spans"][-1]["length_m"] <= 250 + 1e-6
 
 
 # ---- speed-ups (9 Oct 2026): vectorised frame transform, raster cache, parallel routes ------------
@@ -744,3 +748,31 @@ def test_go_zone_ignores_setbacks_but_not_overlap():
                     lowest_attachment_m=32, sag_at_design_m=14, go_radius_m=500)
     ck = Checker(comp, sp)
     assert ck.tower_ok(300, 0, False) and not ck.tower_ok(290, 190, False) and not ck.tower_ok(300, -200, False)
+
+
+def test_go_zone_keeps_crossings_of_220kv_and_above():
+    """Go zone (Vivek, 9 Oct 2026): crossings of existing lines from 220 kV up keep their rules
+    (angle window, crossing towers, no crossing near an existing tower); lower voltages are waived."""
+    f = frame()
+    spec = LineSpec(765, "dc")
+    rules, costs = resolve_rules(spec), resolve_costs(spec)
+
+    def line(x, kv):
+        g = frame_geom(f, LineString([(x, -1500), (x, 1500)]))
+        t = [frame_geom(f, Point(x, y)) for y in (-200, 200)]
+        return gpd.GeoDataFrame({"class": ["power_line", "power_tower", "power_tower"], "name": [f"{kv} kV"] + [None] * 2,
+                                 "attrs": [{"voltage_kv": kv}] * 3}, geometry=[g] + t, crs=4326)
+    power = gpd.GeoDataFrame(pd.concat([line(300, 400), line(400, 132)], ignore_index=True), crs=4326)
+    comp = compile_rules(f, {"power": power}, rules, costs, 765, 33.5, 500, 370, terminal_yard_radius_m=150)
+
+    def angle_at(x, y):
+        col, row = f.frame_to_pixel(x, y)
+        vals = [cr.angle[int(row), int(col)] for cr in comp.crossings if cr.rule_id == "power_line"]
+        return any(np.isfinite(v) for v in vals)
+    assert angle_at(300, 0)                 # 400 kV inside the go zone: still a governed crossing
+    assert not angle_at(400, 0)             # 132 kV inside the go zone: waived
+    # no crossing within 80 m of an existing 400 kV tower, inside the go zone too; the 132 kV one is waived
+    def cond_near(x, y):
+        col, row = f.frame_to_pixel(x, y)
+        return bool(comp.conductor_forbidden[int(row) - 1:int(row) + 2, int(col) - 1:int(col) + 2].any())
+    assert cond_near(300, 230) and not cond_near(400, 230)

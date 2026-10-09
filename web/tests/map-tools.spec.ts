@@ -95,12 +95,14 @@ test("layer map: a drawn polygon is added to a layer for this run, listed, and d
   const list = page.getByTestId("shapes-list");
   await expect(list).toContainText("Playwright shed");
   await expect(list).toContainText("temporary");
-  const shapes = await (await request.get(`/api/runs/${runId}/shapes`)).json();
-  expect(shapes.shapes.length).toBe(1);
+  // permanent shapes from earlier runs (e.g. the traced switchyards) are listed too; count only ours
+  const shapes = (await (await request.get(`/api/runs/${runId}/shapes`)).json()).shapes as { name: string; scope: string }[];
+  expect(shapes.filter((x) => x.name === "Playwright shed" && x.scope === "temporary").length).toBe(1);
 
-  await list.getByRole("button", { name: "Delete" }).click();
-  await list.getByRole("button", { name: "Confirm delete" }).click();
+  const row = list.locator(".mt-item").filter({ hasText: "Playwright shed" });
+  await row.getByRole("button", { name: "Delete" }).click();
+  await row.getByRole("button", { name: "Confirm delete" }).click();
   await expect(page.getByTestId("rerun-dialog")).toBeVisible();
   await page.getByTestId("rerun-later").click();
-  await expect(list).toContainText("None yet");
+  await expect(list).not.toContainText("Playwright shed");
 });

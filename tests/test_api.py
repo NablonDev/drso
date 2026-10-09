@@ -34,7 +34,7 @@ OV_AERO = os.path.join(os.path.dirname(__file__), "fixtures", "overpass_aero_kut
 AP_GPKG = os.path.join(os.path.dirname(__file__), "fixtures", "airports_kutch.gpkg")          # OSM aerodromes + runways
 TS_FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "ts_towers_bhuj.parquet")   # 871 sites, Bhuj–Bhachau
 
-A = {"lat": 23.4525, "lon": 69.5924, "name": "Bhujpool"}
+A = {"lat": 23.456596, "lon": 69.591253, "name": "Bhujpool"}   # gantry moved 9 Oct 2026
 B = {"lat": 23.3932, "lon": 70.5955, "name": "Shivlaka"}
 SHORT_B = {"lat": 23.40, "lon": 69.95, "name": "Midway"}
 IMG = {"esri": {"covered_pct": 100.0, "newest": "2026-03-03", "sources": ["Vantor LG03"]},

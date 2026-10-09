@@ -133,6 +133,7 @@ class Compiled:
     approach_zone: object = None             # frame polygon of the approach sections (None = none)
     rasterizer: object = None                # the _Rasterizer, reused by further compiles of the same layers
     go_overlap: list = field(default_factory=list)   # VecRules still checked inside the go zone (overlap only)
+    go_conductor: list = field(default_factory=list)  # conductor VecRules kept in the go zone (>= 220 kV crossings)
     # last-resort relaxations taken in this compile: (VecRule of what was opened, approval months, label)
     relaxed_items: list = field(default_factory=list)
     # terrain on the rule raster grid (set by attach_terrain; None = no DEM)
@@ -369,6 +370,7 @@ def _segments(geom):
 
 
 RASTER_MARGIN_M = 0.0  # set by compile_rules from the raster resolution
+GO_ZONE_CROSSING_KV = 220.0   # go zone: crossings of existing lines from this voltage up keep their rules
 
 
 def _within(dist: np.ndarray | None, d: float) -> np.ndarray | None:
@@ -498,6 +500,9 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
     angle_forbidden = np.zeros(shape, bool)
     conductor_forbidden = np.zeros(shape, bool)
     fired: dict[str, int] = {}
+    go_hv_near = np.zeros((frame.height, frame.width), bool)   # cells next to a >= 220 kV line
+    go_hv_bans: list = []                                      # UTM pieces of those lines near their towers
+    go_conductor: list = []
     tower_geoms, angle_geoms, cond_geoms = [], [], []
 
     def add(mask_arr, target, rule_id):
@@ -708,6 +713,16 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
                 cl = float(p.get("crossing_tower_clear_m", 0))
                 bans = _tower_crossing_bans(R.subset(r.layer, ["power_line"]), R.subset(r.layer, ["power_tower"]),
                                             frame.epsg, cl)
+                # go zone (9 Oct 2026): crossings of lines from GO_ZONE_CROSSING_KV up stay governed there
+                hv = R.by_voltage(r.layer, GO_ZONE_CROSSING_KV, True)
+                d_hv = R.dist(hv, ["power_line"])
+                if d_hv is not None:
+                    go_hv_near |= d_hv <= frame.res_m * 1.5
+                    hv_bans = _tower_crossing_bans(R.subset(hv, ["power_line"]), R.subset(hv, ["power_tower"]),
+                                                   frame.epsg, cl)
+                    if hv_bans:
+                        go_hv_bans.extend(hv_bans)
+                        go_conductor.append(VecRule(r.id, r.layer, [frame.geom_utm_to_frame(g) for g in hv_bans], 0.0))
                 if bans:
                     # raster: one cell shorter at each end (a 20 m raster cannot hold the ends exactly);
                     # the exact pieces go to the spotting's vector check
@@ -885,6 +900,22 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
     # ---- terminal zone (gantry go-zone + terminal yards) --------------------------------
     go_overlap: list = []
     if not zone.is_empty:
+        # inside the go zone but off the terminal yard: crossings of >= GO_ZONE_CROSSING_KV lines and
+        # the no-crossing-near-an-existing-tower ban stay (Vivek, 9 Oct 2026)
+        yb = yards.buffer(gantry_buffer_m) if yards is not None else None
+        ybm = rfeatures.rasterize([(_frame_to_utm(frame, yb), 1)], out_shape=shape, transform=frame.transform,
+                                  fill=0, dtype="uint8").astype(bool) if yb is not None else np.zeros(shape, bool)
+        go_keep_zone = zone.difference(yb) if yb is not None else zone
+        for vr in go_conductor:
+            vr.inside = go_keep_zone
+        hv_ban_mask = np.zeros(shape, bool)
+        if go_hv_bans:
+            from shapely.ops import substring as _sub
+            loose = [_sub(g, frame.res_m, g.length - frame.res_m) for g in go_hv_bans if g.length > 2 * frame.res_m]
+            loose = [g for g in loose if g is not None and not g.is_empty]
+            if loose:
+                hv_ban_mask = rfeatures.rasterize([(g, 1) for g in loose], out_shape=shape, transform=frame.transform,
+                                                  fill=0, all_touched=False, dtype="uint8").astype(bool)
         utm_zone = _frame_to_utm(frame, zone)
         # cell centres only: the cleared raster area stays inside the exact zone
         zm = rfeatures.rasterize([(utm_zone, 1)], out_shape=shape, transform=frame.transform, fill=0,
@@ -892,9 +923,15 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
         tower_forbidden[zm] = False
         angle_forbidden[zm] = False
         conductor_forbidden[zm] = False
-        # lines that end in the terminal yard are not crossings of the new line there
+        keep = zm & ~ybm
+        conductor_forbidden |= hv_ban_mask & keep
+        # lines that end in the terminal yard are not crossings of the new line there; elsewhere in the
+        # go zone only crossings of lines below GO_ZONE_CROSSING_KV are waived
         for cr in crossings:
-            cr.angle[zm] = np.nan
+            if cr.rule_id in ("power_line", "power_line_lt"):
+                cr.angle[zm & ~(keep & go_hv_near)] = np.nan
+            else:
+                cr.angle[zm] = np.nan
         for pr in parallels:
             pr.angle[zm] = np.nan
         if yards is not None:
@@ -936,7 +973,7 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
                     tower_nogo=tower_geoms, angle_nogo=angle_geoms,
                     conductor_nogo=cond_geoms, rules_fired=fired, costs=costs,
                     terminal_zone=zone, terminal_yards=yards, relaxed=relaxed, relaxed_items=relaxed_items,
-                    rasterizer=R, go_overlap=go_overlap)
+                    rasterizer=R, go_overlap=go_overlap, go_conductor=go_conductor)
 
 
 def _airport_zone(R: "_Rasterizer", frame: Frame, layer: str, classes, d: float, funnel_m: float):
