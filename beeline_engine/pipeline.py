@@ -245,6 +245,7 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
     check_cancel()
 
     tower_cost = tower_type_cost(costs, inp.kv)
+    sag_ref = float((eng["spotting"].get("sag_reference_span_m") or {}).get(inp.kv, design))
     # stay close to existing lines: search-only discount (9 Oct 2026)
     _pr = rules.get("existing_line_proximity")
     prox_disc = float(_pr.params.get("discount_pct", 0) or 0) / 100.0 if _pr is not None and _pr.enabled else 0.0
@@ -281,7 +282,7 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
                         terrain=terrain, heading_slack=eng["grid"].get("heading_slack", False),
                         ground_clearance_m=float(eng["spotting"]["ground_clearance_m"][inp.kv]),
                         lowest_attachment_m=float(eng["spotting"]["lowest_attachment_m"][inp.kv]),
-                        sag_at_design_m=float(eng["spotting"]["sag_at_design_span_m"][inp.kv]),
+                        sag_at_design_m=float(eng["spotting"]["sag_at_design_span_m"][inp.kv]), sag_ref_span_m=sag_ref,
                         design_span_m=design, extension_m=ext_max_abc,
                         extension_cost_rs=tower_cost["A"] * ext_pct * ext_max_abc / 18.0,
                         extension_cost_hilly_rs=tower_cost["B1"] * ext_pct * ext_max_abc / 18.0,
@@ -303,7 +304,7 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
                     parallel_angle_deg=eng["crossings"]["parallel_angle_deg"], tower_cost_rs=tower_cost,
                     ground_clearance_m=float(eng["spotting"]["ground_clearance_m"][inp.kv]),
                     lowest_attachment_m=float(eng["spotting"]["lowest_attachment_m"][inp.kv]),
-                    sag_at_design_m=float(eng["spotting"]["sag_at_design_span_m"][inp.kv]),
+                    sag_at_design_m=float(eng["spotting"]["sag_at_design_span_m"][inp.kv]), sag_ref_span_m=sag_ref,
                     go_radius_m=go_radius,
                     max_dev_adjacent_power_deg={rid: float(rules[rid].params.get("max_dev_adjacent_deg", 45))
                                                 for rid in POWER_LINE_RULES if rid in rules},
@@ -770,6 +771,9 @@ def _route_events(sr, frame, comp, findex, rules, sp, layer_names, inp, dem, blo
     search = load_engine()["events"]["turn_feature_search_m"]
     low = load_engine()["events"]["low_confidence"]
     rule_layer = {r.id: r.layer for r in rules.values()}
+    # crossings that carry an angle window: a turn next to one lines the route up for it (9 Oct 2026)
+    angled = {cr.rule_id for cr in comp.crossings if cr.window is not None}
+    span_at = {s.a: s for s in sr.spans}
     for i in range(1, len(T) - 1):
         t = T[i]
         if not t.angle_point:
@@ -798,6 +802,23 @@ def _route_events(sr, frame, comp, findex, rules, sp, layer_names, inp, dem, blo
                 hit = (vr.rule_id, d, ip, vr.layer)
         data = {"tower": t.no, "type": t.type, "deflection": t.deflection_deg,
                 "dir": {"L": "left", "R": "right"}.get(t.turn, ""), "chainage_km": round(t.x / 1000, 2)}
+        o_dx, o_dy = T[i + 1].x - t.x, T[i + 1].y - t.y
+        heading_back = abs(t.y) > 1.0 and (o_dy * t.y) < 0 and abs(o_dy / (math.hypot(o_dx, o_dy) or 1)) > abs(dy / n)
+        # a span on either side crosses a feature with an angle rule: the turn lines the route up for it
+        xc = next(((sx, c) for sx in (span_at.get(t.no), span_at.get(t.no - 1)) if sx is not None
+                   for c in sx.crossings if c["rule"] in angled), None)
+        if xc is not None:
+            sx, c = xc
+            a_, b_ = T[sx.a], T[sx.b]
+            mid = Point((a_.x + b_.x) / 2, (a_.y + b_.y) / 2)
+            lyr = rule_layer.get(c["rule"])
+            it, _ = findex.nearest(mid, layers={lyr} if lyr else None, max_dist=sx.length_m)
+            data.update(feature=(it["label"] if it else c["name"]), clearance_m=0.0, rule_id=c["rule"],
+                        crossing_note=_crossing_note(rules.get(c["rule"])))
+            evs.append(event("TURN_TO_CROSS", data, chainage_km=data["chainage_km"], source=_source(it, inp.layers)))
+            continue
+        if hit and hit[1] > 300 and heading_back:
+            hit = None              # a far-off feature did not force this turn: it heads back towards the bee-line
         if hit:
             rid, d, ip, lyr = hit
             it, dist = findex.nearest(ip, layers={lyr} if lyr else None)
@@ -821,8 +842,6 @@ def _route_events(sr, frame, comp, findex, rules, sp, layer_names, inp, dem, blo
                         clearance_m=route_line.distance(findex.geoms[fi]) if fi is not None else 0.0)
             evs.append(event("TURN_TO_AVOID", data, chainage_km=data["chainage_km"], source=b.get("source")))
         else:
-            o_dx, o_dy = T[i + 1].x - t.x, T[i + 1].y - t.y
-            heading_back = abs(t.y) > 1.0 and (o_dy * t.y) < 0 and abs(o_dy / (math.hypot(o_dx, o_dy) or 1)) > abs(dy / n)
             evs.append(event("TURN_BACK" if heading_back else "TURN", data, chainage_km=data["chainage_km"]))
     for s in sr.spans:
         for c in s.crossings:

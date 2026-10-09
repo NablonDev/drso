@@ -21,7 +21,7 @@ spans:
   river_crossing_max_span_m: 720
   long_heading_limit_deg: 60
   long_heading_step_deg: 5
-  long_length_step_m: 100
+  long_length_step_m: 50          # 9 Oct 2026: with the 400 m span cap, 100 m steps (500/600/700 m) skipped every crossing length that fits the wind span
 
 crossings:
   single_angle_tolerance_deg: 15   # a rule giving one angle (e.g. river 90°) accepts ±this
@@ -66,6 +66,9 @@ spotting:
   lowest_attachment_m: {765: 32.6, 400: 30.0, 220: 22.0, 132: 18.0}
   # 765 kV: TSD sag-tension sheet, 85 °C nil wind at the 370 m normal span (the design span)
   sag_at_design_span_m: {765: 14.278, 400: 12.0, 220: 9.5, 132: 8.0}
+  # the span those sags belong to (TSD normal span at 765 kV); sag scales with (span / this)²,
+  # independent of the maximum span (765 kV cap raised to 400 m, 9 Oct 2026)
+  sag_reference_span_m: {765: 370, 400: 400, 220: 350, 132: 320}
   simplify_tolerance_m: 30
 
 # AESL Tower Spotting Data, 765 kV D/C Hexa AL59 Zebra WZ-5, R0 24 Jun 2024. Applied to 765 kV

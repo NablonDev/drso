@@ -142,7 +142,7 @@ def test_railway_crossing_angle_and_span():
 
 def test_wide_river_needs_long_span():
     """300 m of water + 150 m bank buffers each side: a single span of 600 m or more, longer than the
-    370 m normal span. TSD: one span ≤ 720 m (60 % of the 1,200 m adjacent-span allowance) and the
+    400 m span cap. TSD: one span ≤ 720 m (60 % of the 1,200 m adjacent-span allowance) and the
     wind span ≤ 400 m, so the crossing towers' other spans are short and the towers are tension type."""
     f = frame()
     c = f.length_m / 2
@@ -152,7 +152,7 @@ def test_wide_river_needs_long_span():
     assert res["feasible"]
     r = res["routes"][0]
     S, T = r["spans"], r["towers"]
-    long_ix = [i for i, s in enumerate(S) if s["length_m"] > 370]
+    long_ix = [i for i, s in enumerate(S) if s["length_m"] > 400]       # 765 kV span cap 400 m (9 Oct 2026)
     assert long_ix and all(any(cr["rule"] == "river" for cr in S[i]["crossings"]) for i in long_ix)
     for i in long_ix:
         assert S[i]["length_m"] <= 720 + 1e-6
@@ -282,7 +282,7 @@ def test_hilly_ground_takes_tension_towers_and_longer_spans(monkeypatch):
     res = _solve_on_dem(monkeypatch, grade)
     r = res["routes"][0]
     inner = r["spans"][1:-1]
-    assert max(s["length_m"] for s in inner) <= 370.0 + 1e-6
+    assert max(s["length_m"] for s in inner) <= 400.0 + 1e-6            # span cap 400 m (9 Oct 2026)
     T = r["towers"]
     up = [t for t in T if t["chainage_km"] * 1000 > half + 400 and t["type"] != "G"]
     assert up and all(t["type"] != "A" for t in up), [t["type"] for t in up]
@@ -532,7 +532,7 @@ def test_tsd_span_tables_hold_on_a_solved_route():
     r = run_solve(solve_input({"clusters": gdf([village], "builtup_cluster")}))["routes"][0]
     tsd = load_engine()["tsd"]["765"]
     T, S = r["towers"], r["spans"]
-    assert max(s["length_m"] for s in S[1:-1]) <= 370.0 + 1e-6
+    assert max(s["length_m"] for s in S[1:-1]) <= 400.0 + 1e-6          # span cap 400 m (9 Oct 2026)
     for i in range(2, len(T) - 2):
         L1, L2 = S[i - 1]["length_m"], S[i]["length_m"]
         assert (L1 + L2) / 2 <= 400.0 + 1e-6
@@ -830,3 +830,48 @@ def test_proximity_pulls_the_search_but_not_the_cost(monkeypatch):
     near = lambda r: sum(1 for x, y in towers_frame(f, r) if abs(y - 1500) <= 1000) / len(r["towers"])
     assert near(on) > 0.5 and near(off) < 0.2, (near(on), near(off))
     assert on["cost"]["total"] >= off["cost"]["total"] * 0.999
+
+
+def test_uneven_spans_when_equal_spacing_is_blocked():
+    """A 700 m straight leg with a village road across its middle (30 m tower setback): two equal
+    350 m spans would put the tower on the road; uneven spacing (9 Oct 2026) keeps two spans with the
+    tower clear of it, each span within the 400 m cap."""
+    from beeline_engine.spotting import Checker, SpotParams, _spot_leg
+    f = frame()
+    spec = LineSpec(765, "dc")
+    rules, costs = resolve_rules(spec), resolve_costs(spec)
+    x0 = 3000.0
+    road = frame_geom(f, LineString([(x0 + 350, -2000), (x0 + 350, 2000)]))
+    comp = compile_rules(f, {"village_roads": gdf([road], "village_road")}, rules, costs, 765, 33.5, 150, 400)
+    sp = SpotParams(design_span_m=400, span_max_m=400, min_span_m=100, max_dev_deg=60, type_bands={},
+                    section_km=5, parallel_angle_deg=30, tower_cost_rs={}, ground_clearance_m=18.15,
+                    lowest_attachment_m=32.6, sag_at_design_m=14.278, go_radius_m=150)
+    chk = Checker(comp, sp)
+    pts = _spot_leg(chk, (x0, 0.0), (x0 + 700, 0.0), sp)
+    assert pts is not None and len(pts) == 1, pts
+    x = pts[0][0] - x0
+    assert abs(x - 350) >= 30 - 1e-6 and max(x, 700 - x) <= 400 + 1e-6, x
+
+
+def test_angle_span_fix_never_leaves_a_span_below_the_minimum():
+    """_angle_span_fix inserts a tower near an angle tower whose adjacent spans exceed the TSD table;
+    the remainder of the split span must stay ≥ the minimum span (bug fixed 9 Oct 2026: 11 m / 24 m)."""
+    from beeline_engine.config import load_engine
+    from beeline_engine.spotting import Checker, SpotParams, _angle_span_fix
+    f = frame()
+    spec = LineSpec(765, "dc")
+    comp = compile_rules(f, {}, resolve_rules(spec), resolve_costs(spec), 765, 33.5, 150, 400)
+    tsd = load_engine()["tsd"]["765"]
+    sp = SpotParams(design_span_m=400, span_max_m=400, min_span_m=100, max_dev_deg=60, type_bands={"A": 2, "B1": 15, "C1": 30, "D45": 45, "D60": 60},
+                    section_km=5, parallel_angle_deg=30, tower_cost_rs={}, ground_clearance_m=18.15,
+                    lowest_attachment_m=32.6, sag_at_design_m=14.278, go_radius_m=150, tsd=tsd)
+    chk = Checker(comp, sp)
+    # a 58° angle tower (D60: span sum ≤ 268 m) between a 115 m span and a 390 m span
+    x0 = 3000.0
+    p0, p1 = (x0, 0.0), (x0 + 115.0, 0.0)
+    th = math.radians(58)
+    p2 = (p1[0] + 390 * math.cos(th), p1[1] + 390 * math.sin(th))
+    p3 = (p2[0] + 300 * math.cos(th), p2[1] + 300 * math.sin(th))
+    pts = _angle_span_fix(chk, [(x0 - 300, 0.0), p0, p1, p2, p3, (p3[0] + 300, p3[1])], sp)
+    spans = [math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in zip(pts[:-1], pts[1:])]
+    assert min(spans[1:-1]) >= 100 - 1e-6, [round(x) for x in spans]

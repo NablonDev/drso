@@ -372,6 +372,9 @@ groups:
           - {key: tower_setback_m, label: "Tower buffer from the centreline", type: num, unit: m, value: 35}
           - {key: parallel_setback_m, label: "Conductor buffer from the centreline", type: num, unit: m, value: 35}
           - {key: angle_deg, label: "Crossing angle", type: sel, value: "Any", options: ["Any", "90°", "75–90°", "80–100°"]}
+          # Vivek, 9 Oct 2026: no angle rule for the canal — the span that crosses it is not a parallel run,
+          # so it may cross at any angle; spans running alongside within the buffer stay blocked
+          - {key: crossing_exempt_from_parallel, label: "Crossing span exempt from the parallel check", type: sel, value: "Yes", options: ["Yes", "No"]}
           - {key: tower_type, label: "Tower type", type: sel, value: "A/B/C", options: ["A", "B", "C", "D", "A/B/C"]}
 
       - id: nalla
@@ -555,11 +558,11 @@ groups:
 
       - id: design_span
         name: "Design span"
-        note: "Hard maximum span per voltage: the TSD normal span (370 m for 765 kV D/C base towers). Hilly = the ground rises more than 10 m between adjacent towers (Route_Rules 3); towers on a hilly span are tension towers (B1 at least). The TSD span tables (sum of adjacent spans by deviation, wind span ≤ 400 m) apply on top. River crossings excepted."
+        note: "Hard maximum span per voltage. 765 kV: 400 m (Vivek, 9 Oct 2026 — the TSD wind span of the base towers; the TSD normal span of 370 m stays the sag reference). Hilly = the ground rises more than 10 m between adjacent towers (Route_Rules 3); towers on a hilly span are tension towers (B1 at least). The TSD span tables (sum of adjacent spans by deviation, wind span ≤ 400 m) apply on top. River crossings excepted."
         mechanism: geometry
         params:
-          - {key: plain_m, label: "Plain terrain", type: num, unit: m, value: {765: 370, 400: 400, 220: 350, 132: 320}}
-          - {key: hilly_m, label: "Hilly terrain", type: num, unit: m, value: {765: 370, 400: 400, 220: 350, 132: 320}}
+          - {key: plain_m, label: "Plain terrain", type: num, unit: m, value: {765: 400, 400: 400, 220: 350, 132: 320}}
+          - {key: hilly_m, label: "Hilly terrain", type: num, unit: m, value: {765: 400, 400: 400, 220: 350, 132: 320}}
           - {key: hilly_rise_m, label: "Hilly: ground rise between towers over", type: num, unit: m, value: 10}
           - {key: urban_m, label: "Urban / populated", type: num, unit: m, value: {765: 250, 400: 250, 220: 225, 132: 200}, best_guess: true}
 

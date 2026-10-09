@@ -64,6 +64,7 @@ class SpotParams:
     approach_span_m: float | None = None
     proximity_discount: float = 0.0         # search-only discount near existing lines (string pulling)
     extension_pct: float = 9.4              # body extension price, % of the tower per +18 m
+    sag_ref_span_m: float | None = None     # span the sag figure belongs to (None = design span)
     section_spans: int | None = None       # TSD D: ≤ 15 spans between section points (plain)
     hilly_section_spans: int | None = None # ≤ 10 spans (hilly)
     pull_cost_tol: float = 0.01          # a straightened leg may cost at most this much more than the grid towers it replaces
@@ -243,7 +244,10 @@ class Checker:
         if L > limit + 1e-3:
             if L > self.sp.river_max_span_m + 1e-3 or not any(c.get("long_span") for c in out):
                 ok = False
+        crossed_rules = {c.get("rule") for c in out}
         for pr in self.c.parallels:
+            if getattr(pr, "crossing_exempt", False) and pr.rule_id in crossed_rules:
+                continue                    # the crossing span itself is not a parallel run (canal)
             a, _ = self._sample(pr.angle, p, q)
             near = ~np.isnan(a)
             if near.any():
@@ -279,23 +283,93 @@ def _spot_leg(chk: Checker, p, q, sp: SpotParams):
         if span < sp.min_span_m and n > 1:
             break
         pts = [(p[0] + (q[0] - p[0]) * i / n, p[1] + (q[1] - p[1]) * i / n) for i in range(1, n)]
-        if not all(chk.tower_ok(x, y, angle_tower=False) for x, y in pts):
-            continue
-        seq = [p] + pts + [q]
-        if sp.approach_span_m is not None and span > sp.approach_span_m + 1e-3 and \
-                any(chk.in_approach(a, b) for a, b in zip(seq[:-1], seq[1:])):
-            continue      # approach section: 250 m spans
-        if hilly_leg and span > sp.design_span_m + 1e-3 and n > 1 and \
-                not all(chk.is_hilly(a, b) for a, b in zip(seq[:-1], seq[1:])):
-            continue      # a span longer than the plain value must itself be on hilly ground
-        good = True
-        for a, b in zip(seq[:-1], seq[1:]):
-            ok, _ = chk.span_crossings(a, b)
-            if not ok:
-                good = False
-                break
-        if good:
+        if _even_leg_ok(chk, p, q, pts, span, n, hilly_leg, sp):
             return pts
+        if 1 < n <= min(n0 + 1, UNEVEN_MAX_SPANS):
+            # equal spacing fails: uneven spacing with the same tower count (9 Oct 2026)
+            un = _uneven_leg(chk, p, q, n, design, sp)
+            if un is not None:
+                return un
+    return None
+
+
+def _even_leg_ok(chk: Checker, p, q, pts, span: float, n: int, hilly_leg: bool, sp: SpotParams) -> bool:
+    if not all(chk.tower_ok(x, y, angle_tower=False) for x, y in pts):
+        return False
+    seq = [p] + pts + [q]
+    if sp.approach_span_m is not None and span > sp.approach_span_m + 1e-3 and \
+            any(chk.in_approach(a, b) for a, b in zip(seq[:-1], seq[1:])):
+        return False      # approach section: 250 m spans
+    if hilly_leg and span > sp.design_span_m + 1e-3 and n > 1 and \
+            not all(chk.is_hilly(a, b) for a, b in zip(seq[:-1], seq[1:])):
+        return False      # a span longer than the plain value must itself be on hilly ground
+    return all(chk.span_crossings(a, b)[0] for a, b in zip(seq[:-1], seq[1:]))
+
+
+UNEVEN_MAX_SPANS = 8          # uneven spacing is tried on legs of up to this many spans
+
+
+def _uneven_leg(chk: Checker, p, q, n: int, design: float, sp: SpotParams, step: float = 10.0):
+    """n spans on the straight leg p->q with towers where they may stand, spans as even as possible.
+    Every span within ±15 % of the even span (and the span cap): two neighbouring spans then keep
+    the TSD rule one span ≤ 60 % of their sum. Minimises the squared deviation from even spacing;
+    a span the exact checks reject is struck and the search repeated (a few times at most)."""
+    d = math.hypot(q[0] - p[0], q[1] - p[1])
+    ideal = d / n
+    lo, hi = max(sp.min_span_m, ideal * 0.85), min(design, ideal * 1.15)
+    if lo > hi:
+        return None
+    m = int(d // step)
+    xs = [i * step for i in range(1, m + 1) if i * step < d - lo + 1e-6]
+    pos = [0.0] + xs + [d]
+    at = lambda t: (p[0] + (q[0] - p[0]) * t / d, p[1] + (q[1] - p[1]) * t / d)
+    _ok: dict = {0: True, len(pos) - 1: True}
+
+    def ok_at(j):                         # tower_ok, evaluated on first use only
+        if j not in _ok:
+            _ok[j] = chk.tower_ok(*at(pos[j]), angle_tower=False)
+        return _ok[j]
+    bad: set = set()
+    for _ in range(6):
+        INF_ = float("inf")
+        best = [[INF_] * len(pos) for _ in range(n + 1)]
+        arg = [[-1] * len(pos) for _ in range(n + 1)]
+        best[0][0] = 0.0
+        for k in range(1, n + 1):
+            for j in range(1, len(pos)):
+                # tower k can only stand between k·lo and k·hi from p, and (n-k)·lo..(n-k)·hi from q
+                if pos[j] < k * lo - 1e-6 or pos[j] > k * hi + 1e-6 or \
+                        d - pos[j] < (n - k) * lo - 1e-6 or d - pos[j] > (n - k) * hi + 1e-6:
+                    continue
+                if (k < n and j == len(pos) - 1) or (k == n and j != len(pos) - 1) or not ok_at(j):
+                    continue
+                for i in range(j - 1, -1, -1):
+                    L = pos[j] - pos[i]
+                    if L > hi + 1e-6:
+                        break
+                    if L < lo - 1e-6 or best[k - 1][i] == INF_ or (i, j) in bad:
+                        continue
+                    c = best[k - 1][i] + (L - ideal) ** 2
+                    if c < best[k][j]:
+                        best[k][j], arg[k][j] = c, i
+        if best[n][len(pos) - 1] == INF_:
+            return None
+        idx, j = [], len(pos) - 1
+        for k in range(n, 0, -1):
+            idx.append(j)
+            j = arg[k][j]
+        idx.append(0)
+        idx = idx[::-1]
+        seq = [at(pos[i]) for i in idx]
+        seq[0], seq[-1] = p, q
+        failed = None
+        for a_i, b_i, a, b in zip(idx[:-1], idx[1:], seq[:-1], seq[1:]):
+            if not chk.span_crossings(a, b)[0]:
+                failed = (a_i, b_i)
+                break
+        if failed is None:
+            return seq[1:-1]
+        bad.add(failed)
     return None
 
 
@@ -604,6 +678,8 @@ def _wind_span_fix(chk: Checker, pts, sp: SpotParams):
             for dd in (allow, allow - 10, allow - 20, allow - 30):
                 if dd < sp.min_span_m:
                     break
+                if Ln - dd < sp.min_span_m - 1e-6:
+                    continue        # the rest of the neighbour span would be below the minimum (9 Oct 2026 fix)
                 t = dd / Ln
                 x, y = a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])
                 if chk.tower_ok(x, y, angle_tower=False) and chk.span_crossings(a, (x, y))[0] \
@@ -645,6 +721,8 @@ def _angle_span_fix(chk: Checker, pts, sp: SpotParams):
             for dd in (a, a - 10, a - 20):
                 if dd < sp.min_span_m:
                     break
+                if L - dd < sp.min_span_m - 1e-6:
+                    continue        # the rest of the span would be shorter than the minimum (9 Oct 2026 fix)
                 tt = dd / L
                 x, y = p1[0] + tt * (q[0] - p1[0]), p1[1] + tt * (q[1] - p1[1])
                 if chk.tower_ok(x, y, angle_tower=False) and chk.span_crossings(p1, (x, y))[0] \
@@ -668,7 +746,7 @@ def _span_clearance(chk: Checker, p, q, sp: SpotParams, ext_a=0.0, ext_b=0.0):
     t, ground, L = pr
     if not np.isfinite(ground[0]) or not np.isfinite(ground[-1]):
         return None, None
-    sag = sp.sag_at_design_m * (L / sp.design_span_m) ** 2
+    sag = sp.sag_at_design_m * (L / (sp.sag_ref_span_m or sp.design_span_m)) ** 2
     za = ground[0] + sp.lowest_attachment_m + ext_a
     zb = ground[-1] + sp.lowest_attachment_m + ext_b
     c = (1 - t) * za + t * zb - 4 * sag * t * (1 - t) - ground
@@ -748,7 +826,7 @@ def _clearance(comp, dem, towers, s: Span, sp: SpotParams):
     fy = ta.y + t * (tb.y - ta.y)
     lon, lat = comp.frame.frame_to_lonlat(fx, fy)
     ground = dem.sample(lon, lat)
-    sag = sp.sag_at_design_m * (s.length_m / sp.design_span_m) ** 2
+    sag = sp.sag_at_design_m * (s.length_m / (sp.sag_ref_span_m or sp.design_span_m)) ** 2
 
     def min_clear():
         za = ta.ground_z + sp.lowest_attachment_m + ta.extension_m

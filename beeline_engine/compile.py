@@ -57,6 +57,7 @@ class CrossingRaster:
 class ParallelRaster:
     rule_id: str
     angle: np.ndarray            # nearest feature angle where within setback, NaN elsewhere
+    crossing_exempt: bool = False   # a span that crosses the feature is not a parallel run (canal, 9 Oct 2026)
 
 
 class VecRule:
@@ -855,7 +856,8 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
             if ps:
                 pa = R.angle_nearest(r.layer, line_classes, within_m=float(ps))
                 if pa is not None:
-                    parallels.append(ParallelRaster(rule_id=r.id, angle=pa))
+                    parallels.append(ParallelRaster(rule_id=r.id, angle=pa,
+                                                    crossing_exempt=p.get("crossing_exempt_from_parallel") == "Yes"))
 
     # Implicit engineering constraint: no tower stands in open water.
     for lyr, cls in (("pond", None), ("lake", None), ("river", None), ("canal", None), ("reservoir", None),

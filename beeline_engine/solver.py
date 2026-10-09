@@ -64,6 +64,7 @@ class SolverParams:
     lowest_attachment_m: float = 0.0
     sag_at_design_m: float = 0.0
     design_span_m: float = 400.0
+    sag_ref_span_m: float | None = None       # span the sag figure belongs to (None = design span)
     extension_m: float = 18.0
     extension_cost_rs: float = 0.0           # one body extension on a suspension (A) tower
     extension_cost_hilly_rs: float = 0.0     # one body extension on a hilly-ground (B1) tower
@@ -187,6 +188,7 @@ class _Rasters:
                        None if cr.width_raster is None else t(cr.width_raster, torch.bool))
                       for cr in compiled.crossings]
         self.par = [t(np.nan_to_num(pr.angle, nan=-1.0)) for pr in compiled.parallels]
+        self.par_meta = [(pr.rule_id, getattr(pr, "crossing_exempt", False)) for pr in compiled.parallels]
         self.h, self.w = compiled.tower_forbidden.shape
         self.river_cols = None
         self.z = self.hilly = None
@@ -256,7 +258,7 @@ def _edge_block(compiled: Compiled, grid: Grid, p: SolverParams, rasters: "_Rast
         # stand on the high ground instead, or the line goes round)
         zs = rasters.z[row, col]                                         # (C,R,K,S)
         za, zb = zs[..., :1], zs[..., -1:]
-        sag = p.sag_at_design_m * (length.unsqueeze(-1) / p.design_span_m) ** 2
+        sag = p.sag_at_design_m * (length.unsqueeze(-1) / (p.sag_ref_span_m or p.design_span_m)) ** 2
         line = (1 - tt) * (za + p.lowest_attachment_m) + tt * (zb + p.lowest_attachment_m) - 4 * sag * tt * (1 - tt)
         clear = torch.nan_to_num(line - zs, nan=1e9).amin(dim=-1)        # no DEM value: no penalty
         need = p.ground_clearance_m - clear
@@ -283,7 +285,7 @@ def _edge_block(compiled: Compiled, grid: Grid, p: SolverParams, rasters: "_Rast
         # neighbour span must fit 2 × wind span; beyond the largest step the span is not allowed
         zs = rasters.z[row, col]
         za, zb = zs[..., :1], zs[..., -1:]
-        sag = p.sag_at_design_m * (length.unsqueeze(-1) / p.design_span_m) ** 2
+        sag = p.sag_at_design_m * (length.unsqueeze(-1) / (p.sag_ref_span_m or p.design_span_m)) ** 2
         line = (1 - tt) * (za + p.lowest_attachment_m) + tt * (zb + p.lowest_attachment_m) - 4 * sag * tt * (1 - tt)
         need = (p.ground_clearance_m - torch.nan_to_num(line - zs, nan=1e9).amin(dim=-1)).clamp(min=0.0)
         ok_any = torch.zeros_like(invalid)
@@ -302,6 +304,7 @@ def _edge_block(compiled: Compiled, grid: Grid, p: SolverParams, rasters: "_Rast
     crossed_river = torch.zeros_like(invalid)
 
     tA = p.tower_cost_rs["A"]
+    crossed_by: dict = {}
     for cr, ang_t, width_t in rasters.cross:
         a = ang_t[row, col]                        # (C,R,K,S), -1 = none
         hit = a >= 0
@@ -331,15 +334,19 @@ def _edge_block(compiled: Compiled, grid: Grid, p: SolverParams, rasters: "_Rast
             add = add + 2 * p.tower_cost_rs[min_type] * p.extension_pct / 100.0 * cr.extension_m / 18.0
         if getattr(cr, "long_span", cr.rule_id == "river"):
             crossed_river |= crossed
+        crossed_by[cr.rule_id] = crossed_by.get(cr.rule_id, torch.zeros_like(crossed)) | crossed
         E = E + torch.where(crossed, add, torch.zeros_like(E))
         invalid |= crossed & bad
-    for pa in rasters.par:
+    for pa, (rid, exempt) in zip(rasters.par, rasters.par_meta):
         a = pa[row, col]
         near = a >= 0
         if not bool(near.any()):
             continue
         acute = _acute(heading.expand_as(a), a)
-        invalid |= (near & (acute < p.parallel_angle_deg)).any(dim=-1)
+        par_bad = (near & (acute < p.parallel_angle_deg)).any(dim=-1)
+        if exempt and rid in crossed_by:
+            par_bad = par_bad & ~crossed_by[rid]          # the crossing span itself is not a parallel run
+        invalid |= par_bad
     if require_river:
         invalid |= ~crossed_river
     return torch.where(invalid, torch.full_like(E, INF), E)
