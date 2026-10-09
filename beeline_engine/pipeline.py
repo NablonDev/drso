@@ -166,7 +166,9 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
     max_dev = float(rules["max_deviation"].params["limit_deg"])
     if not rules["max_deviation"].enabled:
         max_dev = 60.0
-    go_radius = float(rules["substations"].params.get("gantry_go_radius_m", 150))
+    yard_radius = float(rules["substations"].params.get("terminal_yard_radius_m", 150))
+    _ap = rules.get("approach_section")
+    go_radius = float(_ap.params.get("go_zone_m") or yard_radius) if _ap is not None and _ap.enabled else yard_radius
 
     frame = Frame(tuple(inp.a), tuple(inp.b), inp.band_km * 1000.0, eng["grid"]["band_margin_m"],
                   eng["grid"]["raster_res_m"])
@@ -192,6 +194,7 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
     def _compile(relaxed: bool = False):
         def one(half_width, chw_ref):
             return compile_rules(frame, gdfs, rules, costs, inp.kv, half_width, endpoints_go_radius_m=go_radius,
+                                 terminal_yard_radius_m=yard_radius,
                                  design_span_m=design,
                                  single_angle_tol_deg=eng["crossings"]["single_angle_tolerance_deg"],
                                  gantry_buffer_m=float(rules["substations"].params.get("gantry_buffer_m", 10)),

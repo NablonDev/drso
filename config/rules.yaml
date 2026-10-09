@@ -133,7 +133,8 @@ groups:
           - {key: tower_setback_m, label: "Tower buffer", type: num, unit: m, value: 100}
           - {key: conductor_buffer_m, label: "Conductor buffer", type: num, unit: m, value: 100}
           - {key: gantry_buffer_m, label: "Gantry substation buffer", type: num, unit: m, value: 10}
-          - {key: gantry_go_radius_m, label: "Gantry go-zone radius", type: num, unit: m, value: 150}
+          # a substation this close to the gantry point is the terminal yard the line starts / ends in
+          - {key: terminal_yard_radius_m, label: "Terminal yard: substation within", type: num, unit: m, value: 150}
 
       - id: dams
         name: "Dams"
@@ -584,12 +585,13 @@ groups:
 
       - id: approach_section
         name: "Approach section near substation"
-        note: "CEA Technical Standards (1st Amendment) 2025, Schedule VII: near the substation the RoW narrows (765 kV D/C 54 m) and the design span is 250 m. Applied within the set distance of each gantry (Vivek, 8 Oct 2026: 2 km); buffers tied to the corridor half-width shrink with it. The 150 m gantry go zone stays free of every rule."
+        note: "CEA Technical Standards (1st Amendment) 2025, Schedule VII: near the substation the RoW narrows (765 kV D/C 54 m) and the span is at most 250 m. Applied within the set distance of each gantry, start and end (Vivek, 8 Oct 2026: 2 km); buffers tied to the corridor half-width shrink with it. Go zone (Vivek, 9 Oct 2026: 500 m round each gantry): no setback, crossing or water rule applies — a tower may stand in a pond or wetland — only a tower base may not overlap a substation or an existing tower (power, telecom, wind turbine). Base = the largest tower type's base square; an existing tower is taken as the same size."
         mechanism: geometry
         params:
           - {key: length_m, label: "Distance from the gantry", type: num, unit: m, value: 2000}
           - {key: half_width_m, label: "Approach half-width (RoW / 2)", type: num, unit: m, value: {765: 27, 400: 19, 220: 12, 132: 9.5}}
-          - {key: span_m, label: "Approach design span", type: num, unit: m, value: {765: 250, 400: 250, 220: 200, 132: 150}}
+          - {key: span_m, label: "Approach maximum span", type: num, unit: m, value: {765: 250, 400: 250, 220: 200, 132: 150}}
+          - {key: go_zone_m, label: "Go zone round each gantry", type: num, unit: m, value: 500}
 
       - id: tower_type_bands
         name: "Tower type by deviation"

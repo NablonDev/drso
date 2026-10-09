@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import shutil
 import subprocess
 from pathlib import Path
 from datetime import datetime, timezone
@@ -120,6 +121,9 @@ def run_solve_job(job: dict, rep: Reporter):
     row = db.one("""insert into solves (run_id, job_id, feasible, result, manifest) values (%s,%s,%s,%s,%s)
                     returning id, created_at""", (run["id"], job["id"], result["feasible"], db.J(result), db.J(manifest)))
     out_dir = settings.RUNS_DIR / run["id"] / f"solve_{row['id']}"
+    if out_dir.exists():
+        # a new solve id owns this folder; anything here is left over (e.g. a reset database)
+        shutil.rmtree(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     files = []
     if want_exports:

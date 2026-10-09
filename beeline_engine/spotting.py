@@ -168,7 +168,10 @@ class Checker:
             return False
         p = Point(x, y)
         if self.in_go_zone(p):
-            return self.yards is None or not self.yards.contains(p)
+            # go zone: only a substation / existing tower overlap stops a tower (9 Oct 2026)
+            if self.yards is not None and self.yards.contains(p):
+                return False
+            return not any(r.hits(p) for r in self.c.go_overlap)
         if any(r.hits(p) for r in self.tower_rules):
             return False
         if angle_tower and any(r.hits(p) for r in self.angle_rules):

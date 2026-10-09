@@ -708,3 +708,39 @@ def test_parallel_routes_match_one_at_a_time(monkeypatch):
         assert a["cost"]["total"] == b["cost"]["total"]
         assert [e["type"] for e in a["events"]] == [e["type"] for e in b["events"]]
     assert [e["type"] for e in out[1]["events_global"]] == [e["type"] for e in out[3]["events_global"]]
+
+
+def test_go_zone_ignores_setbacks_but_not_overlap():
+    """Go zone, 500 m round each gantry (Vivek, 9 Oct 2026): no setback / water rule — a tower may
+    stand in a pond — but a tower base may not overlap a substation or an existing tower."""
+    from beeline_engine.spotting import Checker, SpotParams
+    f = frame()
+    spec = LineSpec(765, "dc")
+    rules, costs = resolve_rules(spec), resolve_costs(spec)
+    pond = frame_geom(f, Point(300, 0).buffer(60))
+    sub = frame_geom(f, box(250, 150, 330, 230))                       # 260 m from A: not the terminal yard
+    pt = frame_geom(f, Point(300, -200))
+    tw = gpd.GeoDataFrame({"class": ["power_tower"], "name": [None], "attrs": [{"voltage_kv": 220}]},
+                          geometry=[pt], crs=4326)
+    layers = {"pond": gdf([pond], "pond"), "substations": gdf([sub], "substation"), "power": tw}
+    comp = compile_rules(f, layers, rules, costs, 765, 33.5, 500, 370, terminal_yard_radius_m=150)
+    hd = math.sqrt(784) / math.sqrt(2)
+
+    def forbidden(x, y):
+        col, row = f.frame_to_pixel(x, y)
+        return bool(comp.tower_forbidden[int(row), int(col)])
+    assert not forbidden(300, 0)                                       # in the pond, inside the go zone
+    assert forbidden(290, 190) and forbidden(300, 150 - hd + 5)        # on / next to the substation
+    assert not forbidden(300, 150 - hd - 25)
+    assert forbidden(300, -200 + 2 * hd - 5) and not forbidden(300, -200 + 2 * hd + 25)   # existing tower
+    # outside the go zone the pond rule holds as before
+    pond2 = frame_geom(f, Point(1500, 0).buffer(60))
+    comp2 = compile_rules(f, {"pond": gdf([pond2], "pond")}, rules, costs, 765, 33.5, 500, 370)
+    col, row = f.frame_to_pixel(1500, 0)
+    assert comp2.tower_forbidden[int(row), int(col)]
+    # the spotting check agrees
+    sp = SpotParams(design_span_m=370, span_max_m=370, min_span_m=100, max_dev_deg=60, type_bands={},
+                    section_km=5, parallel_angle_deg=10, tower_cost_rs={}, ground_clearance_m=18,
+                    lowest_attachment_m=32, sag_at_design_m=14, go_radius_m=500)
+    ck = Checker(comp, sp)
+    assert ck.tower_ok(300, 0, False) and not ck.tower_ok(290, 190, False) and not ck.tower_ok(300, -200, False)

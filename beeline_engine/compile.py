@@ -132,6 +132,7 @@ class Compiled:
     relaxed: bool = False                    # compiled for the Relaxed route (last-resort rules opened)
     approach_zone: object = None             # frame polygon of the approach sections (None = none)
     rasterizer: object = None                # the _Rasterizer, reused by further compiles of the same layers
+    go_overlap: list = field(default_factory=list)   # VecRules still checked inside the go zone (overlap only)
     # last-resort relaxations taken in this compile: (VecRule of what was opened, approval months, label)
     relaxed_items: list = field(default_factory=list)
     # terrain on the rule raster grid (set by attach_terrain; None = no DEM)
@@ -467,20 +468,23 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
                   design_span_m: float = 400.0, single_angle_tol_deg: float = 15.0,
                   gantry_buffer_m: float = 10.0, raster_margin_m: float = 0.0,
                   angle_tower_rules: tuple[str, ...] = (), relaxed: bool = False,
-                  chw_ref_m: float | None = None, rasterizer=None, raster_cache=None) -> Compiled:
+                  chw_ref_m: float | None = None, rasterizer=None, raster_cache=None,
+                  terminal_yard_radius_m: float | None = None) -> Compiled:
     # Terminal yards: the substation(s) the line starts / ends in. They are carved out of the
     # substation rule; the yard (+ gantry buffer) and the go-zone disc are clear for the conductor,
     # and no tower may stand inside the yard other than the dead-end towers at A and B.
     global RASTER_MARGIN_M
     RASTER_MARGIN_M = raster_margin_m
     go_r = endpoints_go_radius_m or 0.0
+    yard_r = go_r if terminal_yard_radius_m is None else min(float(terminal_yard_radius_m), go_r)
+    all_layers = layers
     a_pt = Point(*frame.A)
     b_pt = Point(*frame.B)
     yards_frame = []
     subs = layers.get("substations")
     if subs is not None and len(subs):
         utm = subs.to_crs(frame.epsg)
-        term = utm.geometry.apply(lambda g: g is not None and (g.distance(a_pt) <= go_r or g.distance(b_pt) <= go_r))
+        term = utm.geometry.apply(lambda g: g is not None and (g.distance(a_pt) <= yard_r or g.distance(b_pt) <= yard_r))
         if term.any():
             yards_frame = [frame.geom_utm_to_frame(g) for g in utm.geometry[term]]
             layers = dict(layers)
@@ -879,6 +883,7 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
     conductor_rs_per_m = float(costs["line_rs_per_m"])
 
     # ---- terminal zone (gantry go-zone + terminal yards) --------------------------------
+    go_overlap: list = []
     if not zone.is_empty:
         utm_zone = _frame_to_utm(frame, zone)
         # cell centres only: the cleared raster area stays inside the exact zone
@@ -897,6 +902,31 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
                                      transform=frame.transform, fill=0, dtype="uint8").astype(bool)
             tower_forbidden |= ym
             tower_geoms.append(VecRule("terminal_yard", "substations", list(getattr(yards, "geoms", [yards])), 0.0))
+        # go zone (Vivek, 9 Oct 2026): the only check left is that a tower base does not overlap a
+        # substation or an existing tower. Base = the largest type's square (centre to corner); an
+        # existing tower point is taken as a base of the same size.
+        half_diag = math.sqrt(max(float(t["area_m2"]) for t in costs["towers"].values())) / math.sqrt(2.0)
+        for rid, key, classes, d in (("go_zone_substation", "substations", None, half_diag),
+                                     ("go_zone_tower", "power", ["power_tower"], 2 * half_diag),
+                                     ("go_zone_tower", "power_lt", ["power_tower"], 2 * half_diag),
+                                     ("go_zone_tower", "telecom", None, 2 * half_diag),
+                                     ("go_zone_tower", "wind_turbines", None, 2 * half_diag)):
+            g = all_layers.get(key)
+            if g is None or not len(g):
+                continue
+            if classes:
+                g = g[g["class"].isin(classes)]
+            fg = [x for x in _to_frame(frame, g) if x is not None and not x.is_empty and x.distance(zone) <= d]
+            if not fg:
+                continue
+            vr = VecRule(rid, key, fg, d)
+            vr.inside = zone
+            go_overlap.append(vr)
+            utm_g = [_frame_to_utm(frame, x).buffer(d + RASTER_MARGIN_M) for x in fg]
+            om = rfeatures.rasterize([(x, 1) for x in utm_g], out_shape=shape, transform=frame.transform,
+                                     fill=0, all_touched=True, dtype="uint8").astype(bool)
+            tower_forbidden |= om & zm
+            fired[rid] = fired.get(rid, 0) + int((om & zm).sum())
 
     return Compiled(frame=frame, tower_forbidden=tower_forbidden, angle_forbidden=angle_forbidden,
                     conductor_forbidden=conductor_forbidden, strip_density=strip_density,
@@ -906,7 +936,7 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
                     tower_nogo=tower_geoms, angle_nogo=angle_geoms,
                     conductor_nogo=cond_geoms, rules_fired=fired, costs=costs,
                     terminal_zone=zone, terminal_yards=yards, relaxed=relaxed, relaxed_items=relaxed_items,
-                    rasterizer=R)
+                    rasterizer=R, go_overlap=go_overlap)
 
 
 def _airport_zone(R: "_Rasterizer", frame: Frame, layer: str, classes, d: float, funnel_m: float):
