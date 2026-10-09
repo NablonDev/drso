@@ -274,7 +274,10 @@ export const apiCalls = {
   fetchImagery: (id: string, products: string[]) =>
     api<Job>(`/api/runs/${encodeURIComponent(id)}/imagery/fetch`, { method: "POST", json: { products } }),
   models: () => api<{ models: ModelStatus[] }>("/api/models"),
-  solve: (id: string) => api<Job>(`/api/runs/${encodeURIComponent(id)}/solve`, { method: "POST" }),
+  /** exports=false: quick test solve — routes only; the export set is made later on request. */
+  solve: (id: string, exports = true) =>
+    api<Job>(`/api/runs/${encodeURIComponent(id)}/solve`, { method: "POST", json: { exports } }),
+  makeExports: (sid: number) => api<Solve>(`/api/solves/${sid}/exports`, { method: "POST" }),
   /** Re-pull a layer's online source (OSM power, Tarang Sanchar towers) for the run's area, update the store, re-extract it. */
   refreshLayer: (id: string, key: string) =>
     api<Job>(`/api/runs/${encodeURIComponent(id)}/layers/${encodeURIComponent(key)}/refresh`, { method: "POST" }),

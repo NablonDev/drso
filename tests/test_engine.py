@@ -631,3 +631,80 @@ def test_approach_section_spans_and_free_go_zone():
         mx, my = (x0 + x1) / 2, (y0 + y1) / 2
         if math.hypot(mx, my) <= 2000 or math.hypot(mx - f.length_m, my) <= 2000:
             assert s["length_m"] <= 250 + 1e-6, s["length_m"]
+
+
+# ---- speed-ups (9 Oct 2026): vectorised frame transform, raster cache, parallel routes ------------
+def test_vectorised_frame_transform_matches_per_geometry():
+    f = frame()
+    import shapely
+    geoms = [Point(f.A[0] + 120.5, f.A[1] - 40.0), LineString([(f.A[0], f.A[1]), (f.A[0] + 900, f.A[1] + 333)]),
+             box(f.A[0] + 10, f.A[1] + 10, f.A[0] + 510, f.A[1] + 260), None]
+    vec = f.geoms_utm_to_frame(np.array(geoms, dtype=object))
+    for g, v in zip(geoms, vec):
+        if g is None:
+            assert v is None
+            continue
+        one = f.geom_utm_to_frame(g)
+        assert np.allclose(shapely.get_coordinates(one), shapely.get_coordinates(v), atol=1e-6)
+
+
+def _speed_layers(f):
+    c = f.length_m / 2
+    rail = frame_geom(f, LineString([(c - 4000 * math.cos(math.radians(30)), -4000 * math.sin(math.radians(30))),
+                                     (c + 4000 * math.cos(math.radians(30)), 4000 * math.sin(math.radians(30)))]))
+    village = frame_geom(f, Point(f.length_m * 0.3, 300).buffer(500))
+    return {"rail": gdf([rail], "railway", "Test line"), "clusters": gdf([village], "builtup_cluster"),
+            "power": _existing_400(f, f.length_m * 0.7, [-1000, -600, -200, 200, 600, 1000])}
+
+
+def test_raster_cache_is_lossless(tmp_path):
+    """A compile from the on-disk raster cache is bit-identical to a fresh one; a changed layer
+    misses the cache."""
+    from beeline_engine.rastercache import RasterCache
+    f = frame()
+    spec = LineSpec(765, "dc")
+    rules, costs = resolve_rules(spec), resolve_costs(spec)
+    args = (rules, costs, 765, 33.5, 150, 370)
+    fresh = compile_rules(f, _speed_layers(f), *args)
+    c1 = RasterCache(tmp_path, f)
+    first = compile_rules(f, _speed_layers(f), *args, raster_cache=c1)
+    assert c1.misses > 0          # (a hit is possible here: two derived keys with the same geometry share an entry)
+    c2 = RasterCache(tmp_path, f)
+    second = compile_rules(f, _speed_layers(f), *args, raster_cache=c2)
+    assert c2.hits > 0 and c2.misses == 0
+    for comp in (first, second):
+        for attr in ("tower_forbidden", "angle_forbidden", "conductor_forbidden", "strip_density", "site_cost"):
+            assert np.array_equal(getattr(fresh, attr), getattr(comp, attr), equal_nan=True), attr
+        for a, b in zip(fresh.crossings, comp.crossings):
+            assert a.rule_id == b.rule_id and np.array_equal(a.angle, b.angle, equal_nan=True)
+        for a, b in zip(fresh.parallels, comp.parallels):
+            assert np.array_equal(a.angle, b.angle, equal_nan=True)
+    moved = _speed_layers(f)
+    moved["clusters"] = gdf([frame_geom(f, Point(f.length_m * 0.3, -300).buffer(500))], "builtup_cluster")
+    c3 = RasterCache(tmp_path, f)
+    compile_rules(f, moved, *args, raster_cache=c3)
+    assert c3.misses > 0
+
+
+def test_parallel_routes_match_one_at_a_time(monkeypatch):
+    """Routes searched together give exactly the routes of the one-at-a-time loop."""
+    from beeline_engine import pipeline
+    f = frame()
+    orig = pipeline.load_engine
+    out = {}
+    for w in (1, 3):
+        def le(_w=w):
+            e = orig()
+            e["parallel_routes"] = {"max_workers": _w, "gpu_gb_per_route": 0.01}
+            return e
+        monkeypatch.setattr(pipeline, "load_engine", le)
+        out[w] = run_solve(solve_input(_speed_layers(f), routes=4))
+    if torch.cuda.is_available():
+        assert out[3]["timings"]["route_workers"] == 3
+    assert [r["key"] for r in out[1]["routes"]] == [r["key"] for r in out[3]["routes"]]
+    for a, b in zip(out[1]["routes"], out[3]["routes"]):
+        assert [(t["x_utm"], t["y_utm"], t["type"]) for t in a["towers"]] == \
+               [(t["x_utm"], t["y_utm"], t["type"]) for t in b["towers"]], a["key"]
+        assert a["cost"]["total"] == b["cost"]["total"]
+        assert [e["type"] for e in a["events"]] == [e["type"] for e in b["events"]]
+    assert [e["type"] for e in out[1]["events_global"]] == [e["type"] for e in out[3]["events_global"]]

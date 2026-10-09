@@ -6,6 +6,7 @@ import { api } from "../../api/client";
 import { apiCalls, qk, useConfig } from "../../api/hooks";
 import type { LayerConfig } from "../../api/types";
 import { useUi } from "../../store/ui";
+import { quickSolveOn } from "../../lib/quickSolve";
 import { Btn, Dialog } from "../ui";
 
 /**
@@ -365,7 +366,7 @@ export default function MapTools({ map, runId, onLayersChanged }: {
   const rerun = async () => {
     setAskRerun(null);
     try {
-      await apiCalls.solve(runId);
+      await apiCalls.solve(runId, !quickSolveOn());
       void qc.invalidateQueries({ queryKey: qk.active });
       void qc.invalidateQueries({ queryKey: qk.run(runId) });
       nav(`/runs/${runId}/solve`);

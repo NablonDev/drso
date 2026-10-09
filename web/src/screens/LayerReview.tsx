@@ -28,6 +28,7 @@ import { CeilingNote, ScaleBar, useCeiling, ZoomBar } from "../components/map/Zo
 import { Btn, ConfPill, ErrorNote, Head, Loading, Note, SourcePill } from "../components/ui";
 import { date, elapsedMin, hm, int, num, when } from "../lib/format";
 import { useStartSolve } from "./Solve";
+import { quickSolveOn, setQuickSolve } from "../lib/quickSolve";
 
 /** Imagery-only map drawn over the left part of the view so Compare reveals bare pixels. */
 function BareMap({ main, bounds, clipRight }: { main: maplibregl.Map | null; bounds: Bounds | null; clipRight: number }) {
@@ -131,6 +132,18 @@ function Body({ L }: { L: LayersResponse }) {
   const nav = useNavigate();
   const qc = useQueryClient();
   const startSolve = useStartSolve(run.id);
+  // quick test solve: routes only, no export files (made later from the Export screen)
+  const [quick, setQuick] = useState<boolean>(quickSolveOn);
+  const setQuickKeep = (v: boolean) => {
+    setQuick(v);
+    setQuickSolve(v);
+  };
+  const quickBox = (
+    <label className="hint" style={{ display: "flex", alignItems: "center", gap: 6, margin: 0 }} title="Routes only; DXF / KML / report files are made later from the Export screen">
+      <input type="checkbox" data-testid="quick-solve" checked={quick} onChange={(e) => setQuickKeep(e.target.checked)} />
+      Quick test solve (skip exports)
+    </label>
+  );
 
   const [on, setOn] = useState<Record<string, boolean>>(() => Object.fromEntries(LAYER_ORDER.map((k) => [k, DEFAULT_ON.has(k)])));
   const [solo, setSolo] = useState<string | null>(null);
@@ -546,9 +559,10 @@ function Body({ L }: { L: LayersResponse }) {
                   {run.layers_stale.length ? `Re-extract first: ${run.layers_stale.join(", ")}` : "Every layer must be extracted before solving."}
                 </div>
               ) : null}
-              <Btn pending={startSolve.isPending} disabled={!run.layers_ready || Boolean(run.job)} onClick={() => startSolve.mutate()}>
+              <Btn pending={startSolve.isPending} disabled={!run.layers_ready || Boolean(run.job)} onClick={() => startSolve.mutate({ exports: !quick })}>
                 Solve the route
               </Btn>
+              {quickBox}
               <button className="btn ghost" onClick={() => nav(`/runs/${run.id}/sources`)}>Correct a layer first</button>
               <ErrorNote error={startSolve.error} />
             </div>
@@ -655,7 +669,8 @@ function Body({ L }: { L: LayersResponse }) {
 
       <div className="actions">
         <button className="btn ghost" onClick={() => nav(`/runs/${run.id}/${run.last_extract ? "extracting" : "review"}`)}>Back</button>
-        <Btn pending={startSolve.isPending} disabled={!run.layers_ready || Boolean(run.job)} onClick={() => startSolve.mutate()}>
+        {quickBox}
+        <Btn pending={startSolve.isPending} disabled={!run.layers_ready || Boolean(run.job)} onClick={() => startSolve.mutate({ exports: !quick })}>
           Solve the route →
         </Btn>
       </div>

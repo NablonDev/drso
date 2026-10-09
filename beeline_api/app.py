@@ -765,8 +765,12 @@ def delete_shape(run_id: str, shape_id: int):
     return {"deleted": shape_id, "layer_key": visible[shape_id]["layer_key"], "shapes": user_shapes.list_for_run(r)}
 
 
+class SolveReq(BaseModel):
+    exports: bool = True            # False: quick test solve — routes only, exports made on request later
+
+
 @app.post("/api/runs/{run_id}/solve", status_code=202)
-def start_solve(run_id: str):
+def start_solve(run_id: str, req: SolveReq | None = None):
     r = _run(run_id)
     rl = layers.run_layers(run_id)
     reg = [l["key"] for l in load_layers()["layers"]]
@@ -778,7 +782,7 @@ def start_solve(run_id: str):
         if a:
             raise jobs.Busy(a)
         raise HTTPException(400, "Extract the layers first: " + ", ".join(missing + stale) + " not ready for this revision.")
-    j = jobs.start(run_id, "solve")
+    j = jobs.start(run_id, "solve", {"exports": True if req is None else bool(req.exports)})
     return _job_json(j)
 
 
@@ -1067,6 +1071,20 @@ def get_solve(sid: int):
     if not s:
         raise HTTPException(404, "solve not found")
     return _solve_json(s)
+
+
+@app.post("/api/solves/{sid}/exports")
+def make_exports(sid: int):
+    """Write the export set for a solve run with exports skipped."""
+    s = db.one("select id, run_id from solves where id=%s", (sid,))
+    if not s:
+        raise HTTPException(404, "solve not found")
+    a = jobs.active()
+    if a and a["run_id"] == s["run_id"]:
+        raise jobs.Busy(a)
+    from .solvejob import exports_for_solve
+    exports_for_solve(sid)
+    return _solve_json(db.one("select * from solves where id=%s", (sid,)))
 
 
 @app.get("/api/solves/{sid}/files/{name}")

@@ -7,6 +7,7 @@ import type { Job } from "../api/types";
 import { Btn, Dialog, ErrorNote, Head, Note, Prog } from "../components/ui";
 import { clock, elapsedMin, hm, int, seconds } from "../lib/format";
 import { useTicker } from "../lib/useDebounced";
+import { quickSolveOn } from "../lib/quickSolve";
 import { useUi } from "../store/ui";
 
 const STAGES: [string, RegExp][] = [
@@ -27,8 +28,8 @@ function stageIndex(stage: string | null, status: Job["status"]): number {
 export function useStartSolve(runId: string) {
   const qc = useQueryClient();
   const nav = useNavigate();
-  return useApiMutation<Job, void>({
-    mutationFn: () => apiCalls.solve(runId),
+  return useApiMutation<Job, { exports?: boolean } | void>({
+    mutationFn: (o) => apiCalls.solve(runId, o && o.exports !== undefined ? o.exports : !quickSolveOn()),
     errorTitle: "Solve not started",
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.active });

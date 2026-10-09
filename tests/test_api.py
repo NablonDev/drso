@@ -572,3 +572,23 @@ def test_hand_added_shapes(client, tmp_path):
     assert client.delete(f"/api/runs/{rid2}/shapes/{tmp_id}").status_code == 404
     assert client.delete(f"/api/runs/{rid}/shapes/{perm_id}").status_code == 200
     assert client.get(f"/api/runs/{rid}/shapes").json()["shapes"] == []
+
+
+def test_quick_solve_skips_exports_until_asked(client):
+    """Quick test solve (9 Oct 2026): routes only; the export set is made later from the same solve."""
+    rid = make_run(client)
+    client.post(f"/api/runs/{rid}/extract", json={})
+    assert run_next_job()["status"] == "done"
+    r = client.post(f"/api/runs/{rid}/solve", json={"exports": False})
+    assert r.status_code == 202
+    j = run_next_job()
+    assert j["status"] == "done", j["error"]
+    s = client.get(f"/api/runs/{rid}/solve").json()
+    assert s["feasible"] and s["manifest"]["exports_skipped"] and s["files"] == []
+    assert set(s["manifest"]["layer_version_ids"]) >= {"buildings", "clusters"}
+    s2 = client.post(f"/api/solves/{s['id']}/exports").json()
+    assert not s2["manifest"]["exports_skipped"]
+    for name in ("route1.dxf", "route1.kml", "report.pdf", "manifest.json", "layers.gpkg", f"{rid}_all.zip"):
+        assert name in s2["files"], name
+    assert client.get(f"/api/solves/{s['id']}/files/report.pdf").content[:4] == b"%PDF"
+    assert client.post("/api/solves/999999/exports").status_code == 404

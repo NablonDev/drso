@@ -554,6 +554,7 @@ export interface Manifest {
   created_at: string;
   corridor: { a: LonLat; b: LonLat; a_name: string; b_name: string; band_km: number };
   line: Record<string, unknown>;
+  exports_skipped?: boolean;
   [k: string]: unknown;
 }
 

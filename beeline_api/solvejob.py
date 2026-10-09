@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import subprocess
+from pathlib import Path
 from datetime import datetime, timezone
 
 import pyogrio
@@ -100,7 +101,9 @@ def run_solve_job(job: dict, rep: Reporter):
                      kv=run["kv"], circuit=run["circuit"], layers=inputs, a_name=run.get("a_name") or "A",
                      b_name=run.get("b_name") or "B", routes_wanted=run["routes_wanted"],
                      rule_overrides={k: {kk: vv for kk, vv in v.items()} for k, v in (run["rule_overrides"] or {}).items()},
-                     cost_overrides=run["cost_overrides"] or {}, dem_dir=settings.DEM_DIR)
+                     cost_overrides=run["cost_overrides"] or {}, dem_dir=settings.DEM_DIR,
+                     cache_dir=settings.DATA / "cache" / "rasters")
+    want_exports = bool((job.get("detail") or {}).get("exports", True))
 
     def prog(f, stage):
         rep(0.03 + 0.9 * f, stage)
@@ -109,14 +112,30 @@ def run_solve_job(job: dict, rep: Reporter):
         result = run_solve(inp, progress=prog, cancel=rep.cancelled)
     except EngineCancelled:
         raise Cancelled()
-    rep(0.94, "Writing exports", force=True)
+    rep(0.94, "Writing exports" if want_exports else "Saving the routes (exports skipped)", force=True)
     manifest = build_manifest(run, rls, result)
+    # the layer versions this solve used, so exports made later read the same data
+    manifest["layer_version_ids"] = {r["layer_key"]: r["layer_version_id"] for r in rls}
+    manifest["exports_skipped"] = not want_exports
     row = db.one("""insert into solves (run_id, job_id, feasible, result, manifest) values (%s,%s,%s,%s,%s)
                     returning id, created_at""", (run["id"], job["id"], result["feasible"], db.J(result), db.J(manifest)))
     out_dir = settings.RUNS_DIR / run["id"] / f"solve_{row['id']}"
-    # extracted layers ship with the export, source and confidence per feature
     out_dir.mkdir(parents=True, exist_ok=True)
+    files = []
+    if want_exports:
+        solve = {"id": row["id"], "created_at": row["created_at"].isoformat(), "result": result}
+        files = write_exports(run, solve, manifest, rls, out_dir)
+    db.exec_("update solves set out_dir=%s where id=%s", (str(out_dir), row["id"]))
+    status = "complete" if result["feasible"] else "blocked"
+    db.exec_("update runs set status=%s, latest_solve_id=%s, updated_at=now() where id=%s", (status, row["id"], run["id"]))
+    rep(1.0, "Routes ready" if result["feasible"] else "No viable route", detail={"solve_id": row["id"]}, force=True)
+    return {"solve_id": row["id"], "files": list(files)}
+
+
+def write_exports(run: dict, solve: dict, manifest: dict, rls: list[dict], out_dir: Path) -> list:
+    """layers.gpkg (extracted layers, source and confidence per feature) + the export set."""
     lg = out_dir / "layers.gpkg"
+    lg.unlink(missing_ok=True)
     for r in rls:
         g = layers.read_version(r["layer_version_id"])
         if len(g):
@@ -125,10 +144,26 @@ def run_solve_job(job: dict, rep: Reporter):
             g["model"] = r["model"]
             g["image_date"] = r["image_date"]
             pyogrio.write_dataframe(g, lg, layer=r["layer_key"], driver="GPKG")
-    solve = {"id": row["id"], "created_at": row["created_at"].isoformat(), "result": result}
-    files = exports.build_all(run, solve, manifest, out_dir)
-    db.exec_("update solves set out_dir=%s where id=%s", (str(out_dir), row["id"]))
-    status = "complete" if result["feasible"] else "blocked"
-    db.exec_("update runs set status=%s, latest_solve_id=%s, updated_at=now() where id=%s", (status, row["id"], run["id"]))
-    rep(1.0, "Routes ready" if result["feasible"] else "No viable route", detail={"solve_id": row["id"]}, force=True)
-    return {"solve_id": row["id"], "files": list(files)}
+    return list(exports.build_all(run, solve, manifest, out_dir))
+
+
+def exports_for_solve(sid: int) -> list:
+    """Exports for a solve made with exports skipped (quick test solve). Uses the layer versions the
+    solve recorded; the run's current layers when the solve predates that record."""
+    s = db.one("select * from solves where id=%s", (sid,))
+    if not s:
+        raise ValueError("solve not found")
+    run = db.one("select * from runs where id=%s", (s["run_id"],))
+    rls = layers.run_layers(run["id"])
+    used = (s["manifest"] or {}).get("layer_version_ids") or {}
+    for r in rls:
+        if r["layer_key"] in used:
+            r["layer_version_id"] = used[r["layer_key"]]
+    out_dir = Path(s["out_dir"]) if s["out_dir"] else settings.RUNS_DIR / run["id"] / f"solve_{sid}"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    manifest = dict(s["manifest"] or {})
+    manifest["exports_skipped"] = False
+    solve = {"id": sid, "created_at": s["created_at"].isoformat(), "result": s["result"]}
+    files = write_exports(run, solve, manifest, rls, out_dir)
+    db.exec_("update solves set out_dir=%s, manifest=%s where id=%s", (str(out_dir), db.J(manifest), sid))
+    return files

@@ -1,9 +1,10 @@
 import { useMemo, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useRunCtx } from "../App";
-import { fileUrl, useSolve } from "../api/hooks";
+import { apiCalls, fileUrl, qk, useApiMutation, useSolve } from "../api/hooks";
 import type { Solve } from "../api/types";
 import CopyDialog from "../components/CopyDialog";
-import { ErrorNote, Head, Loading } from "../components/ui";
+import { Btn, ErrorNote, Head, Loading } from "../components/ui";
 import { corridorName, int, num } from "../lib/format";
 import { useSelectedRoute } from "../store/selection";
 
@@ -53,6 +54,12 @@ function Body({ s }: { s: Solve }) {
   const [pick, setPick] = useState<number | "all">(selId);
   const [copy, setCopy] = useState(false);
   const files = useMemo(() => new Set(s.files), [s.files]);
+  const qc = useQueryClient();
+  const make = useApiMutation<Solve, void>({
+    mutationFn: () => apiCalls.makeExports(s.id),
+    errorTitle: "Exports not made",
+    onSuccess: (d) => qc.setQueryData(qk.solve(run.id, s.id), d),
+  });
   const routes = s.result.routes;
   const r = routes.find((x) => x.id === (pick === "all" ? selId : pick)) ?? routes[0];
   const allZip = s.files.find((f) => f.endsWith("_all.zip")) ?? `${run.id}_all.zip`;
@@ -86,6 +93,18 @@ function Body({ s }: { s: Solve }) {
         {corridorName(run)} · rev {run.rev}
         {r ? ` · ${num(r.stats.length_km, 1)} km · ${int(r.stats.towers)} towers` : ""}.
       </Head>
+
+      {s.manifest.exports_skipped ? (
+        <div className="card" style={{ marginBottom: 14 }} data-testid="exports-skipped">
+          <div className="cb row" style={{ justifyContent: "space-between", gap: 12 }}>
+            <div className="hint" style={{ margin: 0 }}>
+              This was a quick test solve — the export files were not written. Make them now from the same solve (about half a minute).
+            </div>
+            <Btn pending={make.isPending} onClick={() => make.mutate()}>Generate exports</Btn>
+          </div>
+          <ErrorNote error={make.error} />
+        </div>
+      ) : null}
 
       <div className="card" style={{ borderColor: "var(--accent-line)", marginBottom: 14 }}>
         <div className="cb">

@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import logging
 import math
+import threading
 import time
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -58,6 +60,7 @@ class SolveInput:
     rule_overrides: dict = field(default_factory=dict)
     cost_overrides: dict = field(default_factory=dict)
     dem_dir: Path | None = None
+    cache_dir: Path | None = None      # on-disk raster cache (masks / distance fields), None = off
 
 
 # ----------------------------------------------------------------------------------------
@@ -71,11 +74,11 @@ class FeatureIndex:
             if li.gdf is None or not len(li.gdf):
                 continue
             g = li.gdf.to_crs(frame.epsg)
-            for geom, cls, name, conf in zip(g.geometry, g["class"], g.get("name", [None] * len(g)),
-                                             g.get("confidence", [None] * len(g))):
+            fgs = frame.geoms_utm_to_frame(np.asarray(g.geometry.values))
+            for geom, fg, cls, name, conf in zip(g.geometry, fgs, g["class"], g.get("name", [None] * len(g)),
+                                                 g.get("confidence", [None] * len(g))):
                 if geom is None or geom.is_empty:
                     continue
-                fg = frame.geom_utm_to_frame(geom)
                 label = name if isinstance(name, str) and name.strip() else cls.replace("_", " ")
                 c = conf if conf is not None and not (isinstance(conf, float) and math.isnan(conf)) else li.confidence
                 self.items.append({"layer": key, "layer_name": layer_names.get(key, key), "class": cls,
@@ -105,6 +108,26 @@ class FeatureIndex:
         it = dict(self.items[best])
         it["_idx"] = int(best)
         return it, bd
+
+
+_FINDEX_CACHE: dict = {}       # in-process: (frame, layer fingerprints) -> FeatureIndex (last 2 kept)
+
+
+def _feature_index(frame: Frame, layers: dict[str, LayerInput], layer_names: dict[str, str]) -> FeatureIndex:
+    """FeatureIndex reused across solves of the same corridor while the layers are unchanged."""
+    from .rastercache import geometry_fingerprint
+    key = (round(frame.A[0], 2), round(frame.A[1], 2), round(frame.B[0], 2), round(frame.B[1], 2),
+           round(frame.half_width_m, 2), frame.epsg,
+           tuple(sorted((k, li.mode, li.source, li.confidence, geometry_fingerprint(li.gdf, None))
+                        for k, li in layers.items())),
+           tuple(sorted(layer_names.items())))
+    fi = _FINDEX_CACHE.get(key)
+    if fi is None:
+        fi = FeatureIndex(frame, layers, layer_names)
+        while len(_FINDEX_CACHE) >= 2:
+            _FINDEX_CACHE.pop(next(iter(_FINDEX_CACHE)))
+        _FINDEX_CACHE[key] = fi
+    return fi
 
 
 def _source(it: dict | None, layers: dict[str, LayerInput]) -> dict | None:
@@ -160,6 +183,12 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
         from shapely.geometry import Point as _Pt
         ap_zone = unary_union([_Pt(0.0, 0.0).buffer(ap_len), _Pt(frame.length_m, 0.0).buffer(ap_len)])
 
+    raster_cache = None
+    if inp.cache_dir is not None:
+        from .rastercache import RasterCache
+        raster_cache = RasterCache(inp.cache_dir, frame)
+    shared = {"R": None}       # one rasterizer for every compile: masks / distances depend on layers only
+
     def _compile(relaxed: bool = False):
         def one(half_width, chw_ref):
             return compile_rules(frame, gdfs, rules, costs, inp.kv, half_width, endpoints_go_radius_m=go_radius,
@@ -168,8 +197,10 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
                                  gantry_buffer_m=float(rules["substations"].params.get("gantry_buffer_m", 10)),
                                  raster_margin_m=float(eng["grid"].get("raster_margin_m", 0.0)),
                                  angle_tower_rules=tuple(eng["crossings"].get("angle_tower_rules") or ()),
-                                 relaxed=relaxed, chw_ref_m=chw_ref)
+                                 relaxed=relaxed, chw_ref_m=chw_ref, rasterizer=shared["R"],
+                                 raster_cache=raster_cache)
         c = one(hw, None)
+        shared["R"] = c.rasterizer
         if ap_zone is not None and ap_hw < hw:
             c = merge_approach(c, one(ap_hw, hw), ap_zone)
         elif ap_zone is not None:
@@ -177,6 +208,8 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
         return c
     comp = _compile()
     timings["compile_s"] = round(time.time() - t, 2)
+    if raster_cache is not None:
+        timings["raster_cache"] = {"hits": raster_cache.hits, "misses": raster_cache.misses}
     check_cancel()
 
     # DEM
@@ -252,73 +285,97 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
                     section_spans=int(rules["section_interval"].params.get("plain_spans") or 0) or None,
                     hilly_section_spans=int(rules["section_interval"].params.get("hilly_spans") or 0) or None)
 
-    findex = FeatureIndex(frame, inp.layers, layer_names)
+    t = time.time()
+    findex = _feature_index(frame, inp.layers, layer_names)
+    timings["feature_index_s"] = round(time.time() - t, 2)
     rule_layer = {r.id: r.layer for r in rules.values()}
     global_events = _global_events(inp, frame, rules, comp, findex, layer_names, rule_layer, dem, dem_note)
 
     variants = eng["routes"][: max(1, min(4, inp.routes_wanted))]
-    routes = []
-    prev_lines = []
-    lines_by_id: dict[int, LineString] = {}
-    blocked_first = None
-    comp_relaxed = None
     n_var = len(variants)
-    for vi, var in enumerate(variants):
+    workers = _route_workers(eng, n_var)
+    timings["route_workers"] = workers
+    relaxed_lock = threading.Lock()
+    relaxed_box: dict = {}
+    frac_by: dict[int, float] = {}
+    stage_by: dict[int, str] = {}
+    prog_lock = threading.Lock()
+
+    def vprog(vi, f, stage):
+        # one progress bar over all routes; with parallel routes the stage names the routes in flight
+        with prog_lock:
+            frac_by[vi] = f
+            stage_by[vi] = stage
+            done = sum(frac_by.values()) / n_var
+            live = [k for k in sorted(stage_by) if frac_by[k] < 1.0]
+            text = stage if workers == 1 or len(live) <= 1 else \
+                "Solving routes " + ", ".join(str(variants[k]["id"]) for k in live)
+            prog(0.15 + 0.8 * done, text)
+
+    def compiled_relaxed():
+        with relaxed_lock:
+            if "c" not in relaxed_box:
+                c = _compile(relaxed=True)
+                if terrain:
+                    attach_terrain(c, dem, float(eng["spotting"].get("hilly_slope_deg", 10)))
+                relaxed_box["c"] = c
+            return relaxed_box["c"]
+
+    futures: list = []
+
+    def wait_line(vi_other):
+        """Result of an earlier route (blocks until it is done; earlier routes always start first)."""
+        return futures[vi_other].result()
+
+    def run_variant(vi, var):
         check_cancel()
-        frac0 = 0.15 + 0.8 * vi / n_var
-        span_frac = 0.8 / n_var
-        prog(frac0, f"Solving route {var['id']} — {var['name']}")
+        vprog(vi, 0.0, f"Solving route {var['id']} — {var['name']}")
         p = _variant_params(base, var, design)
         cv = comp
         if var.get("relaxed"):
             # Relaxed route: the last-resort relaxations of Rule_Table column N, all at once
-            if comp_relaxed is None:
-                prog(frac0, f"Compiling the relaxed rules — route {var['id']}")
-                comp_relaxed = _compile(relaxed=True)
-                if terrain:
-                    attach_terrain(comp_relaxed, dem, float(eng["spotting"].get("hilly_slope_deg", 10)))
-            cv = comp_relaxed
+            vprog(vi, 0.0, f"Compiling the relaxed rules — route {var['id']}")
+            cv = compiled_relaxed()
 
-        def sub(f, _f0=frac0, _sf=span_frac, _v=var):
-            prog(_f0 + _sf * 0.7 * f, f"Solving route {_v['id']} — {_v['name']}")
+        def sub(f, _vi=vi, _v=var):
+            vprog(_vi, 0.7 * f, f"Solving route {_v['id']} — {_v['name']}")
 
         t = time.time()
         diversity_ev = None
         apart = var.get("apart_from")
-        if apart and apart in lines_by_id:
+        apart_vi = next((i for i, v in enumerate(variants[:vi]) if v["id"] == apart), None) if apart else None
+        apart_line = wait_line(apart_vi).get("line") if apart_vi is not None else None
+        if apart_line is not None:
             # second least cost: least cost kept out of route `apart_from`'s corridor
-            p.extra_strip_rs_per_m = _penalty_raster(cv, [lines_by_id[apart]], eng["diversity"])
+            p.extra_strip_rs_per_m = _penalty_raster(cv, [apart_line], eng["diversity"])
             diversity_ev = event("APART_FROM", {"route": var["id"], "other": apart})
         out = solve(cv, p, cancel_check=check_cancel, progress=sub)
         solve_s = time.time() - t
-        if out.feasible and prev_lines and not apart and not var.get("relaxed"):
-            line = _outcome_line(out)
-            overlap, other = _max_overlap(line, prev_lines, eng["diversity"]["corridor_m"])
-            if overlap > 1 - eng["diversity"]["min_distinct_fraction"]:
-                pen = _penalty_raster(cv, prev_lines, eng["diversity"])
-                p.extra_strip_rs_per_m = pen
-                out2 = solve(cv, p, cancel_check=check_cancel, progress=sub)
-                if out2.feasible:
-                    out = out2
-                    diversity_ev = event("DIVERSITY", {"route": var["id"], "overlap_pct": overlap * 100,
-                                                       "other": other + 1})
-                solve_s = time.time() - t
+        if out.feasible and vi > 0 and not apart and not var.get("relaxed"):
+            # every earlier route's line, in route order (as the one-at-a-time loop saw them)
+            prev_lines = [ln for ln in (wait_line(j).get("line") for j in range(vi)) if ln is not None]
+            if prev_lines:
+                line = _outcome_line(out)
+                overlap, other = _max_overlap(line, prev_lines, eng["diversity"]["corridor_m"])
+                if overlap > 1 - eng["diversity"]["min_distinct_fraction"]:
+                    pen = _penalty_raster(cv, prev_lines, eng["diversity"])
+                    p.extra_strip_rs_per_m = pen
+                    out2 = solve(cv, p, cancel_check=check_cancel, progress=sub)
+                    if out2.feasible:
+                        out = out2
+                        diversity_ev = event("DIVERSITY", {"route": var["id"], "overlap_pct": overlap * 100,
+                                                           "other": other + 1})
+                    solve_s = time.time() - t
         if not out.feasible:
-            # the band is closed under this route's rules; the relaxed route may still get through
-            if blocked_first is None:
-                blocked_first = _blocked(inp, frame, cv, out, findex, rules)
-            global_events.append(event("ROUTE_NOT_FOUND", {"route": var["id"], "name": var["name"],
-                                                           "why": blocked_first["event"]["text"]}))
-            continue
-        prog(frac0 + span_frac * 0.75, f"Spotting towers — route {var['id']}")
+            vprog(vi, 1.0, f"Route {var['id']} not found")
+            return {"var": var, "out": out, "cv": cv, "line": None}
+        vprog(vi, 0.75, f"Spotting towers — route {var['id']}")
         pts = [out.grid.site_xy(c, r) for c, r in out.sites]
         pts = [(float(x), float(y)) for x, y in pts]
         t = time.time()
         sr = spot(cv, pts, sp, dem=dem)
         spot_s = time.time() - t
         line = LineString([(tw.x, tw.y) for tw in sr.towers])
-        prev_lines.append(line)
-        lines_by_id[var["id"]] = line
         _approvals(sr, cv, rules)
         evs = _route_events(sr, frame, cv, findex, rules, sp, layer_names, inp, dem,
                             [e for e in global_events if e["type"] == "BEELINE_BLOCKER"])
@@ -326,7 +383,38 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
             evs.append(event("APPROVAL", a, chainage_km=None))
         if diversity_ev:
             evs.insert(0, diversity_ev)
-        routes.append(_route_json(var, sr, frame, evs, solve_s, spot_s, out))
+        vprog(vi, 1.0, f"Route {var['id']} done")
+        return {"var": var, "out": out, "cv": cv, "line": line,
+                "route": _route_json(var, sr, frame, evs, solve_s, spot_s, out)}
+
+    if workers <= 1:
+        for vi, var in enumerate(variants):
+            fut = Future()
+            futures.append(fut)
+            fut.set_result(run_variant(vi, var))
+    else:
+        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="route") as ex:
+            for vi, var in enumerate(variants):
+                futures.append(ex.submit(_on_own_stream, run_variant, vi, var))
+            try:
+                for f in futures:
+                    f.result()
+            except BaseException:
+                for f in futures:
+                    f.cancel()
+                raise
+    routes = []
+    blocked_first = None
+    for f in futures:
+        res = f.result()
+        if res["line"] is None:
+            # the band is closed under this route's rules; the relaxed route may still get through
+            if blocked_first is None:
+                blocked_first = _blocked(inp, frame, res["cv"], res["out"], findex, rules)
+            global_events.append(event("ROUTE_NOT_FOUND", {"route": res["var"]["id"], "name": res["var"]["name"],
+                                                           "why": blocked_first["event"]["text"]}))
+        else:
+            routes.append(res["route"])
     if not routes:
         prog(1.0, "No viable route")
         return {"feasible": False, "blocked": blocked_first, "routes": [], "events_global": global_events,
@@ -338,6 +426,34 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
             "frame": _frame_info(frame), "rules_fired": comp.rules_fired,
             "line": {"kv": inp.kv, "circuit": inp.circuit, "half_width_m": hw, "design_span_m": design,
                      "span_min_m": smin, "span_max_m": smax}}
+
+
+def _on_own_stream(fn, *a):
+    """Run fn on a CUDA stream of its own (the default stream is shared by every thread, which
+    would serialise the searches' kernels)."""
+    import torch
+    if not torch.cuda.is_available():
+        return fn(*a)
+    with torch.cuda.stream(torch.cuda.Stream()):
+        return fn(*a)
+
+
+def _route_workers(eng: dict, n_var: int) -> int:
+    """How many routes to search at once. Parallel only on a GPU with enough free memory
+    (engine.yaml parallel_routes); the CPU parts of one route then overlap another's search."""
+    cfg = eng.get("parallel_routes") or {}
+    n = min(int(cfg.get("max_workers", 1) or 1), n_var)
+    if n <= 1:
+        return 1
+    try:
+        import torch
+        if not torch.cuda.is_available():
+            return 1
+        free, _total = torch.cuda.mem_get_info()
+    except Exception:
+        return 1
+    per = float(cfg.get("gpu_gb_per_route", 8)) * 1024 ** 3
+    return max(1, min(n, int(free // per)))
 
 
 def _long_ext_steps(tsd: dict) -> tuple:

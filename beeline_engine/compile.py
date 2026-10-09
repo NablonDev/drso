@@ -131,6 +131,7 @@ class Compiled:
     terminal_yards: object = None
     relaxed: bool = False                    # compiled for the Relaxed route (last-resort rules opened)
     approach_zone: object = None             # frame polygon of the approach sections (None = none)
+    rasterizer: object = None                # the _Rasterizer, reused by further compiles of the same layers
     # last-resort relaxations taken in this compile: (VecRule of what was opened, approval months, label)
     relaxed_items: list = field(default_factory=list)
     # terrain on the rule raster grid (set by attach_terrain; None = no DEM)
@@ -160,21 +161,33 @@ def attach_terrain(comp: "Compiled", dem, hilly_slope_deg: float) -> None:
 
 # ----------------------------------------------------------------------------------------
 def _to_frame(frame: Frame, gdf: gpd.GeoDataFrame) -> gpd.GeoSeries:
+    """UTM → frame coordinates for a whole layer at once (one vectorised coordinate transform;
+    per-geometry shapely affinity calls took ~1 min on 250k features)."""
     utm = gdf.geometry.to_crs(frame.epsg)
-    return utm.apply(frame.geom_utm_to_frame)
+    return gpd.GeoSeries(frame.geoms_utm_to_frame(np.asarray(utm.values)), index=utm.index)
 
 
 class _Rasterizer:
     """Caches per-(layer, classes) feature masks and distance transforms."""
 
-    def __init__(self, frame: Frame, layers: dict[str, gpd.GeoDataFrame]):
+    def __init__(self, frame: Frame, layers: dict[str, gpd.GeoDataFrame], cache=None):
         self.frame = frame
         self.layers = layers
         self.shape = (frame.height, frame.width)
         self._mask: dict = {}
         self._dist: dict = {}
+        self._angle: dict = {}
         self._frame_geoms: dict = {}
+        self._fp: dict = {}
         self.base_layer: dict = {}        # filtered key -> source layer key
+        self.cache = cache                # RasterCache (on disk, across solves) or None
+
+    def fingerprint(self, layer, classes) -> str:
+        from .rastercache import geometry_fingerprint
+        key = (layer, tuple(classes or ()))
+        if key not in self._fp:
+            self._fp[key] = geometry_fingerprint(self.subset(layer, classes), classes)
+        return self._fp[key]
 
     def by_voltage(self, layer: str, min_kv: float, at_least: bool) -> str:
         """Key of a copy of `layer` holding only features whose attrs.voltage_kv is >= min_kv
@@ -237,6 +250,10 @@ class _Rasterizer:
 
     def mask(self, layer, classes) -> np.ndarray | None:
         key = (layer, tuple(classes or ()))
+        if key not in self._mask and self.cache is not None and self.subset(layer, classes) is not None:
+            m, found = self.cache.get_mask(self.fingerprint(layer, classes), self.shape)
+            if found:
+                self._mask[key] = m
         if key not in self._mask:
             g = self.subset(layer, classes)
             if g is None:
@@ -247,6 +264,8 @@ class _Rasterizer:
                 m = rfeatures.rasterize(shapes, out_shape=self.shape, transform=self.frame.transform,
                                         fill=0, all_touched=True, dtype="uint8") if shapes else None
                 self._mask[key] = None if m is None or not m.any() else m.astype(bool)
+                if self.cache is not None:
+                    self.cache.put_mask(self.fingerprint(layer, classes), self._mask[key])
         return self._mask[key]
 
     def buffer_mask(self, layer, classes, d: float) -> np.ndarray | None:
@@ -266,17 +285,51 @@ class _Rasterizer:
     def dist(self, layer, classes) -> np.ndarray | None:
         """Distance (m) from each cell to the nearest feature cell."""
         key = (layer, tuple(classes or ()))
+        from .rastercache import dist_from_sq, sq_pixels
+        if key not in self._dist and self.cache is not None and self.subset(layer, classes) is not None:
+            sq, found = self.cache.get_dist(self.fingerprint(layer, classes))
+            if found:
+                self._dist[key] = None if sq is None else dist_from_sq(sq, self.frame.res_m)
         if key not in self._dist:
             m = self.mask(layer, classes)
-            self._dist[key] = None if m is None else (
-                ndimage.distance_transform_edt(~m).astype(np.float32) * self.frame.res_m)
+            if m is None:
+                self._dist[key] = None
+                sq = None
+            else:
+                e = ndimage.distance_transform_edt(~m)
+                self._dist[key] = e.astype(np.float32) * self.frame.res_m
+                sq = sq_pixels(e) if self.cache is not None else None
+            if self.cache is not None and self.subset(layer, classes) is not None:
+                self.cache.put_dist(self.fingerprint(layer, classes), sq)
         return self._dist[key]
 
     def angle_nearest(self, layer, classes, within_m: float) -> np.ndarray | None:
-        """Direction (deg in [0,180)) of the nearest line segment, for cells within `within_m`."""
+        """Direction (deg in [0,180)) of the nearest line segment, for cells within `within_m`.
+        The unthresholded field is cached (memory and disk); the threshold is applied per call."""
         g = self.subset(layer, classes)
         if g is None:
             return None
+        key = (layer, tuple(classes or ()))
+        if key not in self._angle:
+            hit = None
+            if self.cache is not None:
+                ang, sq, found = self.cache.get_angle(self.fingerprint(layer, classes))
+                if found:
+                    hit = (ang, sq)
+            if hit is None:
+                hit = self._angle_field(g)
+                if self.cache is not None:
+                    self.cache.put_angle(self.fingerprint(layer, classes), *hit)
+            self._angle[key] = hit
+        ang, sq = self._angle[key]
+        if ang is None:
+            return None
+        out = ang.copy()
+        out[np.sqrt(sq.astype(np.float64)) * self.frame.res_m > within_m] = np.nan   # float64, as before caching
+        return out
+
+    def _angle_field(self, g):
+        """(nearest-segment direction deg, squared pixel distance) over the whole raster, unthresholded."""
         utm = g.geometry.to_crs(self.frame.epsg)
         shapes = []
         for geom in utm:
@@ -285,16 +338,16 @@ class _Rasterizer:
                 ang = (ang - math.degrees(self.frame.bearing_rad)) % 180.0
                 shapes.append((LineString([seg_start, seg_end]), ang + 1.0))  # +1 so 0 means empty
         if not shapes:
-            return None
+            return None, None
         ang_r = rfeatures.rasterize(shapes, out_shape=self.shape, transform=self.frame.transform,
                                     fill=0, all_touched=True, dtype="float32")
         feat = ang_r > 0
         if not feat.any():
-            return None
+            return None, None
+        from .rastercache import sq_pixels
         d, idx = ndimage.distance_transform_edt(~feat, return_indices=True)
-        out = ang_r[idx[0], idx[1]] - 1.0
-        out[d * self.frame.res_m > within_m] = np.nan
-        return out.astype(np.float32)
+        out = (ang_r[idx[0], idx[1]] - 1.0).astype(np.float32)
+        return out, sq_pixels(d)
 
 
 def _segments(geom):
@@ -414,7 +467,7 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
                   design_span_m: float = 400.0, single_angle_tol_deg: float = 15.0,
                   gantry_buffer_m: float = 10.0, raster_margin_m: float = 0.0,
                   angle_tower_rules: tuple[str, ...] = (), relaxed: bool = False,
-                  chw_ref_m: float | None = None) -> Compiled:
+                  chw_ref_m: float | None = None, rasterizer=None, raster_cache=None) -> Compiled:
     # Terminal yards: the substation(s) the line starts / ends in. They are carved out of the
     # substation rule; the yard (+ gantry buffer) and the go-zone disc are clear for the conductor,
     # and no tower may stand inside the yard other than the dead-end towers at A and B.
@@ -435,7 +488,7 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
     zone = unary_union([Point(0, 0).buffer(go_r), Point(frame.length_m, 0).buffer(go_r)]
                        + [y.buffer(gantry_buffer_m) for y in yards_frame])
     yards = unary_union(yards_frame) if yards_frame else None
-    R = _Rasterizer(frame, layers)
+    R = rasterizer if rasterizer is not None else _Rasterizer(frame, layers, cache=raster_cache)
     shape = R.shape
     tower_forbidden = np.zeros(shape, bool)
     angle_forbidden = np.zeros(shape, bool)
@@ -852,7 +905,8 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
                     half_width_m=hw, conductor_rs_per_m=conductor_rs_per_m,
                     tower_nogo=tower_geoms, angle_nogo=angle_geoms,
                     conductor_nogo=cond_geoms, rules_fired=fired, costs=costs,
-                    terminal_zone=zone, terminal_yards=yards, relaxed=relaxed, relaxed_items=relaxed_items)
+                    terminal_zone=zone, terminal_yards=yards, relaxed=relaxed, relaxed_items=relaxed_items,
+                    rasterizer=R)
 
 
 def _airport_zone(R: "_Rasterizer", frame: Frame, layer: str, classes, d: float, funnel_m: float):

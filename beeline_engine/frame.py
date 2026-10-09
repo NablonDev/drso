@@ -94,6 +94,17 @@ class Frame:
     def geom_to_lonlat(self, g):
         return shp_transform(self._inv.transform, g)
 
+    def geoms_utm_to_frame(self, geoms):
+        """Vectorised geom_utm_to_frame over an array of shapely geometries (one coordinate pass)."""
+        import shapely
+        u, v, a = self.u, self.v, self.A
+
+        def f(xy):
+            dx = xy[:, 0] - a[0]
+            dy = xy[:, 1] - a[1]
+            return np.column_stack([dx * u[0] + dy * u[1], dx * v[0] + dy * v[1]])
+        return shapely.transform(np.asarray(geoms, dtype=object), f)
+
     def geom_utm_to_frame(self, g):
         # translate then rotate by -bearing about origin
         g = affinity.translate(g, -self.A[0], -self.A[1])
