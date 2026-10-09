@@ -220,7 +220,7 @@ groups:
       # (5 Oct 2026). Counted as rule 30 — switchable like any other.
       - id: protected_areas
         name: "National park and wildlife sanctuary"
-        note: "Rule_Table 69-72: crossable with forest diversion approval — ≤ 5 ha Regional Office (6 months), ≤ 40 ha REC (12), > 40 ha Conservator (18). Eco-sensitive zones and the international border are No-Go (Vivek, 8 Oct 2026) but have no data layer yet"
+        note: "No-Go for every route, the relaxed route included (Vivek, 9 Oct 2026). Only 'Learn from existing lines' may open a sanctuary or park that existing towers already stand in — then with forest diversion approval by area (Rule_Table 69-72: ≤ 5 ha Regional Office 6 months, ≤ 40 ha REC 12, > 40 ha Conservator 18). Eco-sensitive zones and the international border are No-Go but have no data layer yet"
         # forest package: national parks + sanctuaries + reserve forest inside them; no ESZ delivered yet
         layer: national_park
         also_layers: [wildlife_sanctuary, forest_in_pa]
@@ -228,7 +228,7 @@ groups:
         params:
           - {key: tower_setback_m, label: "Tower buffer", type: num, unit: m, value: 0}
           - {key: conductor_buffer_m, label: "Conductor buffer", type: num, unit: m, value: 0}
-          - {key: treatment, label: "Treatment", type: sel, value: "Allowed", options: ["No-Go", "Allowed"]}
+          - {key: treatment, label: "Treatment", type: sel, value: "No-Go", options: ["No-Go", "Allowed"]}
 
       # Not in the prototype's 29; added 6 Oct 2026 with the CRZ layer (Vivek: sea + 500 m of land
       # No-Go, no CRZ cost). Counted as rule 34. The 500 m is measured from the edge of the
@@ -592,6 +592,25 @@ groups:
           - {key: half_width_m, label: "Approach half-width (RoW / 2)", type: num, unit: m, value: {765: 27, 400: 19, 220: 12, 132: 9.5}}
           - {key: span_m, label: "Approach maximum span", type: num, unit: m, value: {765: 250, 400: 250, 220: 200, 132: 150}}
           - {key: go_zone_m, label: "Go zone round each gantry", type: num, unit: m, value: 500}
+
+      # Soft rules (Vivek, 9 Oct 2026): they steer the search, never the reported cost.
+      - id: existing_line_proximity
+        name: "Stay close to existing lines (search only)"
+        note: "Spans within the set distance of an existing line or tower of at least the set voltage get a discount on their line and RoW cost in the search and the tower spotting — the route is pulled towards existing corridors. The reported cost of every route is the true cost, without the discount. Parallel-spacing and crossing rules still apply."
+        layer: power
+        mechanism: soft
+        params:
+          - {key: distance_m, label: "Within", type: num, unit: m, value: 1000}
+          - {key: discount_pct, label: "Search discount", type: num, unit: "%", value: 20}
+          - {key: min_kv, label: "Existing lines from", type: num, unit: kV, value: 220}
+
+      - id: precedent_easing
+        name: "Learn from existing lines"
+        note: "Used only when a route finds no feasible path under its rules: a restricted polygon that existing power towers already stand in (a wetland, pond, lake, reservoir, coastal water, CRZ zone, salt pan, forest, wildlife sanctuary or national park) is opened for that route, that polygon only. Crossing rules (rivers, roads, lines) and built-up, substation, airport, defence, monument and dam rules are never eased. Each eased polygon is listed with the route; a sanctuary, park or forest needs forest diversion approval by area."
+        layer: power
+        mechanism: soft
+        params:
+          - {key: treatment, label: "When no route is found", type: sel, value: "Ease", options: ["Ease", "Off"]}
 
       - id: tower_type_bands
         name: "Tower type by deviation"

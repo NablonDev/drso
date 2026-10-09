@@ -134,6 +134,8 @@ class Compiled:
     rasterizer: object = None                # the _Rasterizer, reused by further compiles of the same layers
     go_overlap: list = field(default_factory=list)   # VecRules still checked inside the go zone (overlap only)
     go_conductor: list = field(default_factory=list)  # conductor VecRules kept in the go zone (>= 220 kV crossings)
+    precedent_items: list = field(default_factory=list)  # polygons opened by "learn from existing lines"
+    near_existing: np.ndarray | None = None  # bool raster: within reach of an existing line (search discount)
     # last-resort relaxations taken in this compile: (VecRule of what was opened, approval months, label)
     relaxed_items: list = field(default_factory=list)
     # terrain on the rule raster grid (set by attach_terrain; None = no DEM)
@@ -182,7 +184,30 @@ class _Rasterizer:
         self._frame_geoms: dict = {}
         self._fp: dict = {}
         self.base_layer: dict = {}        # filtered key -> source layer key
+        self.eased: dict = {}             # precedent key -> polygons opened by existing towers
         self.cache = cache                # RasterCache (on disk, across solves) or None
+
+    def precedent(self, layer: str, towers) -> str:
+        """Key of a copy of `layer` without the polygons an existing tower (UTM points) stands in;
+        the removed polygons are kept in self.eased[key]."""
+        key = f"{layer}|precedent"
+        if key not in self.layers:
+            g = self.layers.get(layer)
+            self.eased[key] = None
+            if g is None or not len(g) or towers is None or not len(towers):
+                self.layers[key] = g
+            else:
+                from shapely import STRtree
+                utm = np.asarray(g.geometry.to_crs(self.frame.epsg).values)
+                poly = np.array([x is not None and x.geom_type in ("Polygon", "MultiPolygon") for x in utm])
+                pairs = STRtree(towers).query(utm, predicate="contains")
+                hit = np.zeros(len(g), bool)
+                hit[np.unique(pairs[0])] = True
+                hit &= poly
+                self.layers[key] = g[~hit]
+                self.eased[key] = g[hit] if hit.any() else None
+            self.base_layer[key] = self.base_layer.get(layer, layer)
+        return key
 
     def fingerprint(self, layer, classes) -> str:
         from .rastercache import geometry_fingerprint
@@ -371,6 +396,12 @@ def _segments(geom):
 
 RASTER_MARGIN_M = 0.0  # set by compile_rules from the raster resolution
 GO_ZONE_CROSSING_KV = 220.0   # go zone: crossings of existing lines from this voltage up keep their rules
+# "Learn from existing lines" (9 Oct 2026): layers whose polygons an existing tower may open, and the
+# rule mechanisms that are eased (crossing rules never are)
+PRECEDENT_LAYERS = {"wet_land", "pond", "lake", "reservoir", "other_water", "crz", "salt_pans",
+                    "reserve_forest", "social_forest", "forest_in_pa", "national_park", "wildlife_sanctuary"}
+PRECEDENT_PA_LAYERS = {"reserve_forest", "social_forest", "forest_in_pa", "national_park", "wildlife_sanctuary"}
+PRECEDENT_MECHANISMS = {"nogo", "landclass", "wetland", "tower_setback"}
 
 
 def _within(dist: np.ndarray | None, d: float) -> np.ndarray | None:
@@ -471,7 +502,7 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
                   gantry_buffer_m: float = 10.0, raster_margin_m: float = 0.0,
                   angle_tower_rules: tuple[str, ...] = (), relaxed: bool = False,
                   chw_ref_m: float | None = None, rasterizer=None, raster_cache=None,
-                  terminal_yard_radius_m: float | None = None) -> Compiled:
+                  terminal_yard_radius_m: float | None = None, precedent_towers=None) -> Compiled:
     # Terminal yards: the substation(s) the line starts / ends in. They are carved out of the
     # substation rule; the yard (+ gantry buffer) and the go-zone disc are clear for the conductor,
     # and no tower may stand inside the yard other than the dead-end towers at A and B.
@@ -500,6 +531,7 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
     angle_forbidden = np.zeros(shape, bool)
     conductor_forbidden = np.zeros(shape, bool)
     fired: dict[str, int] = {}
+    precedent_items: dict = {}                                 # layer -> eased polygons (learn from existing lines)
     go_hv_near = np.zeros((frame.height, frame.width), bool)   # cells next to a >= 220 kV line
     go_hv_bans: list = []                                      # UTM pieces of those lines near their towers
     go_conductor: list = []
@@ -571,6 +603,24 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
             from dataclasses import replace as _replace
             r = _replace(r, layer=R.filtered(r.layer, float(p["min_area_m2"])))
         m = r.mechanism
+        if precedent_towers is not None and m in PRECEDENT_MECHANISMS:
+            # learn from existing lines: polygons existing towers stand in are opened (9 Oct 2026)
+            from dataclasses import replace as _replace
+
+            def _eased(lyr):
+                if lyr is None or R.base_layer.get(lyr, lyr) not in PRECEDENT_LAYERS:
+                    return lyr
+                k = R.precedent(lyr, precedent_towers)
+                ez = R.eased.get(k)
+                base = R.base_layer.get(lyr, lyr)
+                if ez is not None and base not in precedent_items:
+                    names = sorted({str(n) for n in ez.get("name", []) if isinstance(n, str) and n.strip()})
+                    precedent_items[base] = {
+                        "layer": base, "rule": r.id, "n": int(len(ez)), "names": names[:5],
+                        "vr": VecRule(r.id, base, [x for x in _to_frame(frame, ez) if x is not None], 0.0),
+                        "protected": base in PRECEDENT_PA_LAYERS}
+                return k
+            r = _replace(r, layer=_eased(r.layer), also_layers=[_eased(x) for x in (r.also_layers or [])] or r.also_layers)
         if m == "conductor_clearance":
             # Horizontal clearance is the per-voltage figure (no per-33 kV increment on top of it)
             # and is measured from the outer phase, which sits outer_phase_m from the line axis
@@ -897,6 +947,17 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
 
     conductor_rs_per_m = float(costs["line_rs_per_m"])
 
+    # ---- soft: near an existing line (search-only discount, 9 Oct 2026) -------------------
+    near_existing = None
+    pr = rules.get("existing_line_proximity")
+    if pr is not None and pr.enabled and float(pr.params.get("discount_pct", 0) or 0) > 0:
+        reach = float(pr.params.get("distance_m", 1000))
+        mkv = float(pr.params.get("min_kv", 220))
+        for lyr in ("power", "power_lt"):
+            d = R.dist(R.by_voltage(lyr, mkv, True), ["power_line", "power_tower"])
+            if d is not None:
+                near_existing = (d <= reach) if near_existing is None else (near_existing | (d <= reach))
+
     # ---- terminal zone (gantry go-zone + terminal yards) --------------------------------
     go_overlap: list = []
     if not zone.is_empty:
@@ -973,7 +1034,8 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
                     tower_nogo=tower_geoms, angle_nogo=angle_geoms,
                     conductor_nogo=cond_geoms, rules_fired=fired, costs=costs,
                     terminal_zone=zone, terminal_yards=yards, relaxed=relaxed, relaxed_items=relaxed_items,
-                    rasterizer=R, go_overlap=go_overlap, go_conductor=go_conductor)
+                    rasterizer=R, go_overlap=go_overlap, go_conductor=go_conductor,
+                    precedent_items=list(precedent_items.values()), near_existing=near_existing)
 
 
 def _airport_zone(R: "_Rasterizer", frame: Frame, layer: str, classes, d: float, funnel_m: float):

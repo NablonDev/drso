@@ -62,6 +62,7 @@ class SpotParams:
     tsd: dict | None = None                # AESL Tower Spotting Data tables for this voltage (engine.yaml tsd)
     approach_length_m: float = 0.0         # approach section within this of each gantry (CEA Schedule VII)
     approach_span_m: float | None = None
+    proximity_discount: float = 0.0         # search-only discount near existing lines (string pulling)
     section_spans: int | None = None       # TSD D: ≤ 15 spans between section points (plain)
     hilly_section_spans: int | None = None # ≤ 10 spans (hilly)
     pull_cost_tol: float = 0.01          # a straightened leg may cost at most this much more than the grid towers it replaces
@@ -326,7 +327,12 @@ def _chain_cost(comp: Compiled, sp: SpotParams, pts, inner_types) -> float:
             col = np.clip(((fx - f.x0) / f.res_m).astype(int), 0, f.width - 1)
             row = np.clip(((f.y_top - (fy + off)) / f.res_m).astype(int), 0, f.height - 1)
             dens += float(comp.strip_density[row, col].mean()) / 3.0
-        c += L * (comp.conductor_rs_per_m + dens * width)
+        span_c = L * (comp.conductor_rs_per_m + dens * width)
+        if sp.proximity_discount > 0 and comp.near_existing is not None:
+            col = np.clip(((fx - f.x0) / f.res_m).astype(int), 0, f.width - 1)
+            row = np.clip(((f.y_top - fy) / f.res_m).astype(int), 0, f.height - 1)
+            span_c *= 1.0 - sp.proximity_discount * float(comp.near_existing[row, col].mean())
+        c += span_c
     return c
 
 

@@ -11,7 +11,9 @@ test("solve a reused run end to end", async ({ page, request }) => {
   test.setTimeout(11 * 60_000);   // solves roughly doubled with 600 m hilly spans (7 Oct 2026)
   const active = await (await request.get("/api/jobs/active")).json();
   test.skip(active.job !== null, "a GPU job is running — not starting a solve");
-  runId = await createDraft(request, { reuse_from: await reuseSource(request), routes_wanted: 2 });
+  // ±25 km like the production runs: since the 9 Oct water master (mud flats) and buildings the ±5 km
+  // band closes at km 60 even with the sanctuary allowed
+  runId = await createDraft(request, { reuse_from: await reuseSource(request), routes_wanted: 1, band_km: 25 });
   // The delivered Kachchh Desert Sanctuary polygon closes the ±5 km band at km 35 (No-Go), so this
   // end-to-end check relaxes that one rule to exercise a solve that returns routes.
   const pa = await request.put(`/api/runs/${runId}/rules/protected_areas`, {

@@ -183,7 +183,7 @@ def test_rules_and_costs_validation(client):
     assert r.json()["n_off"] == 1
     assert client.delete(f"/api/runs/{rid}/rules").json()["n_off"] == 0
     rules = client.get(f"/api/runs/{rid}/rules").json()
-    assert rules["n_rules"] == 48          # 8 Oct 2026 (+ approach section): + state highway, lake, pond, defence, monuments, salt pans (land + water), wetland
+    assert rules["n_rules"] == 50          # 9 Oct 2026: + existing_line_proximity, precedent_easing (8 Oct: + approach section, state highway, lake, pond, defence, monuments, salt pans, wetland)
     r = client.put(f"/api/runs/{rid}/costs", json={"tower_price": {"A": "abc"}})
     assert r.status_code == 400
     r = client.put(f"/api/runs/{rid}/costs", json={"tower_price": {"B2": 1}})

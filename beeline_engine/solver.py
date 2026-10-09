@@ -49,6 +49,7 @@ class SolverParams:
     lateral_penalty_rs_per_m: float = 0.0    # per tower, per metre of lateral offset
     sensitive_multiplier: float = 1.0
     extra_strip_rs_per_m: np.ndarray | None = None   # raster, ₹ per metre of line (diversity)
+    proximity_discount: float = 0.0          # search-only discount on line + RoW cost near existing lines
     # Heading quantisation (6 Oct 2026): consecutive span vectors that differ by no more than the grid's
     # own heading step (atan(site spacing / span length), 7.1° at 400 m) stand for a straight line at
     # an in-between heading, which the spotting straightens into suspension towers. Pricing them as
@@ -178,6 +179,8 @@ class _Rasters:
         t = lambda a, dt=torch.float32: torch.as_tensor(np.ascontiguousarray(a), dtype=dt, device=dev)
         self.cond = t(compiled.conductor_forbidden, torch.bool)
         self.strip = t(strip_np if strip_np is not None else prepare_strip(compiled, p))
+        self.near = t(compiled.near_existing, torch.float32) if p.proximity_discount > 0 and \
+            getattr(compiled, "near_existing", None) is not None else None
         self.cross = [(cr, t(np.nan_to_num(cr.angle, nan=-1.0)),
                        None if cr.width_raster is None else t(cr.width_raster, torch.bool))
                       for cr in compiled.crossings]
@@ -242,6 +245,9 @@ def _edge_block(compiled: Compiled, grid: Grid, p: SolverParams, rasters: "_Rast
         invalid |= in_ap & (length > p.approach_span_m + 1e-3)
     strip = rasters.strip[row, col].mean(dim=-1)
     E = length * (compiled.conductor_rs_per_m + strip)
+    if rasters.near is not None:
+        # stay close to existing lines: search-only discount by the share of the span near one
+        E = E * (1.0 - p.proximity_discount * rasters.near[row, col].mean(dim=-1))
     if rasters.z is not None and not require_river:
         # ground clearance of this span over the DEM (towers at standard height): extensions cost
         # steel; a span that extensions on both towers cannot clear is not allowed (a tower must

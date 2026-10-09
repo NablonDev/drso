@@ -31,7 +31,7 @@ def dist_from_sq(sq, res_m: float) -> np.ndarray:
 
 
 class RasterCache:
-    def __init__(self, root: str | Path, frame, max_bytes: int = 6 * 1024 ** 3):
+    def __init__(self, root: str | Path, frame, max_bytes: int = 3 * 1024 ** 3):
         self.root = Path(root)
         self.max_bytes = max_bytes
         f = frame

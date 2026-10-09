@@ -776,3 +776,51 @@ def test_go_zone_keeps_crossings_of_220kv_and_above():
         col, row = f.frame_to_pixel(x, y)
         return bool(comp.conductor_forbidden[int(row) - 1:int(row) + 2, int(col) - 1:int(col) + 2].any())
     assert cond_near(300, 230) and not cond_near(400, 230)
+
+
+# ---- learn from existing lines; protected areas No-Go; proximity pull (9 Oct 2026) ----------------
+def _tower_at(f, x, y, kv=220):
+    return gpd.GeoDataFrame({"class": ["power_tower"], "name": [None], "attrs": [{"voltage_kv": kv}]},
+                            geometry=[frame_geom(f, Point(x, y))], crs=4326)
+
+
+def test_existing_tower_opens_the_pond_it_stands_in_only_when_blocked():
+    f = frame()
+    c = f.length_m / 2
+    pond = frame_geom(f, box(c, -2600, c + 300, 2600))                 # closes the whole band
+    blocked = run_solve(solve_input({"pond": gdf([pond], "pond", "Big tank")}))
+    assert not blocked["feasible"]
+    res = run_solve(solve_input({"pond": gdf([pond], "pond", "Big tank"), "power": _tower_at(f, c + 150, 1500)}))
+    assert res["feasible"]
+    r = res["routes"][0]
+    assert r["events"][0]["type"] == "PRECEDENT" and "pond" in r["events"][0]["text"]
+    assert any("Eased by precedent" in a["item"] for a in r["stats"]["approval_items"])
+    # an open band: the precedent is not used even with the tower there
+    pond2 = frame_geom(f, box(c, 500, c + 300, 2600))
+    r2 = run_solve(solve_input({"pond": gdf([pond2], "pond"), "power": _tower_at(f, c + 150, 1500)}))["routes"][0]
+    assert all(e["type"] != "PRECEDENT" for e in r2["events"]) and not r2["stats"].get("precedent_items")
+
+
+def test_sanctuary_is_no_go_unless_existing_towers_stand_in_it():
+    f = frame()
+    c = f.length_m / 2
+    ws = frame_geom(f, box(c, -2600, c + 800, 2600))
+    layers = {"wildlife_sanctuary": gdf([ws], "wildlife_sanctuary", "Test Sanctuary")}
+    assert not run_solve(solve_input(layers))["feasible"]
+    res = run_solve(solve_input({**layers, "power": _tower_at(f, c + 400, -1500)}))
+    assert res["feasible"]
+    st = res["routes"][0]["stats"]
+    assert st["approval_months"] >= 6 and any("forest diversion" in a["item"] for a in st["approval_items"])
+
+
+def test_proximity_pulls_the_search_but_not_the_cost(monkeypatch):
+    """Existing 400 kV line 1.5 km off the bee-line: with the 20 % search discount within 1 km the
+    route runs near it; the reported cost is the true cost (never below the no-discount route's)."""
+    f = frame()
+    ex = gpd.GeoDataFrame({"class": ["power_line"], "name": ["Existing 400"], "attrs": [{"voltage_kv": 400}]},
+                          geometry=[frame_geom(f, LineString([(-1000, 1500), (f.length_m + 1000, 1500)]))], crs=4326)
+    on = run_solve(solve_input({"power": ex}))["routes"][0]
+    off = run_solve(solve_input({"power": ex}, overrides={"existing_line_proximity": {"enabled": False}}))["routes"][0]
+    near = lambda r: sum(1 for x, y in towers_frame(f, r) if abs(y - 1500) <= 1000) / len(r["towers"])
+    assert near(on) > 0.5 and near(off) < 0.2, (near(on), near(off))
+    assert on["cost"]["total"] >= off["cost"]["total"] * 0.999

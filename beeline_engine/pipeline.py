@@ -191,7 +191,22 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
         raster_cache = RasterCache(inp.cache_dir, frame)
     shared = {"R": None}       # one rasterizer for every compile: masks / distances depend on layers only
 
-    def _compile(relaxed: bool = False):
+    # learn from existing lines (9 Oct 2026): existing power towers, for opening the polygons they stand in
+    prec_rule = rules.get("precedent_easing")
+    precedent_on = prec_rule is not None and prec_rule.enabled and prec_rule.params.get("treatment", "Ease") == "Ease"
+    prec_towers = None
+    if precedent_on:
+        pts = []
+        for k in ("power", "power_lt"):
+            li = inp.layers.get(k)
+            if li is not None and li.gdf is not None and len(li.gdf):
+                g = li.gdf[li.gdf["class"] == "power_tower"]
+                if len(g):
+                    pts.extend(g.geometry.to_crs(frame.epsg).values)
+        prec_towers = np.asarray(pts, dtype=object) if pts else None
+        precedent_on = prec_towers is not None
+
+    def _compile(relaxed: bool = False, precedent: bool = False):
         def one(half_width, chw_ref):
             return compile_rules(frame, gdfs, rules, costs, inp.kv, half_width, endpoints_go_radius_m=go_radius,
                                  terminal_yard_radius_m=yard_radius,
@@ -201,7 +216,7 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
                                  raster_margin_m=float(eng["grid"].get("raster_margin_m", 0.0)),
                                  angle_tower_rules=tuple(eng["crossings"].get("angle_tower_rules") or ()),
                                  relaxed=relaxed, chw_ref_m=chw_ref, rasterizer=shared["R"],
-                                 raster_cache=raster_cache)
+                                 raster_cache=raster_cache, precedent_towers=prec_towers if precedent else None)
         c = one(hw, None)
         shared["R"] = c.rasterizer
         if ap_zone is not None and ap_hw < hw:
@@ -230,6 +245,9 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
     check_cancel()
 
     tower_cost = tower_type_cost(costs, inp.kv)
+    # stay close to existing lines: search-only discount (9 Oct 2026)
+    _pr = rules.get("existing_line_proximity")
+    prox_disc = float(_pr.params.get("discount_pct", 0) or 0) / 100.0 if _pr is not None and _pr.enabled else 0.0
     # terrain in the search: the DEM on the rule grid; costs from the same tables the spotting uses
     terrain = dem is not None and dem.ok
     if terrain:
@@ -268,7 +286,7 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
                         long_ext_steps=_long_ext_steps(tsd) if tsd else (),
                         long_ext_cost_rs_per_m=tower_cost["D45"] * ext_pct / 18.0,
                         dead_end_max_dev_deg=float(tsd["dead_end_max_dev_deg"]) if tsd and tsd.get("dead_end_max_dev_deg") else None,
-                        approach_length_m=ap_len, approach_span_m=ap_span)
+                        approach_length_m=ap_len, approach_span_m=ap_span, proximity_discount=prox_disc)
     sp = SpotParams(design_span_m=design, span_max_m=smax_search,
                     min_span_m=float(rules["crossing_span_limits"].params["min_span_m"]),
                     max_dev_deg=max_dev, type_bands=bands,
@@ -285,6 +303,7 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
                     hilly_design_span_m=float(rules["design_span"].params["hilly_m"]),
                     hilly_section_km=float(rules["section_interval"].params["hilly_km"]),
                     hilly_rise_m=hilly_rise, tsd=tsd, approach_length_m=ap_len, approach_span_m=ap_span,
+                    proximity_discount=prox_disc,
                     section_spans=int(rules["section_interval"].params.get("plain_spans") or 0) or None,
                     hilly_section_spans=int(rules["section_interval"].params.get("hilly_spans") or 0) or None)
 
@@ -315,14 +334,19 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
                 "Solving routes " + ", ".join(str(variants[k]["id"]) for k in live)
             prog(0.15 + 0.8 * done, text)
 
-    def compiled_relaxed():
+    def compiled_variant(relaxed: bool, precedent: bool = False):
+        """Relaxed and / or precedent compiles, built once and shared by the routes."""
+        key = (relaxed, precedent)
         with relaxed_lock:
-            if "c" not in relaxed_box:
-                c = _compile(relaxed=True)
+            if key not in relaxed_box:
+                c = _compile(relaxed=relaxed, precedent=precedent)
                 if terrain:
                     attach_terrain(c, dem, float(eng["spotting"].get("hilly_slope_deg", 10)))
-                relaxed_box["c"] = c
-            return relaxed_box["c"]
+                relaxed_box[key] = c
+            return relaxed_box[key]
+
+    def compiled_relaxed():
+        return compiled_variant(True)
 
     futures: list = []
 
@@ -353,6 +377,15 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
             p.extra_strip_rs_per_m = _penalty_raster(cv, [apart_line], eng["diversity"])
             diversity_ev = event("APART_FROM", {"route": var["id"], "other": apart})
         out = solve(cv, p, cancel_check=check_cancel, progress=sub)
+        precedent_ev = None
+        if not out.feasible and precedent_on:
+            # no path under the route's rules: learn from existing lines and try again
+            vprog(vi, 0.35, f"Route {var['id']}: easing areas existing towers already stand in")
+            cvp = compiled_variant(bool(var.get("relaxed")), precedent=True)
+            if cvp.precedent_items:
+                out_p = solve(cvp, p, cancel_check=check_cancel, progress=sub)
+                if out_p.feasible:
+                    out, cv = out_p, cvp
         solve_s = time.time() - t
         if out.feasible and vi > 0 and not apart and not var.get("relaxed"):
             # every earlier route's line, in route order (as the one-at-a-time loop saw them)
@@ -380,12 +413,18 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
         spot_s = time.time() - t
         line = LineString([(tw.x, tw.y) for tw in sr.towers])
         _approvals(sr, cv, rules)
+        used = sr.stats.get("precedent_items") or []
+        if used:
+            precedent_ev = event("PRECEDENT", {"route": var["id"], "n": len(used),
+                                               "items": "; ".join(u["label"] for u in used)})
         evs = _route_events(sr, frame, cv, findex, rules, sp, layer_names, inp, dem,
                             [e for e in global_events if e["type"] == "BEELINE_BLOCKER"])
         for a in sr.stats.get("approval_items", []):
             evs.append(event("APPROVAL", a, chainage_km=None))
         if diversity_ev:
             evs.insert(0, diversity_ev)
+        if precedent_ev:
+            evs.insert(0, precedent_ev)
         vprog(vi, 1.0, f"Route {var['id']} done")
         return {"var": var, "out": out, "cv": cv, "line": line,
                 "route": _route_json(var, sr, frame, evs, solve_s, spot_s, out)}
@@ -482,11 +521,28 @@ def _approvals(sr, comp, rules) -> None:
         lvl, mo = (("Regional Office", 6) if fha <= ro else ("Regional Empowered Committee", 12) if fha <= cons
                    else ("Conservator of Forests", 18))
         items.append({"item": f"Forest diversion, {fha:.1f} ha — {lvl}", "months": mo})
+    line = LineString([(t.x, t.y) for t in sr.towers])
     if comp.relaxed_items:
-        line = LineString([(t.x, t.y) for t in sr.towers])
         for vr, months, label in comp.relaxed_items:
             if vr.hits(line):
                 items.append({"item": f"Last resort: {label}", "months": months})
+    # learn from existing lines: the opened polygons this route actually uses (9 Oct 2026)
+    used = []
+    for it in getattr(comp, "precedent_items", None) or []:
+        geoms = [g for g in it["vr"].geoms if g is not None]
+        hit = [g for g in geoms if g.intersects(line)]
+        if not hit:
+            continue
+        nm = ", ".join(it["names"]) if it["names"] else ""
+        label = f"{it['layer'].replace('_', ' ')}{' (' + nm + ')' if nm else ''} — existing towers stand in it"
+        months = 0.0
+        if it["protected"]:
+            ha = sum(line.intersection(g).length for g in hit) * 2 * comp.half_width_m / 1e4
+            months = 6.0 if ha <= ro else 12.0 if ha <= cons else 18.0
+            label += f"; forest diversion ≈ {ha:.1f} ha"
+        used.append({"layer": it["layer"], "label": label, "months": months})
+        items.append({"item": f"Eased by precedent: {label}", "months": months})
+    sr.stats["precedent_items"] = used
     sr.stats["approval_items"] = items
     sr.stats["approval_months"] = max([i["months"] for i in items], default=0)
 
