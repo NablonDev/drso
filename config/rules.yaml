@@ -393,7 +393,7 @@ groups:
 
       - id: power_line
         name: "High tension power line"
-        note: "765 / 400 / 220 / 132 kV — the wire may be crossed anywhere except next to an existing tower: 20 % of that span from the tower (80 m of a 400 m span; Vivek, 10 Oct 2026); angle 70–110° and span ≤ 300 m (Rule_Table 9-11); D towers both sides of lines ≥ 400 kV, B/C/D for 132–220 kV (TSD B.1-2); our towers ≥ 92.5 m from their towers (72.5 m tower height + 20 m base) and ≥ 101.5 m (tower height + 40 %) from their conductors at 765 kV — a falling tower must not reach another line"
+        note: "765 / 400 / 220 / 132 kV — the wire may be crossed anywhere except next to an existing tower: 20 % of that span from the tower (80 m of a 400 m span; Vivek, 10 Oct 2026); angle 70–110° and span ≤ 350 m (Rule_Table 9-11 had 300; Vivek, 10 Oct 2026); D towers both sides of lines ≥ 400 kV, B/C/D for 132–220 kV (TSD B.1-2); our towers ≥ 92.5 m from their towers (72.5 m tower height + 20 m base) and ≥ 101.5 m (tower height + 40 %) from their conductors at 765 kV — a falling tower must not reach another line"
         layer: power
         classes: [power_line, power_tower]
         mechanism: crossing
@@ -404,7 +404,7 @@ groups:
           - {key: crossing_tower_clear_m, label: "… fallback where the span is not mapped", type: num, unit: m, value: 80}
           - {key: angle_deg, label: "Crossing angle", type: rng, unit: "°", value: [70, 110]}
           - {key: angle_min_kv, label: "Crossing angle applies from", type: num, unit: kV, value: 66}
-          - {key: max_span_m, label: "Max crossing span", type: num, unit: m, value: 300}
+          - {key: max_span_m, label: "Max crossing span", type: num, unit: m, value: 350}   # Vivek, 10 Oct 2026: was 300; existing EHV crossings here median 300-313 m, 50-60 % over 300
           - {key: tower_type, label: "Tower type", type: sel, value: "B/C/D", options: ["A/B/C/D", "B", "C", "D", "B/C/D"]}
           - {key: tower_type_400kv, label: "Tower type, lines of 400 kV and above", type: sel, value: "D", options: ["B/C/D", "D"]}
           - {key: parallel_setback_m, label: "Conductor buffer, parallel run", type: num, unit: m, value: {765: 33.5, 400: 23, 220: 17.5, 132: 13.5}}
@@ -425,7 +425,7 @@ groups:
           - {key: crossing_tower_clear_m, label: "… fallback where the span is not mapped", type: num, unit: m, value: 80}
           - {key: angle_deg, label: "Crossing angle", type: rng, unit: "°", value: [70, 110]}
           - {key: angle_min_kv, label: "Crossing angle applies from", type: num, unit: kV, value: 66}
-          - {key: max_span_m, label: "Max crossing span", type: num, unit: m, value: 300}
+          - {key: max_span_m, label: "Max crossing span", type: num, unit: m, value: 350}   # Vivek, 10 Oct 2026: was 300; existing EHV crossings here median 300-313 m, 50-60 % over 300
           - {key: tower_type, label: "Tower type", type: sel, value: "A/B/C/D", options: ["A/B/C/D", "B", "C", "D", "B/C/D"]}
           - {key: tower_type_400kv, label: "Tower type, lines of 400 kV and above", type: sel, value: "D", options: ["B/C/D", "D"]}
           - {key: parallel_setback_m, label: "Conductor buffer, parallel run", type: num, unit: m, value: {765: 33.5, 400: 23, 220: 17.5, 132: 13.5}}
