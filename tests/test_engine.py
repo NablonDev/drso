@@ -311,8 +311,9 @@ def _existing_400(f, c, ys):
 
 
 def test_existing_line_is_not_crossed_within_80m_of_a_tower():
-    """Existing 400 kV line across the corridor, towers every 400 m (Vivek, 8 Oct 2026): the wire may
-    be crossed anywhere except within 80 m of an existing tower; the mid-span is no longer required."""
+    """Existing 400 kV line across the corridor, towers every 400 m: the wire may be crossed anywhere
+    except next to an existing tower — 20 % of its span, 80 m here (Vivek, 8 and 10 Oct 2026); the
+    mid-span is no longer required."""
     f = frame()
     c = f.length_m / 2 + 37.0
     ex = LineString([(c, -2000), (c, 2000)])
@@ -878,8 +879,8 @@ def test_angle_span_fix_never_leaves_a_span_below_the_minimum():
 
 
 def test_new_tower_keeps_the_tower_setback_from_existing_conductors():
-    """Vivek, 10 Oct 2026: a new tower keeps the same distance from an existing line's conductors as
-    from its towers (765 kV: 92.5 m), so a falling tower cannot reach the other line."""
+    """Vivek, 10 Oct 2026: a new tower keeps the tower height + 40 % (765 kV: 101.5 m) from an existing
+    line's conductors, so a falling tower cannot reach the other line (92.5 m from its towers)."""
     f = frame()
     spec = LineSpec(765, "dc")
     rules, costs = resolve_rules(spec), resolve_costs(spec)
@@ -892,3 +893,58 @@ def test_new_tower_keeps_the_tower_setback_from_existing_conductors():
         return bool(comp.tower_forbidden[int(row), int(col)])
     assert forbidden(c + 60, 0) and forbidden(c - 85, 0)       # 60 / 85 m from the wire, 1.9 km from a tower
     assert not forbidden(c + 115, 0) and not forbidden(c - 115, 0)
+
+
+def test_crossing_ban_is_a_share_of_the_existing_span():
+    """Vivek, 10 Oct 2026: no crossing within 20 % of the existing line's span of its towers — 80 m on a
+    400 m span, 20 m on a 66 kV line with poles every 100 m (the old flat 80 m banned the whole wire)."""
+    f = frame()
+    spec = LineSpec(765, "dc")
+    rules, costs = resolve_rules(spec), resolve_costs(spec)
+    c = f.length_m / 2
+    g = frame_geom(f, LineString([(c, -1500), (c, 1500)]))
+    poles = [frame_geom(f, Point(c, y)) for y in np.arange(-1500, 1501, 100)]
+    lt = gpd.GeoDataFrame({"class": ["power_line"] + ["power_tower"] * len(poles), "name": ["66 kV"] + [None] * len(poles),
+                           "attrs": [{"voltage_kv": 66}] * (1 + len(poles))}, geometry=[g] + poles, crs=4326)
+    comp = compile_rules(f, {"power_lt": lt}, rules, costs, 765, 33.5, 150, 400)
+    bans = [vr for vr in comp.conductor_nogo if vr.rule_id == "power_line_lt" and vr.d == 0]
+    assert bans, "no crossing bans compiled"
+    hit = lambda y: any(vr.hits(Point(c, y).buffer(1.0)) for vr in bans)     # the real check is span-line vs piece
+    assert hit(10) and hit(-15)                 # within 20 m of the poles at 0 / 0
+    assert not hit(50) and not hit(-50)         # mid-span of a 100 m pole span: crossable
+    # the 400 kV helper: towers every 400 m → 80 m
+    comp2 = compile_rules(f, {"power": _existing_400(f, c, list(np.arange(-1800, 1801, 400.0)))}, rules, costs, 765, 33.5, 150, 400)
+    bans2 = [vr for vr in comp2.conductor_nogo if vr.rule_id == "power_line" and vr.d == 0]
+    hit2 = lambda y: any(vr.hits(Point(c, y).buffer(1.0)) for vr in bans2)
+    assert hit2(-1800 + 60) and not hit2(-1800 + 100)
+
+
+def test_marsh_allows_towers_on_piles():
+    """Vivek, 10 Oct 2026: towers may stand on soil-map marshy land; the foundation costs 1.85× (piles)."""
+    f = frame()
+    spec = LineSpec(765, "dc")
+    rules, costs = resolve_rules(spec), resolve_costs(spec)
+    marsh = frame_geom(f, box(f.length_m / 2 - 600, -2600, f.length_m / 2 + 600, 2600))
+    comp = compile_rules(f, {"marshy_land": gdf([marsh], "marshy_land")}, rules, costs, 765, 33.5, 150, 400)
+    col, row = f.frame_to_pixel(f.length_m / 2, 0)
+    assert not comp.tower_forbidden[int(row), int(col)] and not comp.conductor_forbidden[int(row), int(col)]
+    assert abs(comp.soil_mult[int(row), int(col)] - 1.85) < 1e-6
+
+
+def test_canal_buffers_start_at_its_edge():
+    """Vivek, 10 Oct 2026: canal lines are centrelines of a ~30 m wide canal; the 30 m tower and
+    parallel-conductor buffers start 15 m out, i.e. 45 m from the centreline."""
+    f = frame()
+    spec = LineSpec(765, "dc")
+    rules, costs = resolve_rules(spec), resolve_costs(spec)
+    c = f.length_m / 2
+    canal = frame_geom(f, LineString([(c, -2500), (c, 2500)]))
+    comp = compile_rules(f, {"canal": gdf([canal], "canal", "Test canal")}, rules, costs, 765, 33.5, 150, 400)
+    tower = [vr for vr in comp.tower_nogo if vr.rule_id == "canal"]
+    assert tower and abs(tower[0].d - 45.0) < 1e-6, [vr.d for vr in tower]
+    assert any(vr.hits(Point(c + 40, 0)) for vr in tower) and not any(vr.hits(Point(c + 50, 0)) for vr in tower)
+    par = [pr for pr in comp.parallels if pr.rule_id == "canal"]
+    col, row = f.frame_to_pixel(c + 40, 0)
+    assert par and np.isfinite(par[0].angle[int(row), int(col)])         # within 45 m: parallel check applies
+    col, row = f.frame_to_pixel(c + 70, 0)
+    assert not np.isfinite(par[0].angle[int(row), int(col)])

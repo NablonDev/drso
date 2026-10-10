@@ -414,21 +414,54 @@ def _within(dist: np.ndarray | None, d: float) -> np.ndarray | None:
 
 
 # ----------------------------------------------------------------------------------------
-def _tower_crossing_bans(lines, towers, epsg: int, clear_m: float) -> list:
-    """Parts of the existing conductors the new line may not cross (UTM): the wire within clear_m
-    of an existing tower. The rest of the wire may be crossed anywhere (Vivek, 8 Oct 2026; replaces
-    the mid-span null-point window)."""
-    if lines is None or towers is None or not len(lines) or not len(towers) or clear_m <= 0:
+def _tower_crossing_bans(lines, towers, epsg: int, clear_m: float, clear_pct: float = 0.0) -> list:
+    """Parts of the existing conductors the new line may not cross (UTM). With clear_pct (Vivek,
+    10 Oct 2026): a share of each span of the existing line next to its towers — 20 % of a 400 m
+    span is 80 m, of a 100 m pole span 20 m; clear_m is the fallback where a tower's span is not
+    mapped. Without it: the wire within clear_m of a tower (Vivek, 8 Oct 2026). The rest of the
+    wire may be crossed anywhere."""
+    if lines is None or towers is None or not len(lines) or not len(towers) or (clear_m <= 0 and clear_pct <= 0):
         return []
-    lu = unary_union([g for g in lines.geometry.to_crs(epsg) if g is not None and not g.is_empty])
-    out = []
-    for t in towers.geometry.to_crs(epsg):
-        if t is None or t.is_empty:
+    from shapely import STRtree
+    from shapely.ops import substring
+    parts = []
+    for g in lines.geometry.to_crs(epsg):
+        if g is None or g.is_empty:
             continue
-        piece = lu.intersection(t.buffer(clear_m, quad_segs=16))
-        for g in getattr(piece, "geoms", [piece]):
-            if g.geom_type == "LineString" and g.length > 0:
-                out.append(g)
+        parts.extend(x for x in getattr(g, "geoms", [g]) if x.geom_type == "LineString" and x.length > 0)
+    tw = [t for t in towers.geometry.to_crs(epsg) if t is not None and not t.is_empty]
+    if not parts or not tw:
+        return []
+    if clear_pct <= 0:
+        lu = unary_union(parts)
+        out = []
+        for t in tw:
+            piece = lu.intersection(t.buffer(clear_m, quad_segs=16))
+            out.extend(x for x in getattr(piece, "geoms", [piece]) if x.geom_type == "LineString" and x.length > 0)
+        return out
+    out = []
+    tree = STRtree(tw)
+    placed = set()
+    for g in parts:
+        idx = tree.query(g.buffer(15.0))
+        pos = sorted((g.project(tw[i]), i) for i in idx if g.distance(tw[i]) <= 15.0)
+        for k, (s_, i) in enumerate(pos):
+            placed.add(i)
+            prev_span = s_ - pos[k - 1][0] if k > 0 else None
+            next_span = pos[k + 1][0] - s_ if k + 1 < len(pos) else None
+            back = clear_pct * prev_span if prev_span else (clear_pct * next_span if next_span else clear_m)
+            fwd = clear_pct * next_span if next_span else (clear_pct * prev_span if prev_span else clear_m)
+            piece = substring(g, max(0.0, s_ - back), min(g.length, s_ + fwd))
+            if piece.geom_type == "LineString" and piece.length > 0:
+                out.append(piece)
+    # towers off every mapped line (e.g. a line without mapped geometry nearby): the fallback distance
+    if clear_m > 0:
+        lu = unary_union(parts)
+        for i, t in enumerate(tw):
+            if i in placed:
+                continue
+            piece = lu.intersection(t.buffer(clear_m, quad_segs=16))
+            out.extend(x for x in getattr(piece, "geoms", [piece]) if x.geom_type == "LineString" and x.length > 0)
     return out
 
 
@@ -749,27 +782,32 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
                 vec(cond_geoms, r.id, lyr, cls, cb)
                 vec(tower_geoms, r.id, lyr, cls, tb)
         elif m == "crossing":
-            td = float(p.get("tower_setback_m", 0))
+            # a linear feature mapped as a centreline may carry a half-width (canal, 10 Oct 2026): the
+            # buffers are measured from its edge, so the half-width is added to them
+            fw = float(p.get("half_width_m", 0) or 0)
+            td = float(p.get("tower_setback_m", 0)) + (fw if p.get("tower_setback_m") else 0.0)
             classes = r.classes
             if r.id in ("power_line", "power_line_lt"):
-                # towers keep clear of existing towers and of the existing conductors by the same
-                # distance (Vivek, 10 Oct 2026: a falling tower must not reach another line)
+                # towers keep tower_setback_m from existing towers and conductor_setback_m (the tower
+                # height: a falling tower must not reach another line — Vivek, 10 Oct 2026) from the wires
+                cs = float(p.get("conductor_setback_m", td) or td)
                 add(_within(R.dist(r.layer, ["power_tower"]), td), tower_forbidden, r.id)
                 vec(tower_geoms, r.id, r.layer, ["power_tower"], td)
-                add(_within(R.dist(r.layer, ["power_line"]), td), tower_forbidden, r.id)
-                vec(tower_geoms, r.id, r.layer, ["power_line"], td)
-                # the new conductor may cross the existing wire anywhere except within
-                # `crossing_tower_clear_m` of an existing tower (Vivek, 8 Oct 2026)
+                add(_within(R.dist(r.layer, ["power_line"]), cs), tower_forbidden, r.id)
+                vec(tower_geoms, r.id, r.layer, ["power_line"], cs)
+                # the new conductor may cross the existing wire anywhere except next to an existing
+                # tower: crossing_tower_clear_pct of that span (fallback crossing_tower_clear_m)
                 cl = float(p.get("crossing_tower_clear_m", 0))
+                clp = float(p.get("crossing_tower_clear_pct", 0) or 0) / 100.0
                 bans = _tower_crossing_bans(R.subset(r.layer, ["power_line"]), R.subset(r.layer, ["power_tower"]),
-                                            frame.epsg, cl)
+                                            frame.epsg, cl, clp)
                 # go zone (9 Oct 2026): crossings of lines from GO_ZONE_CROSSING_KV up stay governed there
                 hv = R.by_voltage(r.layer, GO_ZONE_CROSSING_KV, True)
                 d_hv = R.dist(hv, ["power_line"])
                 if d_hv is not None:
                     go_hv_near |= d_hv <= frame.res_m * 1.5
                     hv_bans = _tower_crossing_bans(R.subset(hv, ["power_line"]), R.subset(hv, ["power_tower"]),
-                                                   frame.epsg, cl)
+                                                   frame.epsg, cl, clp)
                     if hv_bans:
                         go_hv_bans.extend(hv_bans)
                         go_conductor.append(VecRule(r.id, r.layer, [frame.geom_utm_to_frame(g) for g in hv_bans], 0.0))
@@ -853,7 +891,7 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
             crossings.append(cr)
             ps = p.get("parallel_setback_m")
             if ps:
-                pa = R.angle_nearest(r.layer, line_classes, within_m=float(ps))
+                pa = R.angle_nearest(r.layer, line_classes, within_m=float(ps) + fw)
                 if pa is not None:
                     parallels.append(ParallelRaster(rule_id=r.id, angle=pa,
                                                     crossing_exempt=p.get("crossing_exempt_from_parallel") == "Yes"))

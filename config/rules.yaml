@@ -95,7 +95,9 @@ groups:
         layer: buildings
         mechanism: nogo
         params:
-          - {key: tower_setback_m, label: "Tower setback", type: num, unit: m, value: 100}
+          # 765 kV: the tower height (72.5 m) + 40 % = 101.5 m — a falling tower must not reach the house
+          # (Vivek, 10 Oct 2026); other voltages keep 100 m until their tower heights are supplied
+          - {key: tower_setback_m, label: "Tower setback (tower height + 40 %)", type: num, unit: m, value: {765: 101.5, 400: 100, 220: 100, 132: 100}}
           - {key: conductor_buffer, label: "Conductor buffer", type: sel, value: "Corridor half-width", options: ["Corridor half-width", "Fixed", "None"]}
           - {key: conductor_buffer_m, label: "Fixed conductor buffer", type: num, unit: m, value: 30, best_guess: true}
           - {key: applies_to, label: "Applies to", type: sel, value: "All towers", options: ["Angular towers", "All towers"]}
@@ -365,12 +367,13 @@ groups:
 
       - id: canal
         name: "Canal"
-        note: "Rule_Table 79-80: 30 m from the canal edge, canal 10 m wide → 35 m from the centreline, tower and parallel conductor; A, B or C"
+        note: "Rule_Table 79-80: 30 m from the canal edge for towers and the parallel conductor; A, B or C. The canal lines are centrelines, so a half-width is added first (Vivek, 10 Oct 2026: 15 m each side → 45 m from the centreline)"
         layer: canal
         mechanism: crossing
         params:
-          - {key: tower_setback_m, label: "Tower buffer from the centreline", type: num, unit: m, value: 35}
-          - {key: parallel_setback_m, label: "Conductor buffer from the centreline", type: num, unit: m, value: 35}
+          - {key: half_width_m, label: "Canal half-width (added to the buffers)", type: num, unit: m, value: 15}
+          - {key: tower_setback_m, label: "Tower buffer from the canal edge", type: num, unit: m, value: 30}
+          - {key: parallel_setback_m, label: "Conductor buffer from the canal edge", type: num, unit: m, value: 30}
           - {key: angle_deg, label: "Crossing angle", type: sel, value: "Any", options: ["Any", "90°", "75–90°", "80–100°"]}
           # Vivek, 9 Oct 2026: no angle rule for the canal — the span that crosses it is not a parallel run,
           # so it may cross at any angle; spans running alongside within the buffer stay blocked
@@ -390,13 +393,15 @@ groups:
 
       - id: power_line
         name: "High tension power line"
-        note: "765 / 400 / 220 / 132 kV — the wire may be crossed anywhere except within 80 m of an existing tower (Vivek, 8 Oct 2026); angle 70–110° and span ≤ 300 m (Rule_Table 9-11); D towers both sides of lines ≥ 400 kV, B/C/D for 132–220 kV (TSD B.1-2); our towers ≥ 92.5 m from their towers and from their conductors at 765 kV (72.5 m tower height between 20 × 20 m bases; Vivek, 10 Oct 2026: a falling tower must not reach another line)"
+        note: "765 / 400 / 220 / 132 kV — the wire may be crossed anywhere except next to an existing tower: 20 % of that span from the tower (80 m of a 400 m span; Vivek, 10 Oct 2026); angle 70–110° and span ≤ 300 m (Rule_Table 9-11); D towers both sides of lines ≥ 400 kV, B/C/D for 132–220 kV (TSD B.1-2); our towers ≥ 92.5 m from their towers (72.5 m tower height + 20 m base) and ≥ 101.5 m (tower height + 40 %) from their conductors at 765 kV — a falling tower must not reach another line"
         layer: power
         classes: [power_line, power_tower]
         mechanism: crossing
         params:
-          - {key: tower_setback_m, label: "Tower to existing tower and conductor", type: num, unit: m, value: {765: 92.5, 400: 100, 220: 100, 132: 100}}
-          - {key: crossing_tower_clear_m, label: "No crossing within, of an existing tower", type: num, unit: m, value: 80}
+          - {key: tower_setback_m, label: "Tower to existing tower (centre to centre)", type: num, unit: m, value: {765: 92.5, 400: 100, 220: 100, 132: 100}}
+          - {key: conductor_setback_m, label: "Tower to existing conductor (tower height + 40 %)", type: num, unit: m, value: {765: 101.5, 400: 100, 220: 100, 132: 100}}
+          - {key: crossing_tower_clear_pct, label: "No crossing next to an existing tower, share of its span", type: num, unit: "%", value: 20}
+          - {key: crossing_tower_clear_m, label: "… fallback where the span is not mapped", type: num, unit: m, value: 80}
           - {key: angle_deg, label: "Crossing angle", type: rng, unit: "°", value: [70, 110]}
           - {key: angle_min_kv, label: "Crossing angle applies from", type: num, unit: kV, value: 66}
           - {key: max_span_m, label: "Max crossing span", type: num, unit: m, value: 300}
@@ -409,13 +414,15 @@ groups:
       # now, set independently. Same shutdown crossing cost.
       - id: power_line_lt
         name: "Low tension power line"
-        note: "66 / 33 kV — crossed anywhere except within 80 m of a tower / pole; suspension or tension towers either side (TSD B.3); angle 70–110° from 66 kV (Rule_Table 9); our towers keep the tower setback from their towers and their conductors (Vivek, 10 Oct 2026)"
+        note: "66 / 33 kV — crossed anywhere except next to a pole: 20 % of that span from the pole (20 m of a 100 m pole span; Vivek, 10 Oct 2026); suspension or tension towers either side (TSD B.3); angle 70–110° from 66 kV (Rule_Table 9); our towers ≥ 92.5 m from their poles and ≥ 101.5 m (our tower height + 40 %) from their conductors at 765 kV"
         layer: power_lt
         classes: [power_line, power_tower]
         mechanism: crossing
         params:
-          - {key: tower_setback_m, label: "Tower to existing tower and conductor", type: num, unit: m, value: {765: 92.5, 400: 100, 220: 100, 132: 100}}
-          - {key: crossing_tower_clear_m, label: "No crossing within, of an existing tower", type: num, unit: m, value: 80}
+          - {key: tower_setback_m, label: "Tower to existing tower (centre to centre)", type: num, unit: m, value: {765: 92.5, 400: 100, 220: 100, 132: 100}}
+          - {key: conductor_setback_m, label: "Tower to existing conductor (tower height + 40 %)", type: num, unit: m, value: {765: 101.5, 400: 100, 220: 100, 132: 100}}
+          - {key: crossing_tower_clear_pct, label: "No crossing next to an existing tower, share of its span", type: num, unit: "%", value: 20}
+          - {key: crossing_tower_clear_m, label: "… fallback where the span is not mapped", type: num, unit: m, value: 80}
           - {key: angle_deg, label: "Crossing angle", type: rng, unit: "°", value: [70, 110]}
           - {key: angle_min_kv, label: "Crossing angle applies from", type: num, unit: kV, value: 66}
           - {key: max_span_m, label: "Max crossing span", type: num, unit: m, value: 300}
@@ -469,14 +476,14 @@ groups:
 
       - id: marsh
         name: "Marshy land"
-        note: "Rule_Table 77-78: 50 m buffer; crossing as last resort on pile foundations"
+        note: "Rule_Table 77-78 had 50 m / last resort. Vivek, 10 Oct 2026: towers allowed on marshy land, on pile foundations (soil multiplier 1.85 through the layer's foundation class) — existing lines run through the soil-map marsh"
         layer: lulc
         classes: [marsh]
         also_layers: [marshy_land]
         mechanism: landclass
         cost_class: barren
         params:
-          - {key: treatment, label: "Treatment", type: sel, value: "Last resort", options: ["Allowed", "Last resort", "No-Go"]}
+          - {key: treatment, label: "Treatment", type: sel, value: "Allowed", options: ["Allowed", "Last resort", "No-Go"]}
           - {key: buffer, label: "Buffer", type: sel, value: "Fixed", options: ["Corridor half-width", "Fixed", "None"]}
           - {key: buffer_m, label: "Buffer", type: num, unit: m, value: 50}
           - {key: last_resort_towers_inside, label: "Last resort: towers inside (piles)", type: sel, value: "Yes", options: ["Yes", "No"]}
