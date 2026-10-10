@@ -518,6 +518,10 @@ def _nudge(chk: Checker, p, q, nxt, prev, sp: SpotParams, is_last: bool):
                 L2 = math.hypot(nxt[0] - c[0], nxt[1] - c[1])
                 if L2 < sp.min_span_m or not chk.conductor_ok(c, nxt) or not chk.span_crossings(c, nxt)[0]:
                     continue
+                # the moved tower's own turn stays within the limit (10 Oct 2026: nudges of up to 30 m on
+                # 100-250 m spans had pushed turns to 68-70°)
+                if _deflection(p, c, nxt)[0] > sp.max_dev_deg:
+                    continue
             best = c
             break
         if best is not None:
@@ -543,12 +547,15 @@ def build_route(chk: Checker, pts: list[tuple[float, float]], angle_set: set[int
             towers.append(Tower(i, x, y, "G", 0.0, "-", False, ["gantry"]))
             continue
         dfl, turn = _deflection(pts[i - 1], pts[i], pts[i + 1])
+        over_dev = dfl > sp.max_dev_deg + 0.5
         if i == 1 or i == n - 2:
             towers.append(Tower(i, x, y, "D60", round(dfl, 2), turn, True, ["dead_end"]))
             continue
         t = tower_type_for(dfl, sp.type_bands) or "D60"
         is_ap = t != "A"
         towers.append(Tower(i, x, y, t, round(dfl, 2), turn if is_ap else "-", is_ap))
+        if over_dev:
+            towers[-1].violations.append(f"max_deviation:{dfl:.0f}deg")
     spans: list[Span] = []
     for i in range(n - 1):
         L = math.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1])

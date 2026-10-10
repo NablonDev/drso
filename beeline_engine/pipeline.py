@@ -887,7 +887,8 @@ def _route_events(sr, frame, comp, findex, rules, sp, layer_names, inp, dem, blo
                                                   "code": w}, chainage_km=round(t.x / 1000, 2), severity="warn"))
         for v in t.violations:
             what = {"tower_buffer": "tower stands inside a no-go buffer",
-                    "conductor_buffer": "span passes through a conductor no-go buffer"}.get(
+                    "conductor_buffer": "span passes through a conductor no-go buffer",
+                    "max_deviation": f"turns {v.split(':')[-1].replace('deg', '°')}, beyond the maximum deviation"}.get(
                 v.split(":")[0], v.replace("_", " "))
             evs.append(event("VIOLATION", {"tower": t.no, "what": what, "code": v},
                              chainage_km=round(t.x / 1000, 2), severity="warn"))
