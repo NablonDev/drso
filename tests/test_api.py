@@ -132,8 +132,11 @@ def test_full_flow(client):
     fid = dec["buildings"]["features"][0]["properties"]["id"]
     ft = client.get(f"/api/runs/{rid}/features/{fid}").json()
     assert ft["layer_key"] == "buildings" and ft["model"] == "corridor footprint delivery" and ft["chainage_km"]
-    # solve. The test corridor crosses the Kachchh Desert Sanctuary; national parks and sanctuaries
-    # are crossable with approval since 8 Oct 2026 (Rule_Table 69-72).
+    # the ±5 km test band is closed at the Kachchh Desert Sanctuary (No-Go since 9 Oct 2026; the gap
+    # beside it closed with the tower-height setbacks of 10 Oct): allow it for this end-to-end check
+    r = client.put(f"/api/runs/{rid}/rules/protected_areas", json={"enabled": True, "params": {"treatment": "Allowed"},
+                                                                  "reason": "test: sanctuary closes the test band"})
+    assert r.status_code == 200, r.text
     assert client.post(f"/api/runs/{rid}/solve").status_code == 202
     j = run_next_job()
     assert j["status"] == "done", j["error"]
@@ -161,7 +164,7 @@ def test_full_flow(client):
     assert r.status_code == 400 and "reason" in r.json()["detail"].lower()
     r = client.put(f"/api/runs/{rid2}/rules/clusters", json={"enabled": True, "params": {"tower_setback_m": 80},
                                                               "reason": "client call"})
-    assert r.status_code == 200 and r.json()["n_changed"] == 1
+    assert r.status_code == 200 and r.json()["n_changed"] == 2      # clusters + the sanctuary override carried from the parent
     assert client.post(f"/api/runs/{rid2}/solve").status_code == 202
     assert run_next_job()["status"] == "done"
     cmp = client.get(f"/api/runs/{rid2}/compare").json()
@@ -579,6 +582,11 @@ def test_quick_solve_skips_exports_until_asked(client):
     rid = make_run(client)
     client.post(f"/api/runs/{rid}/extract", json={})
     assert run_next_job()["status"] == "done"
+    # the ±5 km test band is closed at the Kachchh Desert Sanctuary (No-Go since 9 Oct 2026; the gap
+    # beside it closed with the tower-height setbacks of 10 Oct): allow it for this end-to-end check
+    r = client.put(f"/api/runs/{rid}/rules/protected_areas", json={"enabled": True, "params": {"treatment": "Allowed"},
+                                                                  "reason": "test: sanctuary closes the test band"})
+    assert r.status_code == 200, r.text
     r = client.post(f"/api/runs/{rid}/solve", json={"exports": False})
     assert r.status_code == 202
     j = run_next_job()
