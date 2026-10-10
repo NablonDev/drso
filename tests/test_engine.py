@@ -994,3 +994,28 @@ def test_grid_tower_in_a_setback_is_snapped_to_the_nearest_legal_spot():
     assert out[2] != bad and chk.tower_ok(*out[2], True)
     assert math.hypot(out[2][0] - bad[0], out[2][1] - bad[1]) <= 30 + 1e-6
     assert out[0] == pts[0] and out[4] == pts[4]
+
+
+def test_forest_cap_prices_forest_up_until_the_route_stays_under_it():
+    """Forest rule `max_area_ha` (Vivek, 10 Oct 2026): a 200 m deep reserve-forest strip closes the band
+    except for a 300 m gap at its north edge. Uncapped, the least-cost route goes straight through
+    (1.3 ha); capped at 1 ha it takes the gap, the event names the multiplier, and the forest cost is
+    charged at the true prices."""
+    f = frame()
+    c = f.length_m / 2
+    rf = frame_geom(f, box(c, -2600, c + 200, 1700))
+    layers = {"reserve_forest": gdf([rf], "reserve_forest", "Test RF")}
+    free = run_solve(solve_input(layers, overrides={"forest": {"params": {"max_area_ha": 0}}}))["routes"][0]
+    assert free["stats"]["forest_ha"] > 1.0, free["stats"]["forest_ha"]
+    assert all(e["type"] != "FOREST_CAP" for e in free["events"])
+    res = run_solve(solve_input(layers, overrides={"forest": {"params": {"max_area_ha": 1}}}))
+    assert res["feasible"]
+    r = res["routes"][0]
+    assert r["stats"]["forest_ha"] <= 1.0, r["stats"]["forest_ha"]
+    ev = [e for e in r["events"] if e["type"] == "FOREST_CAP"]
+    assert ev and "capped at 1 ha" in ev[0]["text"] and "×" in ev[0]["text"], [e["text"] for e in r["events"]][:3]
+    # true prices: forest ₹ per ha charged is the ordinary rate, not the search multiplier
+    per_ha = r["cost"]["forest"] / max(r["stats"]["forest_ha"], 1e-6) if r["stats"]["forest_ha"] else 0.0
+    free_per_ha = free["cost"]["forest"] / free["stats"]["forest_ha"]
+    assert per_ha <= free_per_ha * 1.05
+    assert r["cost"]["total"] > free["cost"]["total"]

@@ -18,7 +18,7 @@ test("rule dialog requires a reason and nothing is saved without one", async ({ 
   const dlg = page.locator("#ruleDlg");
   await expect(dlg).toBeVisible();
   await expect(dlg.getByRole("heading", { name: "Buildings / manmade structure" })).toBeVisible();
-  const setback = dlg.getByLabel("Tower setback", { exact: true });
+  const setback = dlg.getByLabel("Tower setback (tower height + 40 %)", { exact: true });
   await setback.fill("90");
   await expect(dlg.getByRole("button", { name: "Save 1 change" })).toBeVisible();
   await dlg.getByRole("button", { name: "Save 1 change" }).click();

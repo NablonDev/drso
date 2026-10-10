@@ -28,10 +28,10 @@ test("route map: routes can be hidden, right-click shows coordinates, the ruler 
   const menu = page.getByTestId("map-context-menu");
   await expect(menu).toBeVisible();
   const coords = (await menu.locator(".mt-coords").textContent()) ?? "";
-  expect(coords).toMatch(/^2\d\.\d{6}, [67]\d\.\d{6}$/);
+  expect(coords).toMatch(/^2\d\.\d{6}, [67]\d\.\d{6}( · -?\d+(\.\d)? m)?$/);  // elevation suffix since the DEM went on the map (10 Oct 2026)
   await menu.getByRole("menuitem", { name: "Copy coordinates (lat, lon)" }).click();
   await expect(menu).toBeHidden();
-  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(coords);
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(coords.split(" · ")[0]);  // "lat, lon" only, not the elevation
 
   await page.getByTestId("tool-measure").click();
   await expect(page.getByTestId("tool-hint")).toContainText("Click to start");

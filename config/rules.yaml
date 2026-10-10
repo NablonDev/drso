@@ -437,7 +437,7 @@ groups:
     rules:
       - id: forest
         name: "Reserve and protected forest"
-        note: "Routable by default — diversion approval is required in every case. Set to No-Go to keep the route out entirely."
+        note: "Routable by default — diversion approval is required in every case. Set to No-Go to keep the route out entirely; or cap the hectares a strict route may take (Vivek, 10 Oct 2026: 5 ha), which the search meets by pricing forest up until the route stays under it."
         layer: reserve_forest
         also_layers: [forest_in_pa]
         mechanism: landclass
@@ -448,6 +448,10 @@ groups:
           - {key: buffer_m, label: "Fixed buffer", type: num, unit: m, value: 0}
           - {key: ro_threshold_ha, label: "Regional Office threshold", type: num, unit: ha, value: 5}
           - {key: conservator_threshold_ha, label: "Conservator inspection threshold", type: num, unit: ha, value: 40}
+          # Vivek, 10 Oct 2026: cap on the reserve forest a strict route (1, 2, 4) may take. The search prices
+          # forest ×3 / ×10 / ×30 until the route is under the cap; the reported cost uses the true prices.
+          # 0 = no cap. The relaxed route is exempt.
+          - {key: max_area_ha, label: "Max reserve forest per route (strict routes)", type: num, unit: ha, value: 5}
 
       - id: agriculture
         name: "Agricultural land"
