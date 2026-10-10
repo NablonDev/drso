@@ -971,3 +971,26 @@ def test_crossing_span_slack_is_removed_by_spotting():
     assert chk.tower_ok(*out[2], True) and chk.tower_ok(*out[3], True)
     assert chk.span_crossings(out[2], out[3])[0]
     assert all(math.hypot(b[0] - a[0], b[1] - a[1]) >= 100 for a, b in zip(out[:-1], out[1:]))
+
+
+def test_grid_tower_in_a_setback_is_snapped_to_the_nearest_legal_spot():
+    """10 Oct 2026: the search may use a site whose legal cell lies within 25 m; the spotting moves such a
+    tower to the nearest legal point that keeps both spans and all turns legal."""
+    from beeline_engine.spotting import Checker, SpotParams, _snap_to_legal
+    f = frame()
+    spec = LineSpec(765, "dc")
+    rules, costs = resolve_rules(spec), resolve_costs(spec)
+    c = f.length_m / 2
+    house = frame_geom(f, box(c - 10, 100, c + 10, 120))                  # a building north of the line
+    comp = compile_rules(f, {"buildings": gdf([house], "building")}, rules, costs, 765, 33.5, 150, 400)
+    sp = SpotParams(design_span_m=400, span_max_m=400, min_span_m=100, max_dev_deg=60, type_bands={},
+                    section_km=5, parallel_angle_deg=30, tower_cost_rs={}, ground_clearance_m=18.15,
+                    lowest_attachment_m=32.6, sag_at_design_m=14.278, go_radius_m=150, nudge_radius_m=30)
+    chk = Checker(comp, sp)
+    bad = (c, 100 - 101.5 + 15)                                            # 15 m inside the 101.5 m tower setback
+    assert not chk.tower_ok(*bad, True)
+    pts = [(c - 700, -20.0), (c - 350, -10.0), bad, (c + 350, -10.0), (c + 700, -20.0)]
+    out = _snap_to_legal(chk, pts, sp)
+    assert out[2] != bad and chk.tower_ok(*out[2], True)
+    assert math.hypot(out[2][0] - bad[0], out[2][1] - bad[1]) <= 30 + 1e-6
+    assert out[0] == pts[0] and out[4] == pts[4]

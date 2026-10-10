@@ -41,6 +41,8 @@ class SolverParams:
     parallel_angle_deg: float = 30.0
     # long spans, valid only across a river (0 disables)
     river_max_span_m: float = 0.0
+    site_tolerance_m: float = 0.0            # search only: a site counts as allowed if a legal cell lies within
+                                             # this distance (the spotting snaps the tower to it)
     crossing_span_slack_m: float = 0.0       # search only: a crossing span may exceed its limit by this
                                              # much (half a site spacing); the spotting enforces the exact limit
     long_heading_limit_deg: float = 60.0
@@ -386,7 +388,16 @@ def site_costs(compiled: Compiled, grid: Grid, p: SolverParams) -> tuple[np.ndar
     row = np.clip(py.astype(int), 0, f.height - 1)
     S = compiled.site_cost[row, col].astype(np.float64)
     S = S + p.lateral_penalty_rs_per_m * np.abs(fy)
-    S[compiled.tower_forbidden[row, col]] = INF
+    forbidden = compiled.tower_forbidden
+    if p.site_tolerance_m > 0:
+        # a lattice site is usable when a legal cell lies within site_tolerance_m of it (10 Oct 2026:
+        # a 47 m legal strip between two lines' setbacks fell between 50 m sites); the spotting then
+        # snaps the tower onto that cell under the exact checks
+        from scipy import ndimage
+        r = int(math.ceil(p.site_tolerance_m / f.res_m))
+        yy, xx = np.ogrid[-r:r + 1, -r:r + 1]
+        forbidden = ndimage.binary_erosion(forbidden, structure=(xx * xx + yy * yy) <= r * r, border_value=1)
+    S[forbidden[row, col]] = INF
     return S.astype(np.float32), compiled.angle_forbidden[row, col]
 
 

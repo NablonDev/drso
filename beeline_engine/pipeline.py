@@ -277,6 +277,7 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
                         parallel_angle_deg=eng["crossings"]["parallel_angle_deg"],
                         river_max_span_m=float(eng["spans"].get("river_crossing_max_span_m", 0)),
                         crossing_span_slack_m=float(eng["spans"].get("crossing_span_slack_m", eng["grid"]["site_spacing_m"] / 2)),
+                        site_tolerance_m=float(eng["grid"].get("site_tolerance_m", 0) or 0),
                         long_heading_limit_deg=float(eng["spans"].get("long_heading_limit_deg", 60)),
                         long_heading_step_deg=float(eng["spans"].get("long_heading_step_deg", 5)),
                         long_length_step_m=float(eng["spans"].get("long_length_step_m", 100)),

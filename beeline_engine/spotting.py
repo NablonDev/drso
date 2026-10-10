@@ -534,6 +534,7 @@ def build_route(chk: Checker, pts: list[tuple[float, float]], angle_set: set[int
     """Tower list from points; angle_set = indices that are angle points (None = all with deflection)."""
     comp = chk.c
     added = set()
+    pts = _snap_to_legal(chk, pts, sp)
     pts = _crossing_span_fix(chk, pts, sp)
     if sp.tsd:
         pts = _wind_span_fix(chk, pts, sp)
@@ -649,6 +650,116 @@ def build_route(chk: Checker, pts: list[tuple[float, float]], angle_set: set[int
     return SpottedRoute(towers, spans, cost, stats, "pulled" if angle_set is None else "grid")
 
 
+def _legal_here(chk: Checker, pts, i, sp: SpotParams, cand) -> bool:
+    """Would tower i at `cand` pass every exact check with its current neighbours?"""
+    n = len(pts)
+    if not chk.tower_ok(cand[0], cand[1], angle_tower=True):
+        return False
+    prev_, next_ = pts[i - 1], pts[i + 1]
+    for a, b in ((prev_, cand), (cand, next_)):
+        if math.hypot(b[0] - a[0], b[1] - a[1]) < sp.min_span_m - 1e-6:
+            return False
+        if not chk.conductor_ok(a, b) or not chk.span_crossings(a, b)[0]:
+            return False
+    if _deflection(prev_, cand, next_)[0] > sp.max_dev_deg:
+        return False
+    if i >= 2 and _deflection(pts[i - 2], prev_, cand)[0] > sp.max_dev_deg:
+        return False
+    if i + 2 < n and _deflection(cand, next_, pts[i + 2])[0] > sp.max_dev_deg:
+        return False
+    if sp.tsd:
+        # TSD wind span (mean of the two adjacent spans) at the moved tower and both neighbours — the
+        # search honoured it on the lattice; a move must not undo that
+        wind = float((sp.tsd.get("wind_span_m") or {}).get("base", 400))
+        trial = list(pts); trial[i] = cand
+        for m in (i - 1, i, i + 1):
+            if 0 < m < n - 1:
+                L1 = math.hypot(trial[m][0] - trial[m - 1][0], trial[m][1] - trial[m - 1][1])
+                L2 = math.hypot(trial[m + 1][0] - trial[m][0], trial[m + 1][1] - trial[m][1])
+                if (L1 + L2) / 2.0 > wind + 1e-3:
+                    return False
+    return True
+
+
+def _shift_chain(chk: Checker, pts, i, j, d: float, sp: SpotParams, depth: int = 6):
+    """Move tower i by d towards its neighbour j along the line between them (10 Oct 2026 'ripple'),
+    used when a repair needs a few metres that a span at the cap cannot give. If tower i's other span
+    then exceeds the cap, the tower beyond slides by the excess, and so on along the run (turns
+    < 15°, never a gantry, at most `depth` towers). Returns the new point list, or None."""
+    n = len(pts)
+    if i <= 0 or i >= n - 1 or d <= 0 or depth < 0:
+        return None
+    if _deflection(pts[i - 1], pts[i], pts[i + 1])[0] >= 15.0:      # up to the B1 band: a slide of a few metres barely changes it
+        return None
+    p, q = pts[i], pts[j]
+    L = math.hypot(q[0] - p[0], q[1] - p[1])
+    if L <= d + sp.min_span_m:
+        return None
+    cand = (p[0] + (q[0] - p[0]) * d / L, p[1] + (q[1] - p[1]) * d / L)
+    trial = list(pts)
+    trial[i] = cand
+    other = i - 1 if j == i + 1 else i + 1
+    Lo = math.hypot(trial[other][0] - cand[0], trial[other][1] - cand[1])
+    if Lo > sp.span_max_m + 1e-6:
+        if depth == 0 or other <= 0 or other >= n - 1:
+            return None
+        deeper = _shift_chain(chk, trial, other, i, Lo - sp.span_max_m + 1.0, sp, depth - 1)
+        if deeper is None:
+            return None
+        trial = deeper
+    return trial if _legal_here(chk, trial, i, sp, cand) else None
+
+
+def _snap_to_legal(chk: Checker, pts, sp: SpotParams):
+    """The search accepts a lattice site when a legal cell lies within nudge_radius_m of it (10 Oct
+    2026); a grid tower that fails the exact check is moved to the nearest point within that radius
+    where it and its two spans pass every check. Gantries stay; a tower with no such point is left
+    for the violation report."""
+    pts = list(pts)
+    n = len(pts)
+    for i in range(1, n - 1):
+        x, y = pts[i]
+        if chk.tower_ok(x, y, angle_tower=True):
+            continue
+        prev_, next_ = pts[i - 1], pts[i + 1]
+        # local route direction: moves across it barely change the span lengths, so try them first
+        hx, hy = next_[0] - prev_[0], next_[1] - prev_[1]
+        hn = math.hypot(hx, hy) or 1.0
+        found = None
+        for rad in range(5, int(sp.nudge_radius_m) + 6, 5):
+            angles = sorted((2 * math.pi * k / 24 for k in range(24)),
+                            key=lambda a: abs(math.cos(a) * hx / hn + math.sin(a) * hy / hn))
+            for a in angles:
+                c = (x + rad * math.cos(a), y + rad * math.sin(a))
+                if not chk.tower_ok(c[0], c[1], angle_tower=True):
+                    continue
+                if _legal_here(chk, pts, i, sp, c):
+                    found = c
+                    break
+                # a neighbouring span at the cap: let a straight neighbour slide to make room
+                trial = list(pts); trial[i] = c
+                for nb, far in ((i - 1, i - 2), (i + 1, i + 2)):
+                    if nb <= 0 or nb >= n - 1 or far < 0 or far >= n:
+                        continue
+                    Lnb = math.hypot(c[0] - pts[nb][0], c[1] - pts[nb][1])
+                    over = Lnb - sp.span_max_m
+                    if over <= 0:
+                        continue
+                    moved = _shift_chain(chk, trial, nb, i, over + 1.0, sp)
+                    if moved is not None:
+                        trial = moved
+                if trial[i - 1] != pts[i - 1] or trial[i + 1] != pts[i + 1]:
+                    if _legal_here(chk, trial, i, sp, c):
+                        pts[:] = trial
+                        found = c
+                        break
+            if found:
+                break
+        if found:
+            pts[i] = found
+    return pts
+
+
 def _crossing_span_fix(chk: Checker, pts, sp: SpotParams):
     """The search lets a crossing span exceed its limit by half a site spacing (10 Oct 2026); here the
     two towers of such a span slide towards each other along it until the exact limit holds, each new
@@ -678,12 +789,26 @@ def _crossing_span_fix(chk: Checker, pts, sp: SpotParams):
                     continue
                 if not (chk.tower_ok(p2[0], p2[1], True) and chk.tower_ok(q2[0], q2[1], True)):
                     continue
+                # neighbours pushed over the cap by the slide: let a straight neighbour follow
+                trial = list(pts); trial[i], trial[i + 1] = p2, q2
+                for nb, k_, mv in ((i - 1, i, dp), (i + 2, i + 1, dq)):
+                    if mv <= 0 or nb <= 0 or nb >= n - 1:
+                        continue
+                    Lnb = math.hypot(trial[k_][0] - trial[nb][0], trial[k_][1] - trial[nb][1])
+                    if Lnb > sp.span_max_m + 1e-6:
+                        moved = _shift_chain(chk, trial, nb, k_, Lnb - sp.span_max_m + 1.0, sp)
+                        if moved is not None:
+                            trial = moved
+                prev_t, next_t = trial[i - 1], trial[i + 2]
+                segs = [(prev_t, p2), (p2, q2), (q2, next_t)]
                 if not all(chk.conductor_ok(a, b) and chk.span_crossings(a, b)[0] for a, b in segs):
                     continue
+                prev_, next_ = prev_t, next_t
                 if any(_deflection(a, b, c)[0] > sp.max_dev_deg for a, b, c in
                        ((pts[i - 2] if i >= 2 else None, prev_, p2), (prev_, p2, q2), (p2, q2, next_),
                         (q2, next_, pts[i + 3] if i + 3 < n else None)) if a is not None and c is not None):
                     continue
+                pts[:] = trial
                 pts[i], pts[i + 1] = p2, q2
                 done = True
                 break
@@ -728,7 +853,14 @@ def _wind_span_fix(chk: Checker, pts, sp: SpotParams):
             Ln = math.hypot(b[0] - a[0], b[1] - a[1])
             if Ln <= allow + 1e-3 or allow < sp.min_span_m:
                 continue
-            for dd in (allow, allow - 10, allow - 20, allow - 30):
+            if Ln - allow < sp.min_span_m:
+                # too little over the allowance for a new tower: slide the neighbour towards the
+                # crossing tower instead (10 Oct 2026; this made 3-5 m spans before)
+                moved = _shift_chain(chk, pts, nb, k, Ln - allow + 2.0, sp)
+                if moved is not None:
+                    pts[:] = moved
+                    continue
+            for dd in (allow - 2.0, allow - 10, allow - 20, allow - 30):     # 2 m margin: later passes may shift a tower slightly
                 if dd < sp.min_span_m:
                     break
                 if Ln - dd < sp.min_span_m - 1e-6:
