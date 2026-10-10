@@ -32,6 +32,7 @@ TEMPLATES = {
     "APART_FROM": "Route {route} is the second least-cost route: the least-cost line kept out of route {other}'s corridor.",
     "ROUTE_NOT_FOUND": "Route {route} ({name}) could not be found under its rules: {why}",
     "APPROVAL": "Approval: {item} — about {months:g} months.",
+    "MANUAL_EDIT": "Route {route}: {n} tower(s) moved by hand ({towers}) from solve {parent}; the moved towers and their neighbours were re-typed and re-checked, nothing else changed.",
     "PRECEDENT": "Route {route} found no path under its rules; it was solved again with {n} restricted area(s) opened where existing power towers already stand: {items}.",
     "DIVERSITY": "Route {route} first came out within {overlap_pct:.0f}% of route {other}'s corridor; it was re-solved with that corridor priced up to give a distinct alternative.",
 }

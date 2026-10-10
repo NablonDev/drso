@@ -1091,9 +1091,15 @@ class TowerCheck(BaseModel):
     lat: float
 
 
+class TowerMove(BaseModel):
+    tower_no: int
+    lon: float
+    lat: float
+
+
 class TowerMoves(BaseModel):
     route_id: int
-    moves: list[TowerCheck] = Field(min_length=1, max_length=200)
+    moves: list[TowerMove] = Field(min_length=1, max_length=200)
     note: str | None = None
 
 

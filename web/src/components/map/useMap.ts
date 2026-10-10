@@ -22,6 +22,7 @@ export function useMapLibre(
     const el = container.current;
     if (!el) return;
     const b = boundsRef.current;
+    // the newest map, for browser tests and console debugging
     const m = new maplibregl.Map({
       container: el,
       style: baseStyle(),
@@ -35,6 +36,7 @@ export function useMapLibre(
       touchPitch: false,
       fadeDuration: 0,
     });
+    (window as unknown as { __map?: maplibregl.Map }).__map = m;
     m.touchZoomRotate?.disableRotation();
     // A listener keeps MapLibre from printing tile errors to the console; the screens decide what to show.
     m.on("error", () => undefined);
