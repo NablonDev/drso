@@ -390,12 +390,12 @@ groups:
 
       - id: power_line
         name: "High tension power line"
-        note: "765 / 400 / 220 / 132 kV — the wire may be crossed anywhere except within 80 m of an existing tower (Vivek, 8 Oct 2026); angle 70–110° and span ≤ 300 m (Rule_Table 9-11); D towers both sides of lines ≥ 400 kV, B/C/D for 132–220 kV (TSD B.1-2); our towers ≥ 92.5 m from theirs at 765 kV (72.5 m tower height between 20 × 20 m bases)"
+        note: "765 / 400 / 220 / 132 kV — the wire may be crossed anywhere except within 80 m of an existing tower (Vivek, 8 Oct 2026); angle 70–110° and span ≤ 300 m (Rule_Table 9-11); D towers both sides of lines ≥ 400 kV, B/C/D for 132–220 kV (TSD B.1-2); our towers ≥ 92.5 m from their towers and from their conductors at 765 kV (72.5 m tower height between 20 × 20 m bases; Vivek, 10 Oct 2026: a falling tower must not reach another line)"
         layer: power
         classes: [power_line, power_tower]
         mechanism: crossing
         params:
-          - {key: tower_setback_m, label: "Tower to existing tower (centre to centre)", type: num, unit: m, value: {765: 92.5, 400: 100, 220: 100, 132: 100}}
+          - {key: tower_setback_m, label: "Tower to existing tower and conductor", type: num, unit: m, value: {765: 92.5, 400: 100, 220: 100, 132: 100}}
           - {key: crossing_tower_clear_m, label: "No crossing within, of an existing tower", type: num, unit: m, value: 80}
           - {key: angle_deg, label: "Crossing angle", type: rng, unit: "°", value: [70, 110]}
           - {key: angle_min_kv, label: "Crossing angle applies from", type: num, unit: kV, value: 66}
@@ -409,12 +409,12 @@ groups:
       # now, set independently. Same shutdown crossing cost.
       - id: power_line_lt
         name: "Low tension power line"
-        note: "66 / 33 kV — crossed anywhere except within 80 m of a tower / pole; suspension or tension towers either side (TSD B.3); angle 70–110° from 66 kV (Rule_Table 9)"
+        note: "66 / 33 kV — crossed anywhere except within 80 m of a tower / pole; suspension or tension towers either side (TSD B.3); angle 70–110° from 66 kV (Rule_Table 9); our towers keep the tower setback from their towers and their conductors (Vivek, 10 Oct 2026)"
         layer: power_lt
         classes: [power_line, power_tower]
         mechanism: crossing
         params:
-          - {key: tower_setback_m, label: "Tower to existing tower (centre to centre)", type: num, unit: m, value: {765: 92.5, 400: 100, 220: 100, 132: 100}}
+          - {key: tower_setback_m, label: "Tower to existing tower and conductor", type: num, unit: m, value: {765: 92.5, 400: 100, 220: 100, 132: 100}}
           - {key: crossing_tower_clear_m, label: "No crossing within, of an existing tower", type: num, unit: m, value: 80}
           - {key: angle_deg, label: "Crossing angle", type: rng, unit: "°", value: [70, 110]}
           - {key: angle_min_kv, label: "Crossing angle applies from", type: num, unit: kV, value: 66}

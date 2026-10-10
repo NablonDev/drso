@@ -752,13 +752,12 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
             td = float(p.get("tower_setback_m", 0))
             classes = r.classes
             if r.id in ("power_line", "power_line_lt"):
-                # towers keep clear of existing towers and of the existing conductors;
-                # "Tower to existing tower" applies to towers. Existing conductors: a new tower
-                # keeps the new line's corridor half-width clear of them (interpretation, flagged).
+                # towers keep clear of existing towers and of the existing conductors by the same
+                # distance (Vivek, 10 Oct 2026: a falling tower must not reach another line)
                 add(_within(R.dist(r.layer, ["power_tower"]), td), tower_forbidden, r.id)
                 vec(tower_geoms, r.id, r.layer, ["power_tower"], td)
-                add(_within(R.dist(r.layer, ["power_line"]), hw), tower_forbidden, r.id)
-                vec(tower_geoms, r.id, r.layer, ["power_line"], hw)
+                add(_within(R.dist(r.layer, ["power_line"]), td), tower_forbidden, r.id)
+                vec(tower_geoms, r.id, r.layer, ["power_line"], td)
                 # the new conductor may cross the existing wire anywhere except within
                 # `crossing_tower_clear_m` of an existing tower (Vivek, 8 Oct 2026)
                 cl = float(p.get("crossing_tower_clear_m", 0))

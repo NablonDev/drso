@@ -875,3 +875,20 @@ def test_angle_span_fix_never_leaves_a_span_below_the_minimum():
     pts = _angle_span_fix(chk, [(x0 - 300, 0.0), p0, p1, p2, p3, (p3[0] + 300, p3[1])], sp)
     spans = [math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in zip(pts[:-1], pts[1:])]
     assert min(spans[1:-1]) >= 100 - 1e-6, [round(x) for x in spans]
+
+
+def test_new_tower_keeps_the_tower_setback_from_existing_conductors():
+    """Vivek, 10 Oct 2026: a new tower keeps the same distance from an existing line's conductors as
+    from its towers (765 kV: 92.5 m), so a falling tower cannot reach the other line."""
+    f = frame()
+    spec = LineSpec(765, "dc")
+    rules, costs = resolve_rules(spec), resolve_costs(spec)
+    c = f.length_m / 2
+    ex = _existing_400(f, c, [-1900, 1900])                 # towers far from the bee-line
+    comp = compile_rules(f, {"power": ex}, rules, costs, 765, 33.5, 150, 400)
+
+    def forbidden(x, y):
+        col, row = f.frame_to_pixel(x, y)
+        return bool(comp.tower_forbidden[int(row), int(col)])
+    assert forbidden(c + 60, 0) and forbidden(c - 85, 0)       # 60 / 85 m from the wire, 1.9 km from a tower
+    assert not forbidden(c + 115, 0) and not forbidden(c - 115, 0)
