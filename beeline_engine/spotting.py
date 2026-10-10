@@ -661,8 +661,10 @@ def _wind_span_fix(chk: Checker, pts, sp: SpotParams):
             c0, _ = _span_clearance(chk, p, q, sp)
             need = 0.0 if c0 is None else max(0.0, sp.ground_clearance_m - c0)
             ws = sp.tsd.get("wind_span_m", {})
-            steps = [x for x in _ext_steps(sp, "D45") if x >= need - 1e-6]
-            st = min(steps) if steps else 45.0
+            # the closest step, as _clearance will give the crossing towers (Vivek, 9 Oct 2026); the
+            # smallest step >= need here put towers 2 x 300 - L from the crossing towers needlessly
+            st = nearest_step(need, _ext_steps(sp, "D45"))
+            st = 45.0 if st is None else st
             if need > 0 and st >= 18:
                 w = float(ws.get("d18", 300) if st < 33 else ws.get("d33", 270) if st < 45 else ws.get("d45", 250))
         allow = 2 * w - L                            # longest neighbour span at each crossing tower
