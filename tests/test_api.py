@@ -600,3 +600,31 @@ def test_quick_solve_skips_exports_until_asked(client):
         assert name in s2["files"], name
     assert client.get(f"/api/solves/{s['id']}/files/report.pdf").content[:4] == b"%PDF"
     assert client.post("/api/solves/999999/exports").status_code == 404
+
+
+def test_terrain_tiles_elevation_and_profile(client):
+    """Ground height on the map (10 Oct 2026): Terrarium DEM tiles from the GLO-30 tiles on disk, elevation
+    at a point, DEM coverage per run and a route's longitudinal profile."""
+    import mercantile
+    t = mercantile.tile(69.62, 23.45, 12)
+    r = client.get(f"/api/tiles/dem/{t.z}/{t.x}/{t.y}.png")
+    assert r.status_code == 200 and r.headers["content-type"] == "image/png" and r.content[:4] == b"\x89PNG"
+    assert client.get("/api/tiles/dem/12/0/0.png").status_code == 404           # nothing on disk there
+    e = client.get("/api/dem/elevation", params={"lon": 69.591253, "lat": 23.456596}).json()
+    assert e["elevation_m"] is not None and -10 < e["elevation_m"] < 200
+    rid = make_run(client)
+    cov = client.get(f"/api/runs/{rid}/dem").json()
+    assert cov["complete"] and len(cov["present"]) >= 1
+    client.post(f"/api/runs/{rid}/extract", json={})
+    assert run_next_job()["status"] == "done"
+    r = client.put(f"/api/runs/{rid}/rules/protected_areas", json={"enabled": True, "params": {"treatment": "Allowed"},
+                                                                  "reason": "test: sanctuary closes the test band"})
+    assert r.status_code == 200
+    assert client.post(f"/api/runs/{rid}/solve", json={"exports": False}).status_code == 202
+    assert run_next_job()["status"] == "done"
+    s = client.get(f"/api/runs/{rid}/solve").json()
+    rt = s["result"]["routes"][0]
+    p = client.get(f"/api/solves/{s['id']}/routes/{rt['id']}/profile").json()
+    assert p["dem"] and len(p["ground"]["x"]) > 100 and len(p["towers"]) == len(rt["towers"])
+    assert all(sp["sag_m"] > 0 for sp in p["spans"]) and p["clearance_m"] == 18.15
+    assert client.get(f"/api/solves/{s['id']}/routes/99/profile").status_code == 404

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { mapToolState } from "./MapTools";
+import { moveHandlers } from "./TowerMoveTool";
 import maplibregl from "maplibre-gl";
 import type { GeoJSONSource } from "maplibre-gl";
 import { towersToGeoJSON, useTowers, type StoredTower } from "../../store/towers";
@@ -155,20 +156,26 @@ export default function TowerLayer({
   useEffect(() => {
     if (!map || !editable) return;
     let dragging: string | null = null;
+    let last: [number, number] | null = null;
     const onDown = (e: maplibregl.MapLayerMouseEvent) => {
       const fid = e.features?.[0]?.properties?.fid;
-      if (!fid) return;
+      if (!fid || e.features?.[0]?.properties?.gantry) return;
       e.preventDefault();
       dragging = String(fid);
       map.dragPan.disable();
       map.getCanvas().style.cursor = "grabbing";
     };
     const onMove = (e: maplibregl.MapMouseEvent) => {
-      if (dragging) moveTower(dragging, e.lngLat.lng, e.lngLat.lat);
+      if (!dragging) return;
+      last = [e.lngLat.lng, e.lngLat.lat];
+      moveTower(dragging, e.lngLat.lng, e.lngLat.lat);
+      moveHandlers.drag?.(dragging, e.lngLat.lng, e.lngLat.lat);
     };
     const onUp = () => {
       if (!dragging) return;
+      if (last) moveHandlers.drop?.(dragging, last[0], last[1]);
       dragging = null;
+      last = null;
       map.dragPan.enable();
       map.getCanvas().style.cursor = "";
     };

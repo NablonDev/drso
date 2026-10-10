@@ -23,6 +23,7 @@ import {
   setRunLayerVisibility,
 } from "../components/map/style";
 import { useFitBounds, useMapLibre, useRunTiles, type Bounds } from "../components/map/useMap";
+import TerrainControl from "../components/map/TerrainControl";
 import MapTools, { mapToolState } from "../components/map/MapTools";
 import { CeilingNote, ScaleBar, useCeiling, ZoomBar } from "../components/map/ZoomBar";
 import { Btn, ConfPill, ErrorNote, Head, Loading, Note, SourcePill } from "../components/ui";
@@ -386,6 +387,7 @@ function Body({ L }: { L: LayersResponse }) {
           <div className="mapcanvas" ref={canvasRef} data-testid="layer-map">
             <div ref={mapRef} className="mlmap" />
             <MapTools map={map} runId={run.id} onLayersChanged={tiles.retry} />
+            <TerrainControl map={map} runId={run.id} />
             {swipe < 100 ? <BareMap main={map} bounds={bounds} clipRight={swipe} /> : null}
             {swipe < 100 ? (
               <div className="swipe" style={{ left: `${100 - swipe}%` }}>

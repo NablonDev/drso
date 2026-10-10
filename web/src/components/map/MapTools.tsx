@@ -115,7 +115,7 @@ export default function MapTools({ map, runId, onLayersChanged }: {
   const [pts, setPts] = useState<LngLat[]>([]);
   const [hover, setHover] = useState<LngLat | null>(null);
   const [measured, setMeasured] = useState<LngLat[] | null>(null);
-  const [menu, setMenu] = useState<{ x: number; y: number; ll: LngLat } | null>(null);
+  const [menu, setMenu] = useState<{ x: number; y: number; ll: LngLat; z?: number | null } | null>(null);
   const [pending, setPending] = useState<FC | null>(null);
   const [pendingName, setPendingName] = useState("");
   const [askRerun, setAskRerun] = useState<string | null>(null);
@@ -277,7 +277,12 @@ export default function MapTools({ map, runId, onLayersChanged }: {
     };
     const onCtx = (e: maplibregl.MapMouseEvent) => {
       e.preventDefault();
-      setMenu({ x: e.point.x, y: e.point.y, ll: [e.lngLat.lng, e.lngLat.lat] });
+      const ll: LngLat = [e.lngLat.lng, e.lngLat.lat];
+      setMenu({ x: e.point.x, y: e.point.y, ll, z: undefined });
+      // ground height at the point (10 Oct 2026), from the DEM the solver used
+      fetch(`/api/dem/elevation?lon=${ll[0]}&lat=${ll[1]}`).then((r) => (r.ok ? r.json() : null)).then((d) => {
+        setMenu((m) => (m && m.ll[0] === ll[0] && m.ll[1] === ll[1] ? { ...m, z: d ? (d as { elevation_m: number | null }).elevation_m : null } : m));
+      }).catch(() => setMenu((m) => (m ? { ...m, z: null } : m)));
     };
     map.on("click", onClick);
     map.on("dblclick", onDbl);
@@ -409,7 +414,7 @@ export default function MapTools({ map, runId, onLayersChanged }: {
 
       {menu ? (
         <div className="mt-menu" style={{ left: menu.x, top: menu.y }} role="menu" data-testid="map-context-menu" onMouseLeave={() => setMenu(null)}>
-          <div className="mt-coords">{coordText(menu.ll)}</div>
+          <div className="mt-coords">{coordText(menu.ll)}{menu.z === undefined ? "" : ` · ${menu.z === null ? "no DEM" : `${menu.z.toFixed(1)} m`}`}</div>
           <button role="menuitem" onClick={async () => {
             const ok = await copyText(coordText(menu.ll));
             push({ kind: ok ? "ok" : "warn", text: ok ? `Copied ${coordText(menu.ll)}` : `Copy failed — select and copy: ${coordText(menu.ll)}` });
@@ -421,6 +426,14 @@ export default function MapTools({ map, runId, onLayersChanged }: {
             push({ kind: ok ? "ok" : "warn", text: ok ? `Copied ${t}` : `Copy failed — select and copy: ${t}` });
             setMenu(null);
           }}>Copy as lon, lat</button>
+          {typeof menu.z === "number" ? (
+            <button role="menuitem" onClick={async () => {
+              const t = `${coordText(menu.ll)}, ${menu.z!.toFixed(1)} m`;
+              const ok = await copyText(t);
+              push({ kind: ok ? "ok" : "warn", text: ok ? `Copied ${t}` : `Copy failed — select and copy: ${t}` });
+              setMenu(null);
+            }}>Copy with elevation (lat, lon, m)</button>
+          ) : null}
         </div>
       ) : null}
 

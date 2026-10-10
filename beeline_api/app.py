@@ -1045,6 +1045,109 @@ def esri_tile(z: int, x: int, y: int):
     return Response(data, media_type=ctype, headers={"Cache-Control": "public, max-age=604800"})
 
 
+# ---- terrain (10 Oct 2026): hillshade / 3D tiles, cursor elevation, route profile -------------
+@app.get("/api/tiles/dem/{z}/{x}/{y}.png")
+def dem_tile(z: int, x: int, y: int):
+    from . import terrain
+    data = terrain.tile(z, x, y)
+    if data is None:
+        raise HTTPException(404, "no DEM tile on disk here")
+    return Response(data, media_type="image/png", headers={"Cache-Control": "public, max-age=604800"})
+
+
+@app.get("/api/dem/elevation")
+def dem_elevation(lon: float, lat: float):
+    from . import terrain
+    return {"lon": lon, "lat": lat, "elevation_m": terrain.elevation(lon, lat)}
+
+
+@app.get("/api/runs/{run_id}/dem")
+def dem_coverage(run_id: str):
+    r = _run(run_id)
+    from . import terrain
+    from beeline_engine.frame import Frame
+    fr = Frame((r["a_lon"], r["a_lat"]), (r["b_lon"], r["b_lat"]), r["band_km"] * 1000, 500, 100)
+    return terrain.covers(fr.band_polygon_lonlat(margin=True).bounds)
+
+
+@app.get("/api/solves/{sid}/routes/{route_id}/profile")
+def route_profile(sid: int, route_id: int):
+    s = db.one("select result, run_id from solves where id=%s", (sid,))
+    if not s:
+        raise HTTPException(404, "solve not found")
+    route = next((r for r in (s["result"] or {}).get("routes", []) if r["id"] == route_id), None)
+    if route is None:
+        raise HTTPException(404, "route not in this solve")
+    run = db.one("select kv from runs where id=%s", (s["run_id"],))
+    from . import terrain
+    return terrain.profile(route, int(run["kv"]))
+
+
+# ---- manual tower moves (10 Oct 2026) ---------------------------------------------------
+class TowerCheck(BaseModel):
+    route_id: int
+    tower_no: int
+    lon: float
+    lat: float
+
+
+class TowerMoves(BaseModel):
+    route_id: int
+    moves: list[TowerCheck] = Field(min_length=1, max_length=200)
+    note: str | None = None
+
+
+@app.get("/api/solves/{sid}/edit/status")
+def edit_status(sid: int, prepare: bool = False):
+    """Whether the solve's rules are loaded for live checks; prepare=true starts loading them."""
+    from . import towers_edit
+    st = towers_edit.status(sid)
+    if prepare and not st["ready"] and not st.get("building"):
+        import threading
+        threading.Thread(target=towers_edit.context, args=(sid,), daemon=True).start()
+        st = {"ready": False, "building": True}
+    return st
+
+
+@app.post("/api/solves/{sid}/edit/check")
+def edit_check(sid: int, req: TowerCheck):
+    from . import towers_edit
+    ctx = towers_edit.context(sid, wait=False)
+    if ctx is None:
+        return {"ok": None, "preparing": True}
+    try:
+        return ctx.check(req.route_id, req.tower_no, req.lon, req.lat)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.get("/api/solves/{sid}/nogo/{z}/{x}/{y}.png")
+def nogo_tile(sid: int, z: int, x: int, y: int):
+    from . import towers_edit
+    ctx = towers_edit.context(sid, wait=False)
+    if ctx is None:
+        raise HTTPException(503, "rules still loading")
+    return Response(ctx.nogo_tile(z, x, y), media_type="image/png", headers={"Cache-Control": "no-cache"})
+
+
+@app.post("/api/solves/{sid}/edit/apply", status_code=201)
+def edit_apply(sid: int, req: TowerMoves):
+    """Apply hand moves: a new solve version with the route's moved towers and re-typed neighbours."""
+    from . import towers_edit
+    s = db.one("select run_id from solves where id=%s", (sid,))
+    if not s:
+        raise HTTPException(404, "solve not found")
+    a = jobs.active()
+    if a and a["run_id"] == s["run_id"]:
+        raise jobs.Busy(a)
+    ctx = towers_edit.context(sid)
+    try:
+        out = ctx.apply(req.route_id, [m.model_dump() for m in req.moves], req.note)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"solve_id": out["solve_id"], "solve": _solve_json(db.one("select * from solves where id=%s", (out["solve_id"],)))}
+
+
 # ---- results --------------------------------------------------------------------------
 def _solve_json(s: dict) -> dict:
     files, sizes = [], {}

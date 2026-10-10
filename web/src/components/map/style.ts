@@ -204,10 +204,27 @@ export function baseStyle(): StyleSpecification {
         maxzoom: ESRI_MAX_ZOOM,
         attribution: "Imagery © Esri World Imagery (Vantor, Maxar and the GIS user community)",
       },
+      // ground height (10 Oct 2026): Terrarium-encoded tiles from the Copernicus GLO-30 DEM the solver uses;
+      // loaded only while the hillshade layer is visible or 3D terrain is on
+      dem: {
+        type: "raster-dem",
+        tiles: [`${origin()}/api/tiles/dem/{z}/{x}/{y}.png`],
+        tileSize: 256,
+        encoding: "terrarium",
+        maxzoom: 15,
+        attribution: "Terrain: Copernicus GLO-30 DEM",
+      },
     },
     layers: [
       { id: "bg", type: "background", paint: { "background-color": "#1d2421" } },
       { id: "esri", type: "raster", source: "esri", paint: { "raster-fade-duration": 120 } },
+      {
+        id: "hillshade",
+        type: "hillshade",
+        source: "dem",
+        layout: { visibility: "none" },
+        paint: { "hillshade-exaggeration": 0.65, "hillshade-shadow-color": "#1b2a24", "hillshade-highlight-color": "#fff8e8", "hillshade-illumination-direction": 315 },
+      },
     ],
   };
 }

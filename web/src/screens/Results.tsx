@@ -21,6 +21,9 @@ import {
   setRunLayerVisibility,
 } from "../components/map/style";
 import { useFitBounds, useMapLibre, useRunTiles, type Bounds } from "../components/map/useMap";
+import TerrainControl from "../components/map/TerrainControl";
+import RouteProfile from "../components/RouteProfile";
+import TowerMoveTool from "../components/map/TowerMoveTool";
 import MapTools, { mapToolState } from "../components/map/MapTools";
 import { CeilingNote, ScaleBar, useCeiling, ZoomBar } from "../components/map/ZoomBar";
 import { ErrorNote, Head, Kpi, Loading, Note } from "../components/ui";
@@ -68,6 +71,7 @@ function Body({ s }: { s: Solve }) {
   const [on, setOn] = useState<Record<string, boolean>>(() => Object.fromEntries(LAYER_ORDER.map((k) => [k, DEFAULT_ON.has(k)])));
   const [widen, setWiden] = useState(false);
   const [maxed, setMaxed] = useState(false);
+  const [moveMode, setMoveMode] = useState(false);
   // routes hidden on the map (8 Oct 2026), like the layer toggles
   const [hidden, setHidden] = useState<number[]>([]);
   const routes = s.result.routes;
@@ -345,18 +349,25 @@ function Body({ s }: { s: Solve }) {
             <button aria-pressed={maxed} onClick={() => setMaxed((x) => !x)} data-testid="map-maximise" title="Fill the screen with the map (Esc to return)">
               Maximise map
             </button>
+            <button aria-pressed={moveMode} onClick={() => setMoveMode((x) => !x)} disabled={!feasible || !sel} data-testid="move-towers"
+              title="Drag the selected route's towers; each position is checked against the rules and saved as a new version">
+              Move towers
+            </button>
           </div>
           <div className={`mapcanvas${maxed ? " maxed" : ""}`} data-testid="route-map">
             <div ref={mapRef} className="mlmap" />
             <MapTools map={map} runId={run.id} onLayersChanged={tiles.retry} />
+            <TerrainControl map={map} runId={run.id} />
+            {feasible && sel ? <TowerMoveTool map={map} sid={s.id} runId={run.id} route={sel} active={moveMode} onExit={() => setMoveMode(false)} /> : null}
             {maxed ? (
               <button className="mapexit" onClick={() => setMaxed(false)} data-testid="map-restore">Exit full screen · Esc</button>
             ) : null}
             {!map ? <div className="mapnote"><Loading text="Loading imagery…" /></div> : null}
           </div>
-          {t.towers && feasible && !hidden.includes(sel.id) ? <TowerLayer map={map} routes={[sel.id]} editable={false} /> : null}
+          {(t.towers || moveMode) && feasible && !hidden.includes(sel.id) ? <TowerLayer map={map} routes={[sel.id]} editable={moveMode} /> : null}
           <ScaleBar map={map} />
           <CeilingNote ceiling={ceiling} />
+          {feasible && sel ? <RouteProfile sid={s.id} route={sel} map={map} enabled={!maxed} /> : null}
           {tiles.error && wantTiles ? (
             <div className="note n-stop" style={{ marginTop: 8 }} role="alert" data-testid="tile-error">
               <div style={{ flex: 1 }}>

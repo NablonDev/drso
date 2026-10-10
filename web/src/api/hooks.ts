@@ -6,7 +6,7 @@ import {
   type UseMutationOptions,
 } from "@tanstack/react-query";
 import { ApiError, api, errorText } from "./client";
-import type { ImageryCatalog, ModelStatus,
+import type { DemCoverage, RouteProfile, ImageryCatalog, ModelStatus,
   AppConfig,
   BandInfo,
   CompareResponse,
@@ -131,6 +131,25 @@ export function useCosts(id: string | undefined) {
 }
 
 /** The latest solve. Keyed by solve id: a solve never changes once written. */
+export function useDemCoverage(runId: string | undefined) {
+  return useQuery({
+    queryKey: ["dem-coverage", runId],
+    queryFn: () => api<DemCoverage>(`/api/runs/${encodeURIComponent(runId!)}/dem`),
+    enabled: Boolean(runId),
+    staleTime: Infinity,
+  });
+}
+
+export function useRouteProfile(sid: number | null | undefined, routeId: number | null | undefined, enabled = true) {
+  return useQuery({
+    queryKey: ["profile", sid ?? 0, routeId ?? 0],
+    queryFn: () => api<RouteProfile>(`/api/solves/${sid}/routes/${routeId}/profile`),
+    enabled: Boolean(sid && routeId && enabled),
+    staleTime: Infinity,
+    gcTime: 10 * 60_000,
+  });
+}
+
 export function useSolve(id: string | undefined, sid: number | null | undefined) {
   return useQuery({
     queryKey: qk.solve(id ?? "", sid),

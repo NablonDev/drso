@@ -558,6 +558,52 @@ export interface Manifest {
   [k: string]: unknown;
 }
 
+export interface DemCoverage {
+  needed: string[];
+  present: string[];
+  complete: boolean;
+  source: string;
+}
+
+export interface ProfileTower {
+  no: number;
+  type: string;
+  chainage_m: number;
+  ground_z: number | null;
+  extension_m: number;
+  attach_z: number | null;
+  deflection_deg: number | null;
+  violations: string[];
+  lon: number;
+  lat: number;
+}
+
+export interface ProfileSpan {
+  a: number;
+  b: number;
+  length_m: number;
+  sag_m: number;
+  min_clearance_m: number | null;
+  crossings: string[];
+  chainage_a: number;
+  chainage_b: number;
+  attach_a: number | null;
+  attach_b: number | null;
+}
+
+export interface RouteProfile {
+  kv: number;
+  clearance_m: number;
+  attachment_m: number;
+  sag_reference_span_m: number;
+  step_m: number;
+  dem: string | null;
+  length_m: number;
+  ground: { x: number[]; z: (number | null)[] };
+  towers: ProfileTower[];
+  spans: ProfileSpan[];
+}
+
 export interface Solve {
   id: number;
   run_id: string;
