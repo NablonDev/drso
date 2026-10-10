@@ -41,6 +41,8 @@ class SolverParams:
     parallel_angle_deg: float = 30.0
     # long spans, valid only across a river (0 disables)
     river_max_span_m: float = 0.0
+    crossing_span_slack_m: float = 0.0       # search only: a crossing span may exceed its limit by this
+                                             # much (half a site spacing); the spotting enforces the exact limit
     long_heading_limit_deg: float = 60.0
     long_heading_step_deg: float = 5.0
     long_length_step_m: float = 100.0
@@ -318,7 +320,7 @@ def _edge_block(compiled: Compiled, grid: Grid, p: SolverParams, rasters: "_Rast
         if cr.window is not None:
             bad |= acute < cr.window[0] - 1e-3
         if cr.max_span_m is not None:
-            bad |= length > cr.max_span_m + 1e-3
+            bad |= length > cr.max_span_m + p.crossing_span_slack_m + 1e-3
         min_type = cr.min_type
         cost = cr.cost_rs
         if width_t is not None and cr.major_threshold_m is not None:

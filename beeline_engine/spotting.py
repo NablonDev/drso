@@ -534,6 +534,7 @@ def build_route(chk: Checker, pts: list[tuple[float, float]], angle_set: set[int
     """Tower list from points; angle_set = indices that are angle points (None = all with deflection)."""
     comp = chk.c
     added = set()
+    pts = _crossing_span_fix(chk, pts, sp)
     if sp.tsd:
         pts = _wind_span_fix(chk, pts, sp)
         pts = _angle_span_fix(chk, pts, sp)
@@ -646,6 +647,49 @@ def build_route(chk: Checker, pts: list[tuple[float, float]], angle_set: set[int
         _tsd_checks(towers, spans, sp)
     cost, stats = route_cost(comp, towers, spans, sp)
     return SpottedRoute(towers, spans, cost, stats, "pulled" if angle_set is None else "grid")
+
+
+def _crossing_span_fix(chk: Checker, pts, sp: SpotParams):
+    """The search lets a crossing span exceed its limit by half a site spacing (10 Oct 2026); here the
+    two towers of such a span slide towards each other along it until the exact limit holds, each new
+    position passing the tower, conductor, crossing, span-length and deviation checks."""
+    pts = list(pts)
+    n = len(pts)
+    for i in range(1, n - 2):                      # gantry spans are left alone
+        p, q = pts[i], pts[i + 1]
+        L = math.hypot(q[0] - p[0], q[1] - p[1])
+        items = chk.span_crossings(p, q)[1]
+        rules = {it.get("rule") for it in items}
+        lims = [cr.max_span_m for cr in chk.c.crossings if cr.max_span_m is not None and cr.rule_id in rules]
+        if not lims or L <= min(lims) + 1e-3:
+            continue
+        lim = min(lims)
+        need = L - lim
+        ux, uy = (q[0] - p[0]) / L, (q[1] - p[1]) / L
+        prev_, next_ = pts[i - 1], pts[i + 2]
+        done = False
+        for extra in (0.5, 3.0, 6.0, 10.0):
+            for split in (0.5, 1.0, 0.0, 0.25, 0.75):
+                dp, dq = (need + extra) * split, (need + extra) * (1 - split)
+                p2 = (p[0] + ux * dp, p[1] + uy * dp)
+                q2 = (q[0] - ux * dq, q[1] - uy * dq)
+                segs = [(prev_, p2), (p2, q2), (q2, next_)]
+                if any(math.hypot(b[0] - a[0], b[1] - a[1]) < sp.min_span_m - 1e-6 for a, b in segs):
+                    continue
+                if not (chk.tower_ok(p2[0], p2[1], True) and chk.tower_ok(q2[0], q2[1], True)):
+                    continue
+                if not all(chk.conductor_ok(a, b) and chk.span_crossings(a, b)[0] for a, b in segs):
+                    continue
+                if any(_deflection(a, b, c)[0] > sp.max_dev_deg for a, b, c in
+                       ((pts[i - 2] if i >= 2 else None, prev_, p2), (prev_, p2, q2), (p2, q2, next_),
+                        (q2, next_, pts[i + 3] if i + 3 < n else None)) if a is not None and c is not None):
+                    continue
+                pts[i], pts[i + 1] = p2, q2
+                done = True
+                break
+            if done:
+                break
+    return pts
 
 
 def _wind_span_fix(chk: Checker, pts, sp: SpotParams):

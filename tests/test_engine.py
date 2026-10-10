@@ -948,3 +948,26 @@ def test_canal_buffers_start_at_its_edge():
     assert par and np.isfinite(par[0].angle[int(row), int(col)])         # within 45 m: parallel check applies
     col, row = f.frame_to_pixel(c + 70, 0)
     assert not np.isfinite(par[0].angle[int(row), int(col)])
+
+
+def test_crossing_span_slack_is_removed_by_spotting():
+    """10 Oct 2026: the search may exceed a crossing-span limit by half a site spacing; the spotting
+    slides the two crossing towers along the span so the exact limit (300 m at a power line) holds."""
+    from beeline_engine.spotting import Checker, SpotParams, _crossing_span_fix
+    f = frame()
+    spec = LineSpec(765, "dc")
+    rules, costs = resolve_rules(spec), resolve_costs(spec)
+    c = f.length_m / 2
+    comp = compile_rules(f, {"power": _existing_400(f, c, list(np.arange(-1800, 1801, 400.0)) )}, rules, costs, 765, 33.5, 150, 400)
+    sp = SpotParams(design_span_m=400, span_max_m=400, min_span_m=100, max_dev_deg=60, type_bands={},
+                    section_km=5, parallel_angle_deg=30, tower_cost_rs={}, ground_clearance_m=18.15,
+                    lowest_attachment_m=32.6, sag_at_design_m=14.278, go_radius_m=150)
+    chk = Checker(comp, sp)
+    y = 0.0                                             # mid-span of the existing line (towers at ±200): crossable
+    pts = [(c - 900, y), (c - 540, y), (c - 160, y), (c + 160, y), (c + 500, y), (c + 840, y)]   # 320 m crossing span, neighbours ≤ 400
+    out = _crossing_span_fix(chk, pts, sp)
+    L = math.hypot(out[3][0] - out[2][0], out[3][1] - out[2][1])
+    assert L <= 300 + 1e-6, L
+    assert chk.tower_ok(*out[2], True) and chk.tower_ok(*out[3], True)
+    assert chk.span_crossings(out[2], out[3])[0]
+    assert all(math.hypot(b[0] - a[0], b[1] - a[1]) >= 100 for a, b in zip(out[:-1], out[1:]))
