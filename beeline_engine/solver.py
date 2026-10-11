@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import math
+import threading
 import time
 from dataclasses import dataclass
 
@@ -224,6 +225,9 @@ def _acute(a_deg, b_deg):
     return torch.minimum(d, 180.0 - d)
 
 
+_CACHE_MUTEX = threading.Lock()
+
+
 def _edge_index(grid: Grid, rasters: "_Rasters", c_from: int, c_to: int, kidx: np.ndarray, n_samples: int):
     """Raster rows / cols sampled along every edge of the block, plus the edge geometry tensors."""
     dev = rasters.dev
@@ -259,9 +263,17 @@ def _edge_block(compiled: Compiled, grid: Grid, p: SolverParams, rasters: "_Rast
     key = (c_from, c_to, int(require_river), int(n_samples), int(len(kidx)), grid.nc, grid.nr, len(grid.offsets))
     geom = cache.get(key) if cache is not None else None
     if geom is None:
-        geom = _edge_geom(compiled, grid, p, rasters, c_from, c_to, kidx, n_samples, require_river)
-        if cache is not None:
-            cache[key] = geom
+        if cache is None:
+            geom = _edge_geom(compiled, grid, p, rasters, c_from, c_to, kidx, n_samples, require_river)
+        else:
+            # one route computes a block while the others wait for it instead of computing it too
+            with _CACHE_MUTEX:
+                lock = cache.setdefault("__locks__", {}).setdefault(key, threading.Lock())
+            with lock:
+                geom = cache.get(key)
+                if geom is None:
+                    geom = _edge_geom(compiled, grid, p, rasters, c_from, c_to, kidx, n_samples, require_river)
+                    cache[key] = geom
     A, B = geom
     return B + A * _edge_strip(grid, rasters, c_from, c_to, kidx, n_samples)
 

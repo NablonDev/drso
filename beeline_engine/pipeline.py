@@ -371,7 +371,7 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
             return relaxed_box[key]
     cap_cfg = eng.get("forest_cap") or {}
     cap_mults = [float(m) for m in (cap_cfg.get("multipliers") or (10, 30))]
-    cap_margin = float(cap_cfg.get("grid_check_margin", 1.25))
+    cap_margin = float(cap_cfg.get("grid_check_margin", 0) or 0)      # 0 = spot every pass
 
     def compiled_relaxed():
         return compiled_variant(True)
@@ -467,7 +467,7 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
                     continue
                 grid_ha = _line_forest_ha(cv, _outcome_line(out2))
                 rec["grid_ha"] = round(grid_ha, 2)
-                if grid_ha > forest_cap * cap_margin and mult != mults[-1]:
+                if cap_margin > 0 and grid_ha > forest_cap * cap_margin and mult != mults[-1]:
                     rec["spotted"] = False
                     continue
                 pts2 = [(float(x), float(y)) for x, y in (out2.grid.site_xy(c, r) for c, r in out2.sites)]
