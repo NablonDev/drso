@@ -108,35 +108,6 @@ class SpottedRoute:
     method: str                    # pulled | grid
 
 
-def _shortlist(comp, attr: str):
-    """(STRtree, owner rule index per tree geometry) over the rules in comp.<attr>, cached on the compile.
-    Buffers are supersets of the exact distance, so the tree only narrows the rules to test exactly."""
-    from shapely import STRtree
-    rules = getattr(comp, attr, None)
-    if not rules:
-        return None
-    cache = getattr(comp, "_shortlist_cache", None)
-    if cache is None:
-        cache = {}
-        try:
-            comp._shortlist_cache = cache
-        except Exception:
-            pass
-    if attr in cache:
-        return cache[attr]
-    polys, owner = [], []
-    for i, r in enumerate(rules):
-        pad = r.d * 0.1 + 1.0 if r.d > 0 else 0.0
-        for g in r.geoms:
-            if g is None or g.is_empty:
-                continue
-            polys.append(g.buffer(r.d + pad, resolution=4) if r.d > 0 else g)
-            owner.append(i)
-    out = (STRtree(polys), np.asarray(owner, dtype=int)) if polys else None
-    cache[attr] = out
-    return out
-
-
 # ----------------------------------------------------------------------------------------
 class Checker:
     """Exact and raster checks in frame coordinates."""
@@ -159,23 +130,9 @@ class Checker:
         self._clear = ~ndimage.binary_dilation(comp.tower_forbidden, iterations=2)
         self._clear_angle = ~ndimage.binary_dilation(comp.angle_forbidden, iterations=2)
         self._verify = os.environ.get("BEELINE_VERIFY_PREFILTER") == "1"
-        # Shortlist trees (11 Oct 2026): one STRtree over every rule's features buffered by a superset of
-        # its distance (low-resolution buffer padded by 10 % + 1 m), so a check asks one tree which rules
-        # can hit at all and runs the exact test on those only (was one dwithin query per rule, ~47 a tower)
-        self._tower_idx = _shortlist(comp, "tower_nogo")
-        self._angle_idx = _shortlist(comp, "angle_nogo")
-        self._cond_idx = _shortlist(comp, "conductor_nogo")
-
-    def _any_hit(self, geom, rules, idx) -> bool:
-        """any(r.hits(geom) for r in rules), through the shortlist tree."""
-        if idx is None or not self.sp.raster_prefilter:
-            return any(r.hits(geom) for r in rules)
-        tree, owner = idx
-        cand = tree.query(geom, predicate="intersects")
-        hit = len(cand) > 0 and any(rules[i].hits(geom) for i in set(owner[cand].tolist()))
-        if self._verify and hit != any(r.hits(geom) for r in rules):
-            log.warning("shortlist disagreement for %s", geom.wkt[:60])
-        return hit
+        # (A combined shortlist STRtree over every rule's buffered features was tried on 11 Oct 2026 and
+        # dropped: ~900 k buffers took 500 s to build per compile and the line queries were slower than
+        # the per-rule dwithin queries.)
 
     def profile(self, p, q, step=30.0):
         """(t in 0..1, ground z) along p->q on the DEM, or None without a DEM."""
@@ -237,8 +194,7 @@ class Checker:
         clear = self.sp.raster_prefilter and bool(self._clear[row, col]) and (not angle_tower or bool(self._clear_angle[row, col]))
         if clear and not self._verify:
             return True
-        ok = not self._any_hit(p, self.tower_rules, self._tower_idx) and \
-            not (angle_tower and self._any_hit(p, self.angle_rules, self._angle_idx))
+        ok = not any(r.hits(p) for r in self.tower_rules) and not (angle_tower and any(r.hits(p) for r in self.angle_rules))
         if clear and not ok:
             log.warning("prefilter disagreement at (%.0f, %.0f): raster clear, vector hit", x, y)
         return ok
@@ -252,7 +208,7 @@ class Checker:
             line = line.difference(self.go)
             if line.is_empty:
                 return True
-        return not self._any_hit(line, self.cond_rules, self._cond_idx)
+        return not any(r.hits(line) for r in self.cond_rules)
 
     def _sample(self, arr, p, q, step=None):
         f = self.c.frame
