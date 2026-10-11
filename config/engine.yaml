@@ -65,11 +65,12 @@ parallel_routes:
   gpu_gb_per_route: 5             # measured 9 Oct: 3 routes peak 10.9 GB on BHU-SHI-0122 (~3.6 GB each)
 
 forest_cap:
-  # Vivek, 11 Oct 2026: the cap search starts at ×10 (×3 never met the cap on this corridor). Every pass is
-  # spotted: the search corridor's own forest is a poor predictor of the spotted route's (R4's ×10 pass read
-  # 12 ha on the grid and 1.7 ha once string-pulled), so grid_check_margin is off (0); a value > 0 would skip
-  # spotting a pass whose grid forest exceeds margin × cap (the last multiplier is always spotted).
-  multipliers: [10, 30]
+  # Multipliers tried in order until the spotted route is under the cap (11 Oct 2026: ×3 is kept — R4, held
+  # out of R1's corridor, meets the cap at ×3 and not at ×10 or ×30; with the edge cache a pass costs ~20 s
+  # of search). Every pass is spotted: the search corridor's own forest is a poor predictor of the spotted
+  # route's, so grid_check_margin is off (0); a value > 0 would skip spotting a pass whose grid forest
+  # exceeds margin × cap (the last multiplier is always spotted).
+  multipliers: [3, 10, 30]
   grid_check_margin: 0
 
 diversity:
