@@ -372,7 +372,6 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
     cap_cfg = eng.get("forest_cap") or {}
     cap_mults = [float(m) for m in (cap_cfg.get("multipliers") or (10, 30))]
     cap_margin = float(cap_cfg.get("grid_check_margin", 1.25))
-    cap_hint: dict = {"mult": None}          # the multiplier that met the cap on an earlier route
 
     def compiled_relaxed():
         return compiled_variant(True)
@@ -453,8 +452,10 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
             ha0 = sr.stats["forest_ha"]
             best = (sr, out, solve_s, spot_s, None)
             met = False
-            hint = cap_hint["mult"]
-            mults = [m for m in cap_mults if hint is None or m >= hint] or cap_mults[-1:]
+            # every multiplier in order (11 Oct 2026: starting at the one an earlier route met the cap
+            # with lost R4's ×10 route — the cap multiplier is not transferable between routes, and a
+            # cached pass costs ~20 s)
+            mults = list(cap_mults)
             for mult in mults:
                 vprog(vi, 0.5, f"Route {var['id']}: forest {best[0].stats['forest_ha']:.0f} ha over the {forest_cap:g} ha cap — forest priced ×{mult:g}")
                 cvp = compiled_variant(bool(var.get("relaxed")), precedent=prec_used, forest_mult=mult)
@@ -481,9 +482,6 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
                     best = (sr2, out2, t3 - t2, time.time() - t3, mult)
                 if sr2.stats.get("forest_ha", 0) <= forest_cap:
                     met = True
-                    with relaxed_lock:
-                        if cap_hint["mult"] is None or mult < cap_hint["mult"]:
-                            cap_hint["mult"] = mult
                     break
             sr, out, solve_s, spot_s, mult_used = best
             forest_ev = event("FOREST_CAP" if met else "FOREST_CAP_UNMET",
