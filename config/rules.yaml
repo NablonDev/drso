@@ -393,13 +393,16 @@ groups:
 
       - id: power_line
         name: "High tension power line"
-        note: "765 / 400 / 220 / 132 kV — the wire may be crossed anywhere except next to an existing tower: 20 % of that span from the tower (80 m of a 400 m span; Vivek, 10 Oct 2026); angle 70–110° and span ≤ 350 m (Rule_Table 9-11 had 300; Vivek, 10 Oct 2026); D towers both sides of lines ≥ 400 kV, B/C/D for 132–220 kV (TSD B.1-2); our towers ≥ 92.5 m from their towers (72.5 m tower height + 20 m base) and ≥ 101.5 m (tower height + 40 %) from their conductors at 765 kV — a falling tower must not reach another line"
+        note: "765 / 400 / 220 / 132 kV — the wire may be crossed anywhere except next to an existing tower: 20 % of that span from the tower (80 m of a 400 m span; Vivek, 10 Oct 2026); angle 70–110° and span ≤ 350 m (Rule_Table 9-11 had 300; Vivek, 10 Oct 2026); D towers both sides of lines ≥ 400 kV, B/C/D for 132–220 kV (TSD B.1-2); our towers ≥ 80 m (our tower height, Vivek 11 Oct 2026; was 92.5 / 101.5) from their towers and conductors at 765 kV — a falling tower must not reach another line; our conductor keeps CHW from theirs"
         layer: power
         classes: [power_line, power_tower]
         mechanism: crossing
         params:
-          - {key: tower_setback_m, label: "Tower to existing tower (centre to centre)", type: num, unit: m, value: {765: 92.5, 400: 100, 220: 100, 132: 100}}
-          - {key: conductor_setback_m, label: "Tower to existing conductor (tower height + 40 %)", type: num, unit: m, value: {765: 101.5, 400: 100, 220: 100, 132: 100}}
+          # Vivek, 11 Oct 2026: both distances = our tower height, upper limit of the standard body by line
+          # voltage (765: 80, 400: 55, 220: 40, 132: 32, 66: 22 m), no extension and no extra buffer; the
+          # falling-tower premise is one-sided — our conductor keeps only CHW from their towers and wires
+          - {key: tower_setback_m, label: "Tower to existing tower (our tower height)", type: num, unit: m, value: {765: 80, 400: 55, 220: 40, 132: 32}}
+          - {key: conductor_setback_m, label: "Tower to existing conductor (our tower height)", type: num, unit: m, value: {765: 80, 400: 55, 220: 40, 132: 32}}
           - {key: crossing_tower_clear_pct, label: "No crossing next to an existing tower, share of its span", type: num, unit: "%", value: 20}
           - {key: crossing_tower_clear_m, label: "… fallback where the span is not mapped", type: num, unit: m, value: 80}
           - {key: angle_deg, label: "Crossing angle", type: rng, unit: "°", value: [70, 110]}
@@ -414,13 +417,16 @@ groups:
       # now, set independently. Same shutdown crossing cost.
       - id: power_line_lt
         name: "Low tension power line"
-        note: "66 / 33 kV — crossed anywhere except next to a pole: 20 % of that span from the pole (20 m of a 100 m pole span; Vivek, 10 Oct 2026); suspension or tension towers either side (TSD B.3); angle 70–110° from 66 kV (Rule_Table 9); our towers ≥ 92.5 m from their poles and ≥ 101.5 m (our tower height + 40 %) from their conductors at 765 kV"
+        note: "66 / 33 kV — crossed anywhere except next to a pole: 20 % of that span from the pole (20 m of a 100 m pole span; Vivek, 10 Oct 2026); suspension or tension towers either side (TSD B.3); angle 70–110° from 66 kV (Rule_Table 9); our towers ≥ 80 m (our tower height, Vivek 11 Oct 2026; was 92.5 / 101.5) from their poles and conductors at 765 kV"
         layer: power_lt
         classes: [power_line, power_tower]
         mechanism: crossing
         params:
-          - {key: tower_setback_m, label: "Tower to existing tower (centre to centre)", type: num, unit: m, value: {765: 92.5, 400: 100, 220: 100, 132: 100}}
-          - {key: conductor_setback_m, label: "Tower to existing conductor (tower height + 40 %)", type: num, unit: m, value: {765: 101.5, 400: 100, 220: 100, 132: 100}}
+          # Vivek, 11 Oct 2026: both distances = our tower height, upper limit of the standard body by line
+          # voltage (765: 80, 400: 55, 220: 40, 132: 32, 66: 22 m), no extension and no extra buffer; the
+          # falling-tower premise is one-sided — our conductor keeps only CHW from their towers and wires
+          - {key: tower_setback_m, label: "Tower to existing tower (our tower height)", type: num, unit: m, value: {765: 80, 400: 55, 220: 40, 132: 32}}
+          - {key: conductor_setback_m, label: "Tower to existing conductor (our tower height)", type: num, unit: m, value: {765: 80, 400: 55, 220: 40, 132: 32}}
           - {key: crossing_tower_clear_pct, label: "No crossing next to an existing tower, share of its span", type: num, unit: "%", value: 20}
           - {key: crossing_tower_clear_m, label: "… fallback where the span is not mapped", type: num, unit: m, value: 80}
           - {key: angle_deg, label: "Crossing angle", type: rng, unit: "°", value: [70, 110]}
