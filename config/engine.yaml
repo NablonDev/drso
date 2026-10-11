@@ -15,6 +15,9 @@ grid:
   # spotting skips the vector tower rules in cells two cells clear of every forbidden cell
   edge_cache_gb: 8
   raster_prefilter: true
+  # on-disk raster cache (masks, distance and angle fields per layer): 3 GB thrashed once the setback sweep,
+  # the rule revisions and the profiling runs shared it (rev 19 compile 127 s with 74 misses vs 45 s warm)
+  raster_cache_gb: 12
   # Pricing a bend no larger than the grid's own heading step (7.1° at 400 m spans) as a suspension
   # tower made the search over-optimistic by ₹27-32 Cr on Bhuj–Lakadia (6 Oct 2026): off. The
   # cost-aware string pulling in spotting is what closes the search-vs-final gap.

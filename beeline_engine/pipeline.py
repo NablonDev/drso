@@ -189,7 +189,7 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
     raster_cache = None
     if inp.cache_dir is not None:
         from .rastercache import RasterCache
-        raster_cache = RasterCache(inp.cache_dir, frame)
+        raster_cache = RasterCache(inp.cache_dir, frame, max_bytes=int(float(eng["grid"].get("raster_cache_gb", 3)) * 1024 ** 3))
     shared = {"R": None}       # one rasterizer for every compile: masks / distances depend on layers only
 
     # learn from existing lines (9 Oct 2026): existing power towers, for opening the polygons they stand in
