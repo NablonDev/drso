@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import shutil
+import time
 import subprocess
 from pathlib import Path
 from datetime import datetime, timezone
@@ -89,6 +90,7 @@ def run_solve_job(job: dict, rep: Reporter):
     if stale or missing:
         raise ValueError(f"layers not extracted for this revision: {', '.join(stale + missing)}")
     rep(0.01, "Loading layers", force=True)
+    t_load = time.time()
     inputs = {}
     for r in rls:
         rep.check()
@@ -105,6 +107,7 @@ def run_solve_job(job: dict, rep: Reporter):
                      cost_overrides=run["cost_overrides"] or {}, dem_dir=settings.DEM_DIR,
                      cache_dir=settings.DATA / "cache" / "rasters")
     want_exports = bool((job.get("detail") or {}).get("exports", True))
+    load_layers_s = round(time.time() - t_load, 2)
 
     def prog(f, stage):
         rep(0.03 + 0.9 * f, stage)
@@ -114,7 +117,9 @@ def run_solve_job(job: dict, rep: Reporter):
     except EngineCancelled:
         raise Cancelled()
     rep(0.94, "Writing exports" if want_exports else "Saving the routes (exports skipped)", force=True)
+    t_save = time.time()
     manifest = build_manifest(run, rls, result)
+    manifest["timings"] = {**(manifest.get("timings") or {}), "load_layers_s": load_layers_s}
     # the layer versions this solve used, so exports made later read the same data
     manifest["layer_version_ids"] = {r["layer_key"]: r["layer_version_id"] for r in rls}
     manifest["exports_skipped"] = not want_exports
@@ -129,7 +134,8 @@ def run_solve_job(job: dict, rep: Reporter):
     if want_exports:
         solve = {"id": row["id"], "created_at": row["created_at"].isoformat(), "result": result}
         files = write_exports(run, solve, manifest, rls, out_dir)
-    db.exec_("update solves set out_dir=%s where id=%s", (str(out_dir), row["id"]))
+    manifest["timings"]["save_exports_s"] = round(time.time() - t_save, 2)
+    db.exec_("update solves set out_dir=%s, manifest=%s where id=%s", (str(out_dir), db.J(manifest), row["id"]))
     status = "complete" if result["feasible"] else "blocked"
     db.exec_("update runs set status=%s, latest_solve_id=%s, updated_at=now() where id=%s", (status, row["id"], run["id"]))
     rep(1.0, "Routes ready" if result["feasible"] else "No viable route", detail={"solve_id": row["id"]}, force=True)

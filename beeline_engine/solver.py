@@ -87,6 +87,7 @@ class SolverParams:
     dead_end_max_dev_deg: float | None = None  # TSD note J: 15° line side + 30° slack side
     approach_length_m: float = 0.0             # approach section within this of each gantry (0 = none)
     approach_span_m: float | None = None       # its design span (CEA Schedule VII)
+    edge_cache_limit_bytes: float = 8e9        # GPU bytes the edge-geometry cache may take (11 Oct 2026)
 
 
 @dataclass
@@ -194,6 +195,7 @@ class _Rasters:
         self.par = [t(np.nan_to_num(pr.angle, nan=-1.0)) for pr in compiled.parallels]
         self.par_meta = [(pr.rule_id, getattr(pr, "crossing_exempt", False)) for pr in compiled.parallels]
         self.h, self.w = compiled.tower_forbidden.shape
+        self.f_x0, self.f_y_top, self.res_m = float(compiled.frame.x0), float(compiled.frame.y_top), float(compiled.frame.res_m)
         self.river_cols = None
         self.z = self.hilly = None
         if p.terrain and compiled.ground_z is not None:
@@ -222,9 +224,51 @@ def _acute(a_deg, b_deg):
     return torch.minimum(d, 180.0 - d)
 
 
+def _edge_index(grid: Grid, rasters: "_Rasters", c_from: int, c_to: int, kidx: np.ndarray, n_samples: int):
+    """Raster rows / cols sampled along every edge of the block, plus the edge geometry tensors."""
+    dev = rasters.dev
+    f_x0, f_y_top, res = rasters.f_x0, rasters.f_y_top, rasters.res_m
+    C = c_to - c_from
+    R, K = grid.nr, len(kidx)
+    offs = grid.offsets[kidx]
+    cs = torch.arange(c_from, c_to, device=dev, dtype=torch.float32)
+    rs = torch.arange(R, device=dev, dtype=torch.float32)
+    x0 = (cs * grid.sx).view(C, 1, 1, 1)
+    y0 = ((rs - grid.r0) * grid.sy).view(1, R, 1, 1)
+    dx = torch.as_tensor(offs[:, 0] * grid.sx, device=dev, dtype=torch.float32).view(1, 1, K, 1)
+    dy = torch.as_tensor(offs[:, 1] * grid.sy, device=dev, dtype=torch.float32).view(1, 1, K, 1)
+    tt = torch.linspace(0, 1, n_samples, device=dev).view(1, 1, 1, n_samples)
+    col = ((x0 + tt * dx - f_x0) / res).long().clamp_(0, rasters.w - 1)
+    row = ((f_y_top - (y0 + tt * dy)) / res).long().clamp_(0, rasters.h - 1)
+    return row, col, x0, y0, dx, dy, tt
+
+
+def _edge_strip(grid: Grid, rasters: "_Rasters", c_from: int, c_to: int, kidx: np.ndarray, n_samples: int) -> torch.Tensor:
+    """Mean RoW strip ₹/m along every edge of the block -> (C, R, K). The only part of the edge cost
+    that changes between the forest-cap passes and the route variants (11 Oct 2026)."""
+    row, col, *_ = _edge_index(grid, rasters, c_from, c_to, kidx, n_samples)
+    return rasters.strip[row, col].mean(dim=-1)
+
+
 def _edge_block(compiled: Compiled, grid: Grid, p: SolverParams, rasters: "_Rasters",
-                c_from: int, c_to: int, kidx: np.ndarray, n_samples: int, require_river: bool) -> torch.Tensor:
-    """E for columns c_from..c_to-1 and offsets kidx -> (C, R, len(kidx)) ₹, inf = invalid."""
+                c_from: int, c_to: int, kidx: np.ndarray, n_samples: int, require_river: bool,
+                cache: dict | None = None) -> torch.Tensor:
+    """E for columns c_from..c_to-1 and offsets kidx -> (C, R, len(kidx)) ₹, inf = invalid.
+    E = B + A × strip, with (A, B) the strip-independent geometry of the block; `cache` (shared by the
+    solves on one compile: the route variants and the forest-cap passes) keeps (A, B) on the GPU."""
+    key = (c_from, c_to, int(require_river), int(n_samples), int(len(kidx)), grid.nc, grid.nr, len(grid.offsets))
+    geom = cache.get(key) if cache is not None else None
+    if geom is None:
+        geom = _edge_geom(compiled, grid, p, rasters, c_from, c_to, kidx, n_samples, require_river)
+        if cache is not None:
+            cache[key] = geom
+    A, B = geom
+    return B + A * _edge_strip(grid, rasters, c_from, c_to, kidx, n_samples)
+
+
+def _edge_geom(compiled: Compiled, grid: Grid, p: SolverParams, rasters: "_Rasters",
+               c_from: int, c_to: int, kidx: np.ndarray, n_samples: int, require_river: bool):
+    """(A, B) for the block: E = B + A × mean strip ₹/m; B carries inf where the edge is invalid."""
     dev = rasters.dev
     f = compiled.frame
     C = c_to - c_from
@@ -241,6 +285,7 @@ def _edge_block(compiled: Compiled, grid: Grid, p: SolverParams, rasters: "_Rast
     row = ((f.y_top - (y0 + tt * dy)) / f.res_m).long().clamp_(0, rasters.h - 1)
     length = torch.as_tensor(grid.length_m[kidx], device=dev, dtype=torch.float32).view(1, 1, K)
     heading = torch.as_tensor(grid.heading_deg[kidx], device=dev, dtype=torch.float32).view(1, 1, K, 1)
+    A = length.expand(C, R, K)                       # ₹ per (₹/m of strip): the span length …
 
     invalid = rasters.cond[row, col].any(dim=-1)
     if p.approach_length_m > 0 and p.approach_span_m is not None and not require_river:
@@ -251,11 +296,12 @@ def _edge_block(compiled: Compiled, grid: Grid, p: SolverParams, rasters: "_Rast
         in_ap = (torch.hypot(xm, ym) <= p.approach_length_m) | \
                 (torch.hypot(xm - f.length_m, ym) <= p.approach_length_m)
         invalid |= in_ap & (length > p.approach_span_m + 1e-3)
-    strip = rasters.strip[row, col].mean(dim=-1)
-    E = length * (compiled.conductor_rs_per_m + strip)
+    E = (length * compiled.conductor_rs_per_m).expand(C, R, K)
     if rasters.near is not None:
         # stay close to existing lines: search-only discount by the share of the span near one
-        E = E * (1.0 - p.proximity_discount * rasters.near[row, col].mean(dim=-1))
+        fac = 1.0 - p.proximity_discount * rasters.near[row, col].mean(dim=-1)
+        E = E * fac
+        A = A * fac                                  # … times the same discount
     if rasters.z is not None and not require_river:
         # ground clearance of this span over the DEM (towers at standard height): extensions cost
         # steel; a span that extensions on both towers cannot clear is not allowed (a tower must
@@ -353,18 +399,18 @@ def _edge_block(compiled: Compiled, grid: Grid, p: SolverParams, rasters: "_Rast
         invalid |= par_bad
     if require_river:
         invalid |= ~crossed_river
-    return torch.where(invalid, torch.full_like(E, INF), E)
+    return A, torch.where(invalid, torch.full_like(E, INF), E)
 
 
 def edge_costs(compiled: Compiled, grid: Grid, p: SolverParams, rasters: "_Rasters",
-               c_from: int, c_to: int, n_samples: int) -> torch.Tensor:
+               c_from: int, c_to: int, n_samples: int, cache: dict | None = None) -> torch.Tensor:
     """E[c, r, k] for columns c_from..c_to-1 -> tensor (C, R, K) of ₹ (inf = invalid).
     Long (river-only) offsets are evaluated only where a river lies within reach."""
     dev = rasters.dev
     C, R, K = c_to - c_from, grid.nr, len(grid.offsets)
     short = np.nonzero(~grid.is_long)[0]
     E = torch.full((C, R, K), INF, device=dev)
-    E[:, :, short] = _edge_block(compiled, grid, p, rasters, c_from, c_to, short, n_samples, False)
+    E[:, :, short] = _edge_block(compiled, grid, p, rasters, c_from, c_to, short, n_samples, False, cache)
     long_ = np.nonzero(grid.is_long)[0]
     if len(long_) and rasters.river_cols is not None and rasters.river_cols[c_from:c_to].any():
         n_long = int(math.ceil(p.river_max_span_m / (compiled.frame.res_m / 2))) + 1
@@ -373,7 +419,7 @@ def edge_costs(compiled: Compiled, grid: Grid, p: SolverParams, rasters: "_Raste
             c1 = min(c_to, c0 + sub)
             if not rasters.river_cols[c0:c1].any():
                 continue
-            E[c0 - c_from:c1 - c_from, :, long_] = _edge_block(compiled, grid, p, rasters, c0, c1, long_, n_long, True)
+            E[c0 - c_from:c1 - c_from, :, long_] = _edge_block(compiled, grid, p, rasters, c0, c1, long_, n_long, True, cache)
     return E
 
 
@@ -566,6 +612,11 @@ def solve(compiled: Compiled, p: SolverParams, cancel_check=None, progress=None)
 
     budget = 1.25e8 if rasters.z is not None else 2.5e8               # terrain doubles the gathered samples
     chunk = max(1, min(32, int(budget // max(1, R * K * n_samples))))
+    # edge-geometry cache (11 Oct 2026): (A, B) per column block, shared by every solve on this compile;
+    # two float32 (nc, R, K) tensors on the GPU — skipped when that would exceed the configured limit
+    cache = getattr(compiled, "edge_cache", None)
+    if cache is not None and (nc + 1) * R * K * 8 > p.edge_cache_limit_bytes:
+        cache = None
     E_chunk, E_start = None, -1
     for c in range(nc + 1):
         if cancel_check and c % 64 == 0:
@@ -614,7 +665,7 @@ def solve(compiled: Compiled, p: SolverParams, cancel_check=None, progress=None)
         reach_map[c] = torch.isfinite(M).any(dim=1)
         if E_chunk is None or c >= E_start + E_chunk.shape[0]:
             E_start = c
-            E_chunk = edge_costs(compiled, grid, p, rasters, c, min(nc, c + chunk), n_samples)
+            E_chunk = edge_costs(compiled, grid, p, rasters, c, min(nc, c + chunk), n_samples, cache)
         E = E_chunk[c - E_start]
         Wring[c % ring] = M + E
         if progress and c % 100 == 0:

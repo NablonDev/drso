@@ -10,6 +10,11 @@ grid:
   # a site is usable in the search when a legal cell lies within this distance; the spotting snaps the
   # tower there (10 Oct 2026: a 47 m legal strip between a 66 kV and a 765 kV setback fell between sites)
   site_tolerance_m: 25
+  # 11 Oct 2026 speed-ups (exact — same towers either way): the solver keeps the strip-independent edge
+  # geometry on the GPU and reuses it across the route variants and the forest-cap passes (GB, 0 = off);
+  # spotting skips the vector tower rules in cells two cells clear of every forbidden cell
+  edge_cache_gb: 8
+  raster_prefilter: true
   # Pricing a bend no larger than the grid's own heading step (7.1° at 400 m spans) as a suspension
   # tower made the search over-optimistic by ₹27-32 Cr on Bhuj–Lakadia (6 Oct 2026): off. The
   # cost-aware string pulling in spotting is what closes the search-vs-final gap.
@@ -58,6 +63,14 @@ routes:
 parallel_routes:
   max_workers: 3
   gpu_gb_per_route: 5             # measured 9 Oct: 3 routes peak 10.9 GB on BHU-SHI-0122 (~3.6 GB each)
+
+forest_cap:
+  # Vivek, 11 Oct 2026: the cap search starts at ×10 (×3 never met the cap on this corridor); a pass is
+  # spotted only when the search corridor's own forest is within grid_check_margin × cap, except the last
+  # multiplier, which is always spotted as the fallback; a multiplier that met the cap on one route is the
+  # starting point for the others
+  multipliers: [10, 30]
+  grid_check_margin: 1.25
 
 diversity:
   min_distinct_fraction: 0.15     # a route sharing >85 % of its corridor with an earlier one is re-run

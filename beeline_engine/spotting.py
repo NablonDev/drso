@@ -22,9 +22,11 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 from dataclasses import dataclass, field
 
 import numpy as np
+from scipy import ndimage
 from rasterio import features as rfeatures
 from shapely.geometry import LineString, Point
 from shapely.ops import unary_union
@@ -54,6 +56,7 @@ class SpotParams:
     max_dev_adjacent_power_deg: dict[str, float] = field(default_factory=dict)
     river_max_span_m: float = 0.0
     nudge_radius_m: float = 30.0
+    raster_prefilter: bool = True         # skip the vector tower rules in clearly free cells (11 Oct 2026)
     # hilly terrain (rules design_span.hilly_m, section_interval.hilly_km; engine hilly_slope_deg)
     hilly_design_span_m: float | None = None
     hilly_section_km: float | None = None
@@ -120,6 +123,13 @@ class Checker:
         self.angle_rules = comp.angle_nogo
         self.cond_rules = comp.conductor_nogo
         self.dem = None                    # set by spot(): hilly legs and clearance re-spotting
+        # Raster pre-filter for the exact tower checks (11 Oct 2026): a cell two cells clear of every
+        # forbidden cell is more than the rule distance from any feature (the rule rasters are built from
+        # cell-centre distances, so a point can be up to ~28 m nearer a feature than its cell says; two
+        # 20 m cells cover that). Only "clearly free" skips the vector rules; anything else is checked.
+        self._clear = ~ndimage.binary_dilation(comp.tower_forbidden, iterations=2)
+        self._clear_angle = ~ndimage.binary_dilation(comp.angle_forbidden, iterations=2)
+        self._verify = os.environ.get("BEELINE_VERIFY_PREFILTER") == "1"
 
     def profile(self, p, q, step=30.0):
         """(t in 0..1, ground z) along p->q on the DEM, or None without a DEM."""
@@ -175,11 +185,16 @@ class Checker:
             if self.yards is not None and self.yards.contains(p):
                 return False
             return not any(r.hits(p) for r in self.c.go_overlap)
-        if any(r.hits(p) for r in self.tower_rules):
-            return False
-        if angle_tower and any(r.hits(p) for r in self.angle_rules):
-            return False
-        return True
+        f = self.c.frame
+        col = int(np.clip((x - f.x0) / f.res_m, 0, f.width - 1))
+        row = int(np.clip((f.y_top - y) / f.res_m, 0, f.height - 1))
+        clear = self.sp.raster_prefilter and bool(self._clear[row, col]) and (not angle_tower or bool(self._clear_angle[row, col]))
+        if clear and not self._verify:
+            return True
+        ok = not any(r.hits(p) for r in self.tower_rules) and not (angle_tower and any(r.hits(p) for r in self.angle_rules))
+        if clear and not ok:
+            log.warning("prefilter disagreement at (%.0f, %.0f): raster clear, vector hit", x, y)
+        return ok
 
     def conductor_ok(self, p, q) -> bool:
         line = LineString([p, q])

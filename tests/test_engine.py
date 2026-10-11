@@ -1019,3 +1019,26 @@ def test_forest_cap_prices_forest_up_until_the_route_stays_under_it():
     free_per_ha = free["cost"]["forest"] / free["stats"]["forest_ha"]
     assert per_ha <= free_per_ha * 1.05
     assert r["cost"]["total"] > free["cost"]["total"]
+
+
+def test_forest_priced_copy_matches_a_recompile():
+    """The cap search's forest-priced compile is a shallow copy with the forest cells scaled (11 Oct 2026);
+    it must equal a full compile with the forest cost items multiplied."""
+    from beeline_engine.pipeline import _forest_priced
+    f = frame()
+    c = f.length_m / 2
+    rf = frame_geom(f, box(c, -800, c + 200, 800))
+    layers = {"reserve_forest": gdf([rf], "reserve_forest", "RF")}
+    gdfs = {k: v for k, v in layers.items()}
+    spec = LineSpec(765, "dc")
+    rules = resolve_rules(spec)
+    base = compile_rules(f, gdfs, rules, resolve_costs(spec), 765, 33.5)
+    scaled = {"forest": {k: v * 10 for k, v in {"npv_l_ha": 8.61, "ca_l_ha": 1.1, "plans_l_ha": 1.6, "rf_land_cr_ha": 0.48}.items()}}
+    full = compile_rules(f, gdfs, rules, resolve_costs(spec, scaled), 765, 33.5)
+    cheap = _forest_priced(base, 10.0)
+    fm = base.cost_class == 4
+    assert fm.any()
+    assert np.allclose(cheap.strip_density, full.strip_density, rtol=1e-4)
+    assert np.allclose(cheap.land_rate_m2, full.land_rate_m2, rtol=1e-4)
+    assert np.array_equal(cheap.tower_forbidden, base.tower_forbidden)
+    assert cheap.costs["forest"]["npv_l_ha"] == full.costs["forest"]["npv_l_ha"]

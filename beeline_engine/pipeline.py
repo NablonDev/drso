@@ -1,6 +1,7 @@
 """Solve orchestration: layers + rules + costs -> four routes, spotted, costed and explained."""
 from __future__ import annotations
 
+import copy
 import logging
 import math
 import threading
@@ -17,12 +18,12 @@ from shapely.geometry import LineString, Point, box
 from shapely.ops import unary_union
 
 from . import dem as demmod
-from .compile import merge_approach, attach_terrain, compile_rules
+from .compile import COST_CLASS_CODES, merge_approach, attach_terrain, compile_rules
 from .config import TOWER_TYPES, LineSpec, load_engine, load_layers, resolve_costs, resolve_rules
 from .events import event
 from .frame import Frame
 from .solver import SolverParams, solve, tower_type_cost
-from .spotting import SpotParams, SpottedRoute, route_cost, spot
+from .spotting import SpotParams, SpottedRoute, _frame_geom_to_utm, route_cost, spot
 
 log = logging.getLogger(__name__)
 
@@ -206,16 +207,9 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
         prec_towers = np.asarray(pts, dtype=object) if pts else None
         precedent_on = prec_towers is not None
 
-    def _compile(relaxed: bool = False, precedent: bool = False, forest_mult: float = 1.0):
-        c_use = costs
-        if forest_mult != 1.0:
-            # forest cap (10 Oct 2026): the search sees forest priced up; the spotting costs with `costs`
-            c_use = dict(costs)
-            c_use["forest"] = {k: (v * forest_mult if k in ("npv_l_ha", "ca_l_ha", "plans_l_ha", "rf_land_cr_ha") else v)
-                               for k, v in costs["forest"].items()}
-
+    def _compile(relaxed: bool = False, precedent: bool = False):
         def one(half_width, chw_ref):
-            return compile_rules(frame, gdfs, rules, c_use, inp.kv, half_width, endpoints_go_radius_m=go_radius,
+            return compile_rules(frame, gdfs, rules, costs, inp.kv, half_width, endpoints_go_radius_m=go_radius,
                                  terminal_yard_radius_m=yard_radius,
                                  design_span_m=design,
                                  single_angle_tol_deg=eng["crossings"]["single_angle_tolerance_deg"],
@@ -232,6 +226,7 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
             c.approach_zone = ap_zone
         return c
     comp = _compile()
+    comp.edge_cache = {}
     timings["compile_s"] = round(time.time() - t, 2)
     if raster_cache is not None:
         timings["raster_cache"] = {"hits": raster_cache.hits, "misses": raster_cache.misses}
@@ -282,6 +277,7 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
     # longer of the two and the edge test keeps non-hilly spans within the plain value
     smax_search = max(smax, hilly_m) if terrain else smax
     base = SolverParams(site_spacing_m=eng["grid"]["site_spacing_m"], span_min_m=smin, span_max_m=smax_search,
+                        edge_cache_limit_bytes=float(eng["grid"].get("edge_cache_gb", 8)) * 1e9,
                         max_dev_deg=max_dev, type_bands=bands, tower_cost_rs=tower_cost,
                         parallel_angle_deg=eng["crossings"]["parallel_angle_deg"],
                         river_max_span_m=float(eng["spans"].get("river_crossing_max_span_m", 0)),
@@ -309,6 +305,7 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
                         approach_length_m=ap_len, approach_span_m=ap_span, proximity_discount=prox_disc,
                         ext_zero_tol_m=ext_zero_tol, ext_round_tol_m=ext_round_tol)
     sp = SpotParams(design_span_m=design, span_max_m=smax_search,
+                    raster_prefilter=bool(eng["grid"].get("raster_prefilter", True)),
                     min_span_m=float(rules["crossing_span_limits"].params["min_span_m"]),
                     max_dev_deg=max_dev, type_bands=bands,
                     section_km=float(rules["section_interval"].params["plain_km"]),
@@ -356,15 +353,26 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
             prog(0.15 + 0.8 * done, text)
 
     def compiled_variant(relaxed: bool, precedent: bool = False, forest_mult: float = 1.0):
-        """Relaxed / precedent / forest-priced compiles, built once and shared by the routes."""
+        """Relaxed / precedent / forest-priced compiles, built once and shared by the routes. The
+        forest-priced one is a shallow copy of its base with the forest cells re-priced (11 Oct 2026:
+        was a full recompile, ~70 s each)."""
         key = (relaxed, precedent, forest_mult)
         with relaxed_lock:
             if key not in relaxed_box:
-                c = _compile(relaxed=relaxed, precedent=precedent, forest_mult=forest_mult)
-                if terrain:
-                    attach_terrain(c, dem, float(eng["spotting"].get("hilly_slope_deg", 10)))
+                if forest_mult != 1.0:
+                    base = comp if not (relaxed or precedent) else compiled_variant(relaxed, precedent)
+                    c = _forest_priced(base, forest_mult)
+                else:
+                    c = _compile(relaxed=relaxed, precedent=precedent)
+                    c.edge_cache = {}
+                    if terrain:
+                        attach_terrain(c, dem, float(eng["spotting"].get("hilly_slope_deg", 10)))
                 relaxed_box[key] = c
             return relaxed_box[key]
+    cap_cfg = eng.get("forest_cap") or {}
+    cap_mults = [float(m) for m in (cap_cfg.get("multipliers") or (10, 30))]
+    cap_margin = float(cap_cfg.get("grid_check_margin", 1.25))
+    cap_hint: dict = {"mult": None}          # the multiplier that met the cap on an earlier route
 
     def compiled_relaxed():
         return compiled_variant(True)
@@ -377,6 +385,7 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
 
     def run_variant(vi, var):
         check_cancel()
+        t_route = time.time()
         vprog(vi, 0.0, f"Solving route {var['id']} — {var['name']}")
         p = _variant_params(base, var, design)
         cv = comp
@@ -435,18 +444,30 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
         sr = spot(cv, pts, sp, dem=dem)
         spot_s = time.time() - t
         forest_ev = None
+        cap_passes: list = []
         if forest_cap > 0 and not var.get("relaxed") and sr.stats.get("forest_ha", 0) > forest_cap:
             # forest cap (Vivek, 10 Oct 2026): price forest up in the search until the route stays under
-            # the cap; the towers are then spotted and costed on the true-price compile
+            # the cap; the towers are then spotted and costed on the true-price compile. 11 Oct: start
+            # at the multiplier an earlier route met the cap with; spot a pass only when the search
+            # corridor's forest is near the cap (the last multiplier always).
             ha0 = sr.stats["forest_ha"]
             best = (sr, out, solve_s, spot_s, None)
             met = False
-            for mult in (3.0, 10.0, 30.0):
+            hint = cap_hint["mult"]
+            mults = [m for m in cap_mults if hint is None or m >= hint] or cap_mults[-1:]
+            for mult in mults:
                 vprog(vi, 0.5, f"Route {var['id']}: forest {best[0].stats['forest_ha']:.0f} ha over the {forest_cap:g} ha cap — forest priced ×{mult:g}")
                 cvp = compiled_variant(bool(var.get("relaxed")), precedent=prec_used, forest_mult=mult)
                 t2 = time.time()
                 out2 = solve(cvp, p, cancel_check=check_cancel, progress=sub)
+                rec = {"mult": mult, "solve_s": round(time.time() - t2, 1), "feasible": out2.feasible}
+                cap_passes.append(rec)
                 if not out2.feasible:
+                    continue
+                grid_ha = _line_forest_ha(cv, _outcome_line(out2))
+                rec["grid_ha"] = round(grid_ha, 2)
+                if grid_ha > forest_cap * cap_margin and mult != mults[-1]:
+                    rec["spotted"] = False
                     continue
                 pts2 = [(float(x), float(y)) for x, y in (out2.grid.site_xy(c, r) for c, r in out2.sites)]
                 t3 = time.time()
@@ -455,14 +476,18 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
                 sr2 = spot(cvp, pts2, sp, dem=dem)
                 cost2, stats2 = route_cost(cv, sr2.towers, sr2.spans, sp)
                 sr2 = SpottedRoute(sr2.towers, sr2.spans, cost2, stats2, sr2.method)
+                rec.update(spotted=True, spot_s=round(time.time() - t3, 1), ha=sr2.stats.get("forest_ha"))
                 if sr2.stats.get("forest_ha", 0) < best[0].stats.get("forest_ha", 0):
                     best = (sr2, out2, t3 - t2, time.time() - t3, mult)
                 if sr2.stats.get("forest_ha", 0) <= forest_cap:
                     met = True
+                    with relaxed_lock:
+                        if cap_hint["mult"] is None or mult < cap_hint["mult"]:
+                            cap_hint["mult"] = mult
                     break
             sr, out, solve_s, spot_s, mult_used = best
             forest_ev = event("FOREST_CAP" if met else "FOREST_CAP_UNMET",
-                              {"route": var["id"], "cap": forest_cap, "mult": mult_used if mult_used is not None else 30.0,
+                              {"route": var["id"], "cap": forest_cap, "mult": mult_used if mult_used is not None else mults[-1],
                                "ha": sr.stats["forest_ha"], "ha0": ha0})
         line = LineString([(tw.x, tw.y) for tw in sr.towers])
         _approvals(sr, cv, rules)
@@ -470,8 +495,10 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
         if used:
             precedent_ev = event("PRECEDENT", {"route": var["id"], "n": len(used),
                                                "items": "; ".join(u["label"] for u in used)})
+        t_ev = time.time()
         evs = _route_events(sr, frame, cv, findex, rules, sp, layer_names, inp, dem,
                             [e for e in global_events if e["type"] == "BEELINE_BLOCKER"])
+        events_s = time.time() - t_ev
         for a in sr.stats.get("approval_items", []):
             evs.append(event("APPROVAL", a, chainage_km=None))
         if diversity_ev:
@@ -481,8 +508,11 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
         if forest_ev:
             evs.insert(0, forest_ev)
         vprog(vi, 1.0, f"Route {var['id']} done")
+        extra = {"events_s": round(events_s, 2), "route_s": round(time.time() - t_route, 2)}
+        if cap_passes:
+            extra["cap_passes"] = cap_passes
         return {"var": var, "out": out, "cv": cv, "line": line,
-                "route": _route_json(var, sr, frame, evs, solve_s, spot_s, out)}
+                "route": _route_json(var, sr, frame, evs, solve_s, spot_s, out, extra)}
 
     if workers <= 1:
         for vi, var in enumerate(variants):
@@ -514,11 +544,13 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
             routes.append(res["route"])
     if not routes:
         prog(1.0, "No viable route")
+        _drop_edge_caches([comp] + list(relaxed_box.values()))
         return {"feasible": False, "blocked": blocked_first, "routes": [], "events_global": global_events,
                 "timings": {**timings, "total_s": round(time.time() - t_start, 2)},
                 "frame": _frame_info(frame), "rules_fired": comp.rules_fired}
     prog(1.0, "Done")
     timings["total_s"] = round(time.time() - t_start, 2)
+    _drop_edge_caches([comp] + list(relaxed_box.values()))
     return {"feasible": True, "routes": routes, "events_global": global_events, "timings": timings,
             "frame": _frame_info(frame), "rules_fired": comp.rules_fired,
             "line": {"kv": inp.kv, "circuit": inp.circuit, "half_width_m": hw, "design_span_m": design,
@@ -612,6 +644,45 @@ def _variant_params(base: SolverParams, var: dict, design: float) -> SolverParam
     if "sensitive_multiplier" in var:
         p.sensitive_multiplier = float(var["sensitive_multiplier"])
     return p
+
+
+def _drop_edge_caches(comps) -> None:
+    """Free the GPU edge-geometry caches once the routes are done (the worker process lives on)."""
+    for c in comps:
+        cache = getattr(c, "edge_cache", None)
+        if cache:
+            cache.clear()
+
+
+def _forest_priced(base, mult: float):
+    """Shallow copy of a compile with the forest cells priced ×mult in the search rasters (strip density
+    and land rate; the PA multiplier scales with it) and in the cost table the spotting reads. Every other
+    raster is shared with the base (11 Oct 2026; replaces a full recompile per multiplier)."""
+    c = copy.copy(base)
+    fm = base.cost_class == COST_CLASS_CODES["forest"]
+    sd = base.strip_density.copy()
+    sd[fm] *= np.float32(mult)
+    c.strip_density = sd
+    lr = base.land_rate_m2.copy()
+    lr[fm] *= np.float32(mult)
+    c.land_rate_m2 = lr
+    costs = dict(base.costs)
+    costs["forest"] = {k: (v * mult if k in ("npv_l_ha", "ca_l_ha", "plans_l_ha", "rf_land_cr_ha") else v)
+                       for k, v in base.costs["forest"].items()}
+    c.costs = costs
+    return c
+
+
+def _line_forest_ha(comp, line_frame) -> float:
+    """Reserve forest under the RoW corridor of a frame-coordinate line, in ha — the same raster count
+    route_cost makes for a spotted route, used to judge a cap pass before spotting it."""
+    f = comp.frame
+    corridor = line_frame.buffer(comp.half_width_m, cap_style="flat", join_style="mitre")
+    mask = rfeatures.rasterize([(_frame_geom_to_utm(f, corridor), 1)], out_shape=comp.cost_class.shape,
+                               transform=f.transform, fill=0, dtype="uint8").astype(bool)
+    n = int(mask.sum())
+    cell = f.res_m ** 2 * (corridor.area / (n * f.res_m ** 2) if n else 1.0)
+    return float((mask & (comp.cost_class == COST_CLASS_CODES["forest"])).sum()) * cell / 1e4
 
 
 def _outcome_line(out):
@@ -979,7 +1050,7 @@ def _route_events(sr, frame, comp, findex, rules, sp, layer_names, inp, dem, blo
     return evs
 
 
-def _route_json(var, sr, frame, evs, solve_s, spot_s, out) -> dict:
+def _route_json(var, sr, frame, evs, solve_s, spot_s, out, extra_timings: dict | None = None) -> dict:
     T = sr.towers
     xs = np.array([t.x for t in T])
     ys = np.array([t.y for t in T])
@@ -1003,7 +1074,7 @@ def _route_json(var, sr, frame, evs, solve_s, spot_s, out) -> dict:
         "geometry": [[t["lon"], t["lat"]] for t in towers],
         "towers": towers, "spans": spans, "cost": {k: round(v, 0) for k, v in sr.cost.items()},
         "stats": sr.stats, "events": evs, "spot_method": sr.method,
-        "timings": {"solve_s": round(solve_s, 2), "spot_s": round(spot_s, 2)},
+        "timings": {"solve_s": round(solve_s, 2), "spot_s": round(spot_s, 2), **(extra_timings or {})},
         "grid_cost_rs": round(out.cost_rs, 0),
     }
 

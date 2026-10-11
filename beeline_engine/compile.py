@@ -85,9 +85,17 @@ class VecRule:
 
     def hits(self, geom) -> bool:
         if self.inside is not None or self.outside is not None:
-            geom = self._clip(geom)
-            if geom.is_empty:
-                return False
+            if geom.geom_type == "Point":
+                # a point is either in the zone or not: no difference / intersection geometry needed
+                # (11 Oct 2026: this was a third of the spotting time)
+                if self.outside is not None and self.outside.intersects(geom):
+                    return False
+                if self.inside is not None and not self.inside.intersects(geom):
+                    return False
+            else:
+                geom = self._clip(geom)
+                if geom.is_empty:
+                    return False
         if self.d > 0:
             return len(self.tree.query(geom, predicate="dwithin", distance=self.d)) > 0
         return len(self.tree.query(geom, predicate="intersects")) > 0
@@ -142,6 +150,9 @@ class Compiled:
     # terrain on the rule raster grid (set by attach_terrain; None = no DEM)
     ground_z: np.ndarray | None = None       # m, NaN where the DEM has no value
     hilly: np.ndarray | None = None          # bool: slope >= hilly_slope_deg over ~100 m
+    # solver edge-geometry cache, shared with the forest-priced copies of this compile (11 Oct 2026);
+    # None = no caching (e.g. the tower-move checker)
+    edge_cache: dict | None = None
 
 
 def attach_terrain(comp: "Compiled", dem, hilly_slope_deg: float) -> None:
