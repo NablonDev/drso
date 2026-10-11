@@ -273,6 +273,10 @@ def _edge_block(compiled: Compiled, grid: Grid, p: SolverParams, rasters: "_Rast
                 geom = cache.get(key)
                 if geom is None:
                     geom = _edge_geom(compiled, grid, p, rasters, c_from, c_to, kidx, n_samples, require_river)
+                    if rasters.dev.type == "cuda":
+                        # the routes solve on their own CUDA streams: the block must be complete before
+                        # another stream reads it from the cache
+                        torch.cuda.current_stream(rasters.dev).synchronize()
                     cache[key] = geom
     A, B = geom
     return B + A * _edge_strip(grid, rasters, c_from, c_to, kidx, n_samples)
