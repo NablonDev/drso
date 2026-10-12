@@ -73,7 +73,9 @@ forest_cap:
   # of search). Every pass is spotted: the search corridor's own forest is a poor predictor of the spotted
   # route's, so grid_check_margin is off (0); a value > 0 would skip spotting a pass whose grid forest
   # exceeds margin × cap (the last multiplier is always spotted).
-  multipliers: [3, 10, 30]
+  # ×100 added 12 Oct 2026: at ×30 R4's two candidates (1.7 ha / ₹660.5 Cr vs 9.8 ha / ₹643.9 Cr) are a search
+  # tie decided by float rounding (edge costs agree to 2e-7); one more step settles it on the low-forest line
+  multipliers: [3, 10, 30, 100]
   grid_check_margin: 0
 
 diversity:
