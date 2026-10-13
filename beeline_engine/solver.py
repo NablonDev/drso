@@ -90,6 +90,7 @@ class SolverParams:
     approach_span_m: float | None = None       # its design span (CEA Schedule VII)
     edge_cache_limit_bytes: float = 8e9        # GPU bytes the edge-geometry cache may take (11 Oct 2026)
     crossing_dev_max_deg: float | None = None  # deviation cap at the two towers of a crossing span (Vivek, 13 Oct 2026)
+    gantry_min_span_m: float = 30.0            # gantry to the first / last tower, at least (Vivek, 13 Oct 2026: 100 m)
     proximity_tower_discount: float = 0.0      # search-only discount on towers near existing lines (Vivek, 13 Oct 2026)
 
 
@@ -599,7 +600,7 @@ def gantry_seeds(compiled: Compiled, grid: Grid, p: SolverParams, S_np: np.ndarr
                 continue
             x, y = xs[c], ys[r]
             L = math.hypot(x - ex, y)
-            if L < 30.0 or L > reach:
+            if L < p.gantry_min_span_m or L > reach:
                 continue
             n = max(2, int(math.ceil(L / (f.res_m / 2))) + 1)
             t = np.linspace(0, 1, n)
@@ -607,7 +608,11 @@ def gantry_seeds(compiled: Compiled, grid: Grid, p: SolverParams, S_np: np.ndarr
             fy = t * y
             col = np.clip(((fx - f.x0) / f.res_m).astype(int), 0, f.width - 1)
             row = np.clip(((f.y_top - fy) / f.res_m).astype(int), 0, f.height - 1)
-            if compiled.conductor_forbidden[row, col].any():
+            cf = compiled.conductor_forbidden[row, col]
+            tc = getattr(compiled, "terminal_cond", None)
+            if tc is not None:
+                cf = cf & ~tc[row, col]                  # the gantry span itself may leave the substation
+            if cf.any():
                 continue
             if any((a[row, col] >= 0).any() for a in cross):
                 continue

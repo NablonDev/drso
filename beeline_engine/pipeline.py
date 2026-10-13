@@ -267,6 +267,10 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
     ext_pct = float(costs["tower"]["extension_pct"]) / 100.0
     # AESL Tower Spotting Data (765 kV D/C, 8 Oct 2026): span tables, wind / weight span, extension steps
     tsd = (eng.get("tsd") or {}).get(str(inp.kv))
+    _sub = rules["substations"].params
+    if tsd is not None and _sub.get("dead_end_max_dev_deg") is not None:
+        tsd = {**tsd, "dead_end_max_dev_deg": float(_sub["dead_end_max_dev_deg"])}   # Vivek, 13 Oct 2026: 15°
+    gantry_min = float(_sub.get("gantry_min_span_m", 30) or 30)
     ext_max_abc = max(tsd["extensions_m"]["C1"]) if tsd else 18.0      # A/B/C reach +6 m; D goes further
     # closest-step extensions (Vivek, 9 Oct 2026): rounding tolerances for the search
     if tsd:
@@ -306,11 +310,11 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
                         long_ext_cost_rs_per_m=tower_cost["D45"] * ext_pct / 18.0,
                         dead_end_max_dev_deg=float(tsd["dead_end_max_dev_deg"]) if tsd and tsd.get("dead_end_max_dev_deg") else None,
                         approach_length_m=ap_len, approach_span_m=ap_span, proximity_discount=prox_disc,
-                        proximity_tower_discount=prox_tdisc,
+                        proximity_tower_discount=prox_tdisc, gantry_min_span_m=gantry_min,
                         ext_zero_tol_m=ext_zero_tol, ext_round_tol_m=ext_round_tol,
                         crossing_dev_max_deg=_crossing_dev_cap(rules))
     sp = SpotParams(design_span_m=design, span_max_m=smax_search,
-                    raster_prefilter=bool(eng["grid"].get("raster_prefilter", True)),
+                    raster_prefilter=bool(eng["grid"].get("raster_prefilter", True)), gantry_min_span_m=gantry_min,
                     min_span_m=float(rules["crossing_span_limits"].params["min_span_m"]),
                     max_dev_deg=max_dev, type_bands=bands,
                     section_km=float(rules["section_interval"].params["plain_km"]),
@@ -1032,6 +1036,7 @@ def _route_events(sr, frame, comp, findex, rules, sp, layer_names, inp, dem, blo
                     "crossing_deviation": f"turns {v.split(':')[-1].replace('deg', '°')} as a crossing tower; the rule allows 45°",
                     "crossing_side": "crossing span: a crossing tower is outside its distance window from the crossed wire",
                     "crossing_angle": "crossing span: outside the allowed crossing angle",
+                    "gantry_span": f"gantry span of {v.split(':')[-1]}, under the {sp.gantry_min_span_m:g} m minimum",
                     "crossing_span": "crossing span: longer than the rule allows"}.get(
                 v.split(":")[0], v.replace("_", " "))
             evs.append(event("VIOLATION", {"tower": t.no, "what": what, "code": v},

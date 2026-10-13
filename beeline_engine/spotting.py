@@ -57,6 +57,7 @@ class SpotParams:
     river_max_span_m: float = 0.0
     nudge_radius_m: float = 30.0
     raster_prefilter: bool = True         # skip the vector tower rules in clearly free cells (11 Oct 2026)
+    gantry_min_span_m: float = 0.0        # gantry to first / last tower, at least (Vivek, 13 Oct 2026)
     # hilly terrain (rules design_span.hilly_m, section_interval.hilly_km; engine hilly_slope_deg)
     hilly_design_span_m: float | None = None
     hilly_section_km: float | None = None
@@ -203,7 +204,10 @@ class Checker:
     def conductor_ok(self, p, q) -> bool:
         line = LineString([p, q])
         # go zone: crossings of >= 220 kV lines near their towers stay banned (clipped to the zone)
-        if self.c.go_conductor and any(r.hits(line) for r in self.c.go_conductor):
+        L0 = self.c.frame.length_m
+        gantry = any(abs(pt[1]) < 1e-6 and (abs(pt[0]) < 1e-6 or abs(pt[0] - L0) < 1e-6) for pt in (p, q))
+        if self.c.go_conductor and any(r.hits(line) for r in self.c.go_conductor
+                                       if not (gantry and r.rule_id == "terminal_substation")):
             return False
         if line.intersects(self.go):
             line = line.difference(self.go)
@@ -613,6 +617,8 @@ def build_route(chk: Checker, pts: list[tuple[float, float]], angle_set: set[int
                 towers[i].violations.append(f"crossing_{c['violation']}:{c['rule']}")
         if not chk.conductor_ok(pts[i], pts[i + 1]):
             towers[i if i > 0 else 1].violations.append("conductor_buffer")
+        if gantry_span and L < sp.gantry_min_span_m - 1e-6:
+            towers[1 if i == 0 else n - 2].violations.append(f"gantry_span:{L:.0f}m")
     # forced crossing types
     for s in spans:
         for c in s.crossings:

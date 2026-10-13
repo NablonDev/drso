@@ -145,6 +145,7 @@ class Compiled:
     costs: dict = field(default_factory=dict)
     terminal_zone: object = None     # frame coords: go-zone discs + terminal yards (+ gantry buffer)
     terminal_yards: object = None
+    terminal_cond: np.ndarray | None = None   # within CHW of a terminal substation: no conductor but the gantry span
     relaxed: bool = False                    # compiled for the Relaxed route (last-resort rules opened)
     approach_zone: object = None             # frame polygon of the approach sections (None = none)
     rasterizer: object = None                # the _Rasterizer, reused by further compiles of the same layers
@@ -519,7 +520,8 @@ def _tower_crossing_bans(lines, towers, epsg: int, clear_m: float, clear_pct: fl
 CHW_TIED = {("lake", "tower_setback_m"), ("lake", "conductor_buffer_m"), ("crz", "tower_setback_m"),
             ("crz", "conductor_buffer_m"), ("defence", "tower_setback_m"), ("defence", "conductor_buffer_m"),
             ("power_line", "parallel_setback_m"), ("power_line_lt", "parallel_setback_m"),
-            ("railway", "parallel_setback_m"), ("state_highway", "parallel_setback_m")}
+            ("railway", "parallel_setback_m"), ("state_highway", "parallel_setback_m"),
+            ("substations", "conductor_buffer_m")}
 
 
 def merge_approach(norm: "Compiled", app: "Compiled", zone) -> "Compiled":
@@ -620,6 +622,7 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
     go_hv_near = np.zeros((frame.height, frame.width), bool)   # cells next to a >= 220 kV line
     go_hv_bans: list = []                                      # UTM pieces of those lines near their towers
     go_conductor: list = []
+    terminal_cond = None
     tower_geoms, angle_geoms, cond_geoms = [], [], []
 
     def add(mask_arr, target, rule_id):
@@ -1121,6 +1124,13 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
             ym = rfeatures.rasterize([(_frame_to_utm(frame, yards), 1)], out_shape=shape,
                                      transform=frame.transform, fill=0, dtype="uint8").astype(bool)
             tower_forbidden |= ym
+            # the conductor keeps the corridor half-width from the terminal substations too (Vivek, 13 Oct
+            # 2026); the gantry span is exempt (gantry_seeds / Checker.conductor_ok)
+            tchw = yards.buffer(half_width_m)
+            terminal_cond = rfeatures.rasterize([(_frame_to_utm(frame, tchw), 1)], out_shape=shape,
+                                                transform=frame.transform, fill=0, all_touched=True, dtype="uint8").astype(bool)
+            conductor_forbidden |= terminal_cond
+            go_conductor.append(VecRule("terminal_substation", "substations", list(getattr(yards, "geoms", [yards])), half_width_m))
             tower_geoms.append(VecRule("terminal_yard", "substations", list(getattr(yards, "geoms", [yards])), 0.0))
         # go zone (Vivek, 9 Oct 2026): the only check left is that a tower base does not overlap a
         # substation or an existing tower. Base = the largest type's square (centre to corner); an
@@ -1155,7 +1165,7 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
                     half_width_m=hw, conductor_rs_per_m=conductor_rs_per_m,
                     tower_nogo=tower_geoms, angle_nogo=angle_geoms,
                     conductor_nogo=cond_geoms, rules_fired=fired, costs=costs,
-                    terminal_zone=zone, terminal_yards=yards, relaxed=relaxed, relaxed_items=relaxed_items,
+                    terminal_zone=zone, terminal_yards=yards, terminal_cond=terminal_cond, relaxed=relaxed, relaxed_items=relaxed_items,
                     rasterizer=R, go_overlap=go_overlap, go_conductor=go_conductor,
                     precedent_items=list(precedent_items.values()), near_existing=near_existing)
 
