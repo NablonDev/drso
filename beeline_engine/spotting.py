@@ -468,7 +468,7 @@ def pull_string(chk: Checker, grid_pts: list[tuple[float, float]], sp: SpotParam
             q = grid_pts[j]
             if prev is not None:
                 dfl, _ = _deflection(prev, grid_pts[i], q)
-                if dfl > sp.max_dev_deg + 1e-6:
+                if dfl > sp.max_dev_deg + 1e-6 or dfl > _dev_cap(chk, sp, prev, grid_pts[i], q) + 1e-6:
                     continue
             if j < n - 1 and not chk.tower_ok(q[0], q[1], angle_tower=True):
                 continue
@@ -551,15 +551,15 @@ def _nudge(chk: Checker, p, q, nxt, prev, sp: SpotParams, is_last: bool):
             L = math.hypot(c[0] - p[0], c[1] - p[1])
             if L < sp.min_span_m or not chk.conductor_ok(p, c) or not chk.span_crossings(p, c)[0]:
                 continue
-            if prev is not None and _deflection(prev, p, c)[0] > sp.max_dev_deg:
+            if prev is not None and _deflection(prev, p, c)[0] > _dev_cap(chk, sp, prev, p, c):
                 continue
             if nxt is not None:
                 L2 = math.hypot(nxt[0] - c[0], nxt[1] - c[1])
                 if L2 < sp.min_span_m or not chk.conductor_ok(c, nxt) or not chk.span_crossings(c, nxt)[0]:
                     continue
                 # the moved tower's own turn stays within the limit (10 Oct 2026: nudges of up to 30 m on
-                # 100-250 m spans had pushed turns to 68-70°)
-                if _deflection(p, c, nxt)[0] > sp.max_dev_deg:
+                # 100-250 m spans had pushed turns to 68-70°); 45° next to a crossing (13 Oct 2026)
+                if _deflection(p, c, nxt)[0] > _dev_cap(chk, sp, p, c, nxt):
                     continue
             best = c
             break
@@ -723,6 +723,20 @@ def _legal_here(chk: Checker, pts, i, sp: SpotParams, cand) -> bool:
     return True
 
 
+def _dev_cap(chk: Checker, sp: SpotParams, prev, p, nxt) -> float:
+    """The deflection a tower at p may take: the route maximum, or a crossing rule's cap when the span to
+    prev or to nxt crosses a feature that caps its crossing towers (Vivek, 13 Oct 2026: 45°)."""
+    cap = sp.max_dev_deg
+    for a, b in ((prev, p), (p, nxt)):
+        if a is None or b is None:
+            continue
+        for it in chk.span_crossings(a, b)[1]:
+            lim = it.get("max_dev_deg")
+            if lim is not None and lim < cap:
+                cap = lim
+    return cap
+
+
 def _crossing_dev_ok(chk: Checker, pts, i, cand) -> bool:
     """With tower i at `cand`: every tower at the end of a span that crosses a capped feature (towers
     i-1, i, i+1 can be such ends) turns at most that feature's cap (Vivek, 13 Oct 2026)."""
@@ -866,7 +880,7 @@ def _crossing_span_fix(chk: Checker, pts, sp: SpotParams):
                 if not all(chk.conductor_ok(a, b) and chk.span_crossings(a, b)[0] for a, b in segs):
                     continue
                 prev_, next_ = prev_t, next_t
-                if any(_deflection(a, b, c)[0] > sp.max_dev_deg for a, b, c in
+                if any(_deflection(a, b, c)[0] > _dev_cap(chk, sp, a, b, c) for a, b, c in
                        ((pts[i - 2] if i >= 2 else None, prev_, p2), (prev_, p2, q2), (p2, q2, next_),
                         (q2, next_, pts[i + 3] if i + 3 < n else None)) if a is not None and c is not None):
                     continue
@@ -908,7 +922,10 @@ def _crossing_side_fix(chk: Checker, pts, sp: SpotParams):
             run_end += 1
         done = False
         mid = (lo + hi) / 2
-        for da, db in ((mid, mid), (lo + 5, lo + 5), (hi - 5, hi - 5), (mid, lo + 5), (lo + 5, mid), (hi - 5, mid), (mid, hi - 5)):
+        # every pair of distances in the window on a 4 m step, nearest the middle first
+        steps = [lo + 2 + 4 * k for k in range(int((hi - lo - 4) // 4) + 1)]
+        combos = sorted(((da, db) for da in steps for db in steps), key=lambda c_: abs(c_[0] - mid) + abs(c_[1] - mid))
+        for da, db in combos:
             p2 = (X[0] - ux * da, X[1] - uy * da)
             q2 = (X[0] + ux * db, X[1] + uy * db)
             if not (chk.tower_ok(p2[0], p2[1], True) and chk.tower_ok(q2[0], q2[1], True)):
@@ -927,12 +944,16 @@ def _crossing_side_fix(chk: Checker, pts, sp: SpotParams):
                 if left is None or right is None:
                     log.debug("side fix %d: window %d..%d cannot be re-spotted (left %s, right %s)", i, start, end, left is not None, right is not None)
                     continue
-                trial = pts[:start + 1] + list(left) + [p2, q2] + list(right) + pts[end:]
-                k = start + 1 + len(left)                               # p2's index in the trial
+                head = pts[:start + 1] if start < i else pts[:i]          # the old crossing towers go
+                tail = pts[end:] if end > i + 1 else pts[i + 2:]
+                trial = head + list(left) + [p2, q2] + list(right) + tail
+                k = len(head) + len(left)                               # p2's index in the trial
                 if any(math.hypot(trial[m + 1][0] - trial[m][0], trial[m + 1][1] - trial[m][1]) < sp.min_span_m - 1e-6
-                       for m in range(start, min(len(trial) - 1, k + 2 + len(right)))):
+                       for m in range(max(0, len(head) - 1), min(len(trial) - 1, k + 2 + len(right)))):
+                    log.debug("side fix %d: a span under the minimum at %g/%g m", i, da, db)
                     continue
                 if not (_crossing_dev_ok(chk, trial, k, p2) and _crossing_dev_ok(chk, trial, k + 1, q2)):
+                    log.debug("side fix %d: crossing-tower deviation over the cap at %g/%g m", i, da, db)
                     continue
                 pts = trial
                 i = k + 1
