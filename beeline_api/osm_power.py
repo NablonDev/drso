@@ -31,14 +31,15 @@ from shapely.geometry import LineString, Point, box
 from . import db, settings
 
 log = logging.getLogger(__name__)
-HT_VOLTAGES = (765, 400, 220, 132)
+# 800 / 500: HVDC (Vivek, 13 Oct 2026 — the Mundra–Mahendragarh ±500 kV line had been dropped)
+HT_VOLTAGES = (800, 765, 500, 400, 220, 132)
 LT_VOLTAGES = (66, 33)
 VOLTAGES = HT_VOLTAGES + LT_VOLTAGES
 GROUPS = {"ht": HT_VOLTAGES, "lt": LT_VOLTAGES}
 LINE_TAGS = ("line", "minor_line")
 TOWER_TAGS = ("tower", "pole")
 KEEP_TAGS = ("name", "ref", "operator", "owner", "circuits", "cables", "voltage", "frequency", "line", "location",
-             "design", "material", "structure", "start_date", "wires")
+             "design", "material", "structure", "start_date", "wires", "voltage_assumed")
 GEOFABRIK_URL = "https://download.geofabrik.de/asia/india-latest.osm.pbf"
 GEOFABRIK_STATE = "https://download.geofabrik.de/asia/india-updates/state.txt"
 OVERPASS_URLS = settings.OVERPASS_URLS
@@ -57,7 +58,9 @@ create table if not exists osm_power (
   load_id bigint,
   primary key (voltage_kv, id)
 ) partition by list (voltage_kv);
+create table if not exists osm_power_800 partition of osm_power for values in (800);
 create table if not exists osm_power_765 partition of osm_power for values in (765);
+create table if not exists osm_power_500 partition of osm_power for values in (500);
 create table if not exists osm_power_400 partition of osm_power for values in (400);
 create table if not exists osm_power_220 partition of osm_power for values in (220);
 create table if not exists osm_power_132 partition of osm_power for values in (132);
@@ -128,12 +131,56 @@ def _copy_rows(cur, rows, load_id):
                           shapely.to_wkb(shapely.set_srid(geom, 4326), hex=True, include_srid=True), load_id))
 
 
+UNTAGGED_DEFAULT_KV = 400          # strict side: D-type crossings, all EHV rules (Vivek, 13 Oct 2026)
+PARALLEL_INFER_DEG = 0.0015        # ~150 m: a tagged line this close along most of an untagged one lends its voltage
+
+
+def infer_untagged(lines: list) -> dict[int, tuple[int, str]]:
+    """Voltage for power lines without a voltage tag (Vivek, 13 Oct 2026: they were dropped, 1,685 km in
+    Gujarat). A tagged line running alongside (within ~150 m at ≥ 60 % of 11 points along it) lends its
+    voltage; otherwise UNTAGGED_DEFAULT_KV. Returns {osm_id: (kv, how)}; busbars, bays and distribution
+    voltages (11-25 kV, tagged) are not touched."""
+    from shapely import STRtree
+    tagged, kvs = [], []
+    for oid, tags, coords, nids in lines:
+        v = parse_voltages(tags.get("voltage"))
+        if v and len(coords) >= 2:
+            tagged.append(LineString(coords)); kvs.append(max(v))
+    tree = STRtree(tagged) if tagged else None
+    out = {}
+    for oid, tags, coords, nids in lines:
+        if tags.get("voltage") or len(coords) < 2:
+            continue
+        g = LineString(coords)
+        votes: dict[int, int] = {}
+        if tree is not None:
+            for t in (g.interpolate(i / 10, normalized=True) for i in range(11)):
+                idx = tree.query(t, predicate="dwithin", distance=PARALLEL_INFER_DEG)
+                if len(idx):
+                    j = min(idx, key=lambda k: tagged[k].distance(t))
+                    votes[kvs[j]] = votes.get(kvs[j], 0) + 1
+        best = max(votes.items(), key=lambda x: x[1]) if votes else None
+        if best and best[1] >= 7:
+            out[oid] = (best[0], f"parallel {best[0]} kV line")
+        elif tags.get("power") == "minor_line":
+            out[oid] = (33, "default for an untagged minor_line (distribution on poles)")
+        else:
+            out[oid] = (UNTAGGED_DEFAULT_KV, "default (no tag, no tagged line alongside)")
+    return out
+
+
 def _rows_from(lines: list, towers: dict) -> tuple[list, dict]:
     """lines: [(osm_id, tags, coords, node_ids)], towers: {node_id: (lon, lat, tags)}."""
     rows, counts = [], {}
     tower_kv: dict[int, set] = {}
+    inferred = infer_untagged(lines)
     for oid, tags, coords, nids in lines:
         kvs = parse_voltages(tags.get("voltage"))
+        if not kvs and oid in inferred:
+            kv, how = inferred[oid]
+            kvs = [kv]
+            tags = {**tags, "voltage_assumed": how}
+            counts["lines_voltage_assumed"] = counts.get("lines_voltage_assumed", 0) + 1
         if not kvs or len(coords) < 2:
             continue
         g = LineString(coords)
@@ -358,7 +405,8 @@ def read_band(band_lonlat, voltages: tuple[int, ...] = VOLTAGES) -> tuple[gpd.Ge
     geoms = shapely.from_wkb([bytes(r["wkb"]) for r in rows]) if rows else []
     gdf = gpd.GeoDataFrame({
         "class": ["power_line" if r["kind"] == "line" else "power_tower" for r in rows],
-        "name": [(r["tags"] or {}).get("name") or (f"{r['voltage_kv']} kV line" if r["kind"] == "line" else None) for r in rows],
+        "name": [(r["tags"] or {}).get("name") or (f"{r['voltage_kv']} kV {'HVDC ' if (r['tags'] or {}).get('frequency') == '0' else ''}line"
+                  + (" (voltage assumed)" if (r["tags"] or {}).get("voltage_assumed") else "") if r["kind"] == "line" else None) for r in rows],
         "confidence": [None] * len(rows),
         "src_id": [f"osm:{r['osm_type']}/{r['osm_id']}" for r in rows],
         "attrs": [{"voltage_kv": r["voltage_kv"], **(r["tags"] or {})} for r in rows],
