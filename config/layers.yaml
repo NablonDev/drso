@@ -202,7 +202,7 @@ layers:
     desc: "OpenStreetMap power lines and towers · 765, 400, 220, 132 kV"
     minutes_per_km2: 0.002
     default_confidence: 0.85
-    voltages: [765, 400, 220, 132]
+    voltages: [800, 765, 500, 400, 220, 132]   # 800 / 500: HVDC (Vivek, 13 Oct 2026)
     refreshable: true
     refresh_label: OSM
     classes: [power_line, power_tower]
