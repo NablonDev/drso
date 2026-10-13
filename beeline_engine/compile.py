@@ -55,6 +55,11 @@ class CrossingRaster:
     pref_window: tuple[float, float] | None = None   # preferred crossing angle (acute scale), e.g. (85, 90)
     pref_mask: np.ndarray | None = None              # 1 where the crossed wire is at its null point (± share of the span)
     pref_mask_wide: np.ndarray | None = None         # the same widened by two cells, read by the search at its hit sample
+    # distance of each wire cell from its span's null point, as a share of the span (0 = null point, 0.5 = at a
+    # tower); NaN off the wire. The search reads the copy spread two cells; penalty grows with it (13 Oct 2026)
+    null_offset: np.ndarray | None = None
+    null_offset_wide: np.ndarray | None = None
+    null_allowed: float = 0.2
     side_m: tuple[float, float] | None = None        # each crossing tower this far from the crossed wire (min, max)
     max_dev_deg: float | None = None                 # deviation cap at the two crossing towers
     penalty_rs: float = 0.0                          # search cost of a non-preferred crossing
@@ -465,6 +470,39 @@ def _span_mid_pieces(lines, towers, epsg: int, half_frac: float) -> list:
     return out
 
 
+def _span_offset_pieces(lines, towers, epsg: int, step_frac: float = 0.025) -> list:
+    """(piece, offset) along every mapped span of the existing line: the span cut into step_frac pieces, each
+    with |position − 0.5| of the span at its middle (UTM). For the graded null-point penalty (Vivek, 13 Oct 2026)."""
+    if lines is None or towers is None or not len(lines) or not len(towers):
+        return []
+    from shapely import STRtree
+    from shapely.ops import substring
+    parts = []
+    for g in lines.geometry.to_crs(epsg):
+        if g is None or g.is_empty:
+            continue
+        parts.extend(x for x in getattr(g, "geoms", [g]) if x.geom_type == "LineString" and x.length > 0)
+    tw = [t for t in towers.geometry.to_crs(epsg) if t is not None and not t.is_empty]
+    if not parts or not tw:
+        return []
+    out = []
+    tree = STRtree(tw)
+    n = int(round(1.0 / step_frac))
+    for g in parts:
+        idx = tree.query(g.buffer(15.0))
+        pos = sorted(g.project(tw[i]) for i in idx if g.distance(tw[i]) <= 15.0)
+        for a, b in zip(pos, pos[1:]):
+            span = b - a
+            if span <= 0:
+                continue
+            for k in range(n):
+                p0, p1 = a + span * k / n, a + span * (k + 1) / n
+                piece = substring(g, p0, p1)
+                if piece.geom_type == "LineString" and piece.length > 0:
+                    out.append((piece, abs((k + 0.5) / n - 0.5)))
+    return out
+
+
 def _tower_crossing_bans(lines, towers, epsg: int, clear_m: float, clear_pct: float = 0.0) -> list:
     """Parts of the existing conductors the new line may not cross (UTM). With clear_pct (Vivek,
     10 Oct 2026): a share of each span of the existing line next to its towers — 20 % of a 400 m
@@ -867,6 +905,16 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
                     # the search reads the mask where a span's samples meet the wire's angle field (within
                     # 1.5 cells of it): a copy widened by two cells for that; the spotting reads the exact one
                     pref_wide = ndimage.binary_dilation(pref_mask, iterations=2)
+                # graded null-point penalty: offset share per wire cell, spread two cells for the search
+                null_off = null_wide = None
+                offs = _span_offset_pieces(R.subset(r.layer, ["power_line"]), R.subset(r.layer, ["power_tower"]), frame.epsg)
+                if offs:
+                    raw = rfeatures.rasterize([(g, v + 1.0) for g, v in offs], out_shape=shape, transform=frame.transform,
+                                              fill=0, all_touched=True, dtype="float32")
+                    has = raw > 0
+                    null_off = np.where(has, raw - 1.0, np.nan).astype(np.float32)
+                    dd, (ri, ci) = ndimage.distance_transform_edt(~has, return_indices=True)
+                    null_wide = np.where(dd <= 2.0, null_off[ri, ci], np.nan).astype(np.float32)
                 # go zone (9 Oct 2026): crossings of lines from GO_ZONE_CROSSING_KV up stay governed there
                 hv = R.by_voltage(r.layer, GO_ZONE_CROSSING_KV, True)
                 d_hv = R.dist(hv, ["power_line"])
@@ -952,6 +1000,9 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
                 if r.id in ("power_line", "power_line_lt"):
                     x.pref_mask = pref_mask
                     x.pref_mask_wide = pref_wide
+                    x.null_offset = null_off
+                    x.null_offset_wide = null_wide
+                    x.null_allowed = float(p.get("crossing_point_allowed_pct", 20) or 20) / 100.0
                     x.max_span_m = None if side_m is not None else x.max_span_m   # the side window bounds the span
                 if x.max_span_m is not None and x.max_span_m > design_span_m + 1e-6:
                     x.long_span = True                                            # spans up to 600 m over a crossing

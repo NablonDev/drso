@@ -259,6 +259,12 @@ class Checker:
             if pm is not None:
                 mk, _ = self._sample(pm, p, q)
                 item["point_preferred"] = bool(mk[(first + last) // 2])
+            no = getattr(cr, "null_offset_wide", None)
+            if no is not None:
+                ov, _ = self._sample(no, p, q)
+                v = ov[(first + last) // 2]
+                if np.isfinite(v):
+                    item["null_offset_pct"] = round(float(v) * 100, 1)       # distance from the null point, % of their span
             if cr.window is not None and acute < cr.window[0] - 1e-3:
                 ok = False
                 item["violation"] = "angle"

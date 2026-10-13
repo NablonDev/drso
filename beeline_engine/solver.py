@@ -195,7 +195,7 @@ class _Rasters:
             getattr(compiled, "near_existing", None) is not None else None
         self.cross = [(cr, t(np.nan_to_num(cr.angle, nan=-1.0)),
                        None if cr.width_raster is None else t(cr.width_raster, torch.bool),
-                       None if getattr(cr, "pref_mask_wide", None) is None else t(cr.pref_mask_wide, torch.bool))
+                       None if getattr(cr, "null_offset_wide", None) is None else t(np.nan_to_num(cr.null_offset_wide, nan=-1.0)))
                       for cr in compiled.crossings]
         self.par = [t(np.nan_to_num(pr.angle, nan=-1.0)) for pr in compiled.parallels]
         self.par_meta = [(pr.rule_id, getattr(pr, "crossing_exempt", False)) for pr in compiled.parallels]
@@ -405,11 +405,14 @@ def _edge_geom(compiled: Compiled, grid: Grid, p: SolverParams, rasters: "_Raste
         pen = torch.zeros_like(crossed)
         if cr.pref_window is not None:
             pen |= acute < cr.pref_window[0] - 1e-3
+        # graded null-point penalty (Vivek, 13 Oct 2026): 0 at the null point rising linearly to the full
+        # allowance at the edge of the allowed band; read at the middle of the hit samples (the wire itself)
+        pos_frac = torch.zeros_like(E)
         if pref_t is not None:
-            # read the preferred-position mask at the middle of the hit samples (the wire itself)
             lastp = (n_samples - 1) - torch.argmax(hit.flip(-1).to(torch.int8), dim=-1, keepdim=True)
             midp = ((first + lastp) // 2).clamp_(0, n_samples - 1)
-            pen |= ~torch.gather(pref_t[row, col], -1, midp).squeeze(-1)
+            off = torch.gather(pref_t[row, col], -1, midp).squeeze(-1)
+            pos_frac = torch.where(off >= 0, (off / max(cr.null_allowed, 1e-6)).clamp(0.0, 1.0), torch.zeros_like(off))
         if cr.max_dev_deg is not None:
             X |= crossed
         min_type = cr.min_type
@@ -430,8 +433,9 @@ def _edge_geom(compiled: Compiled, grid: Grid, p: SolverParams, rasters: "_Raste
         crossed_by[cr.rule_id] = crossed_by.get(cr.rule_id, torch.zeros_like(crossed)) | crossed
         E = E + torch.where(crossed, add, torch.zeros_like(E))
         if cr.penalty_rs > 0:
-            # non-preferred crossing (angle or position): allowed at the configured allowance
+            # non-preferred angle: the full allowance; position: graded by the distance from the null point
             E = E + torch.where(crossed & pen, torch.full_like(E, float(cr.penalty_rs)), torch.zeros_like(E))
+            E = E + torch.where(crossed, pos_frac * float(cr.penalty_rs), torch.zeros_like(E))
         invalid |= crossed & bad
     for pa, (rid, exempt) in zip(rasters.par, rasters.par_meta):
         a = pa[row, col]

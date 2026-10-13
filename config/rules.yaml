@@ -451,7 +451,9 @@ groups:
           - {key: angle_min_kv, label: "Crossing angle applies from", type: num, unit: kV, value: 66}
           # the two crossing towers stand 1.2-1.7 × our tower height from the crossed conductor, no more (72.5 m → 87-123 m)
           - {key: crossing_side_m, label: "Crossing tower to the crossed conductor, each side (min-max)", type: rng, unit: m, value: {765: [87, 123], 400: [66, 94], 220: [48, 68], 132: [38, 54]}}
-          - {key: relax_penalty_pct, label: "Search allowance for a non-preferred crossing, % of the crossing tower's price", type: num, unit: "%", value: 20}
+          # Vivek, 13 Oct 2026: the position penalty is graded — 0 at the null point, rising linearly with the distance from
+          # it to the full allowance at the edge of the allowed band, so the crossing stays as close to the null point as it can
+          - {key: relax_penalty_pct, label: "Search allowance for a non-preferred crossing, % of the crossing tower's price (position: graded from the null point)", type: num, unit: "%", value: 20}
           - {key: tower_type, label: "Tower type", type: sel, value: "B/C/D", options: ["A/B/C/D", "B", "C", "D", "B/C/D"]}
           - {key: tower_type_400kv, label: "Tower type, lines of 400 kV and above", type: sel, value: "D", options: ["B/C/D", "D"]}
           - {key: parallel_setback_m, label: "Conductor buffer, parallel run", type: num, unit: m, value: {765: 33.5, 400: 23, 220: 17.5, 132: 13.5}}
@@ -486,7 +488,9 @@ groups:
           - {key: angle_min_kv, label: "Crossing angle applies from", type: num, unit: kV, value: 66}
           # the two crossing towers stand 1.2-1.7 × our tower height from the crossed conductor, no more (72.5 m → 87-123 m)
           - {key: crossing_side_m, label: "Crossing tower to the crossed conductor, each side (min-max)", type: rng, unit: m, value: {765: [87, 123], 400: [66, 94], 220: [48, 68], 132: [38, 54]}}
-          - {key: relax_penalty_pct, label: "Search allowance for a non-preferred crossing, % of the crossing tower's price", type: num, unit: "%", value: 20}
+          # Vivek, 13 Oct 2026: the position penalty is graded — 0 at the null point, rising linearly with the distance from
+          # it to the full allowance at the edge of the allowed band, so the crossing stays as close to the null point as it can
+          - {key: relax_penalty_pct, label: "Search allowance for a non-preferred crossing, % of the crossing tower's price (position: graded from the null point)", type: num, unit: "%", value: 20}
           - {key: tower_type, label: "Tower type", type: sel, value: "A/B/C/D", options: ["A/B/C/D", "B", "C", "D", "B/C/D"]}
           - {key: tower_type_400kv, label: "Tower type, lines of 400 kV and above", type: sel, value: "D", options: ["B/C/D", "D"]}
           - {key: parallel_setback_m, label: "Conductor buffer, parallel run", type: num, unit: m, value: {765: 33.5, 400: 23, 220: 17.5, 132: 13.5}}
