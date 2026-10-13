@@ -100,9 +100,9 @@ groups:
         params:
           # 765 kV: the tower height (72.5 m) + 40 % = 101.5 m — a falling tower must not reach the house
           # (Vivek, 10 Oct 2026); other voltages keep 100 m until their tower heights are supplied
-          # Vivek, 13 Oct 2026: the tower height only (was + 40 %), measured from the raw footprint (statewide
-          # footprints v1, not buffered); the conductor keeps the corridor half-width
-          - {key: tower_setback_m, label: "Tower setback (tower height)", type: num, unit: m, value: {765: 72.5, 400: 55, 220: 40, 132: 32}}
+          # Vivek, 13 Oct 2026 (2nd): tower and conductor both keep the corridor half-width from a single
+          # building (was the tower height), measured from the raw footprint; clusters keep 200 m / 200 m
+          - {key: tower_setback_m, label: "Tower setback (corridor half-width)", type: num, unit: m, value: {765: 33.5, 400: 23, 220: 17.5, 132: 13.5}}
           - {key: conductor_buffer, label: "Conductor buffer", type: sel, value: "Corridor half-width", options: ["Corridor half-width", "Fixed", "None"]}
           - {key: conductor_buffer_m, label: "Fixed conductor buffer", type: num, unit: m, value: 30, best_guess: true}
           - {key: applies_to, label: "Applies to", type: sel, value: "All towers", options: ["Angular towers", "All towers"]}
