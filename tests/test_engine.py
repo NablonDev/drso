@@ -432,7 +432,7 @@ def test_dp_is_optimal_against_dijkstra():
     ras = _Rasters(comp, p, torch.device("cuda" if torch.cuda.is_available() else "cpu"), strip)
     ras.set_river_cols(comp, g, p)
     n_s = int(math.ceil(p.span_max_m / 10)) + 1
-    E = edge_costs(comp, g, p, ras, 0, g.nc, n_s).cpu().numpy()
+    E = edge_costs(comp, g, p, ras, 0, g.nc, n_s)[0].cpu().numpy()
     K = len(g.offsets)
     # Dijkstra over states (c, r, k_in); start states come from gantry seeds
     INF = float("inf")
@@ -1042,3 +1042,80 @@ def test_forest_priced_copy_matches_a_recompile():
     assert np.allclose(cheap.land_rate_m2, full.land_rate_m2, rtol=1e-4)
     assert np.array_equal(cheap.tower_forbidden, base.tower_forbidden)
     assert cheap.costs["forest"]["npv_l_ha"] == full.costs["forest"]["npv_l_ha"]
+
+
+def _line_with_towers(f, x, span=400.0, kv=400):
+    """An existing line across the whole band at chainage x with mapped towers every `span` m."""
+    line = frame_geom(f, LineString([(x, -2600), (x, 2600)]))
+    tw = [frame_geom(f, Point(x, y)) for y in np.arange(-2400, 2401, span)]
+    n = 1 + len(tw)
+    return gpd.GeoDataFrame({"class": ["power_line"] + ["power_tower"] * len(tw), "name": [f"{kv} kV line"] * n,
+                             "confidence": [0.9] * n, "attrs": [{"voltage_kv": kv}] * n}, geometry=[line] + tw, crs=4326)
+
+
+def test_crossing_towers_sit_in_the_side_window():
+    """Vivek, 13 Oct 2026: the two crossing towers stand 1.2-1.7 × our tower height from the crossed wire
+    (87-123 m at 765 kV) and turn at most 45°; the crossing is inside the allowed band of the crossed span."""
+    f = frame()
+    c = f.length_m / 2
+    res = run_solve(solve_input({"power": _line_with_towers(f, c)}))
+    assert res["feasible"]
+    r = res["routes"][0]
+    xs = [(s, x) for s in r["spans"] for x in s["crossings"] if x["rule"] == "power_line"]
+    assert len(xs) == 1
+    s, x = xs[0]
+    assert x["side_window_m"] == [87, 123]
+    assert 87 - 0.1 <= x["side_a_m"] <= 123 + 0.1 and 87 - 0.1 <= x["side_b_m"] <= 123 + 0.1, x
+    assert x.get("violation") is None
+    assert 174 <= s["length_m"] <= 246
+    for i in (s["a"], s["b"]):
+        assert r["towers"][i]["deflection_deg"] <= 45 + 1e-6
+    assert r["stats"]["violations"] == 0
+
+
+def test_preferred_crossing_is_taken_when_it_is_free():
+    """With the bee-line through a null point, the search crosses there at 90° and nothing is relaxed."""
+    f = frame()
+    c = f.length_m / 2
+    # towers at ±200, ±600 … so the bee-line (y = 0) passes the null point of a span
+    line = frame_geom(f, LineString([(c, -2600), (c, 2600)]))
+    tw = [frame_geom(f, Point(c, y)) for y in np.arange(-2200, 2201, 400)]
+    n = 1 + len(tw)
+    g = gpd.GeoDataFrame({"class": ["power_line"] + ["power_tower"] * len(tw), "name": ["400 kV line"] * n,
+                          "confidence": [0.9] * n, "attrs": [{"voltage_kv": 400}] * n}, geometry=[line] + tw, crs=4326)
+    res = run_solve(solve_input({"power": g}))
+    r = res["routes"][0]
+    x = [x for s in r["spans"] for x in s["crossings"] if x["rule"] == "power_line"][0]
+    assert x["angle_preferred"] and x["point_preferred"], x
+    assert r["stats"]["crossings_relaxed"] == 0
+    assert all(e["type"] != "CROSSING_RELAXED" for e in r["events"])
+
+
+def test_relaxed_crossing_is_reported():
+    """A crossing away from the null point is allowed at the penalty and named in the events."""
+    f = frame()
+    c = f.length_m / 2
+    res = run_solve(solve_input({"power": _line_with_towers(f, c)}))
+    r = res["routes"][0]
+    x = [x for s in r["spans"] for x in s["crossings"] if x["rule"] == "power_line"][0]
+    if not x["point_preferred"] or not x["angle_preferred"]:
+        assert r["stats"]["crossings_relaxed"] >= 1
+        ev = [e for e in r["events"] if e["type"] == "CROSSING_RELAXED"]
+        assert ev and "allowed because" in ev[0]["text"]
+
+
+def test_other_crossings_may_span_600m_and_turn_at_most_45():
+    """Other crossings (rail, roads, rivers …): no null point, span up to 600 m, 45° at the crossing towers."""
+    f = frame()
+    c = f.length_m / 2
+    rail = frame_geom(f, LineString([(c, -2600), (c, 2600)]))
+    res = run_solve(solve_input({"rail": gdf([rail], "railway", "Test line")}))
+    assert res["feasible"]
+    r = res["routes"][0]
+    xs = [(s, x) for s in r["spans"] for x in s["crossings"] if x["rule"] == "railway"]
+    assert xs
+    s, x = xs[0]
+    assert s["length_m"] <= 600 + 1e-3 and x.get("violation") is None
+    assert "side_window_m" not in x and x.get("point_preferred") is None
+    for i in (s["a"], s["b"]):
+        assert r["towers"][i]["deflection_deg"] <= 45 + 1e-6

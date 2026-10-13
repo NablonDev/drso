@@ -451,7 +451,7 @@ function Body({ s }: { s: Solve }) {
             <Kpi k="Length" v={num(sel.stats.length_km, 1)} unit="km" />
             <Kpi k="Towers" v={int(sel.stats.towers)} />
             <Kpi k="Angle points" v={int(sel.stats.angle_points)} />
-            <Kpi k="Crossings" v={int(sel.stats.crossings_total)} />
+            <Kpi k="Crossings" v={int(sel.stats.crossings_total)} unit={sel.stats.crossings_relaxed ? `${int(sel.stats.crossings_relaxed)} relaxed` : undefined} />
             <Kpi k="Forest" v={num(sel.stats.forest_ha, 1)} unit="ha" />
             <Kpi k="Cost" v={crore(sel.cost.total, { unit: false, digits: 1 })} unit="₹Cr" />
           </div>

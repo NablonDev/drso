@@ -184,7 +184,7 @@ function Body({ s }: { s: Solve }) {
                           {g.key === "towers" ? `${int(r.stats.towers)} towers · foundations ${crore(r.cost.foundation)}`
                             : g.key === "conductor" ? `${num(r.stats.length_km, 1)} km · conductor, insulators, stringing`
                               : g.key === "land" ? `${int(r.stats.corridor_ha)} ha corridor${r.cost.crops_trees ? ` · crops ${crore(r.cost.crops_trees)}` : ""} · forest ${crore(r.cost.forest)}`
-                                : g.key === "crossings" ? `${int(r.stats.crossings_total)} crossings`
+                                : g.key === "crossings" ? `${int(r.stats.crossings_total)} crossings${r.stats.crossings_relaxed ? ` · ${int(r.stats.crossings_relaxed)} outside the preferred crossing` : ""}`
                                   : "clearances"}
                         </td>
                         <td className="mono" style={{ textAlign: "right" }}>{crore(g.rs)}</td>

@@ -88,7 +88,7 @@ export function costGroups(c: RouteCost): CostGroup[] {
 export function eventClass(t: string): string {
   if (t.startsWith("TURN")) return "turn";
   if (t === "CROSSING" || t === "SECTION_POINT" || t === "NOC_REQUIRED") return "cross";
-  if (t === "VIOLATION" || t === "CLEARANCE_SHORT" || t === "FOREST_ENTRY" || t === "RULE_WARNING") return "avoid";
+  if (t === "VIOLATION" || t === "CLEARANCE_SHORT" || t === "FOREST_ENTRY" || t === "RULE_WARNING" || t === "CROSSING_RELAXED") return "avoid";
   return "";
 }
 

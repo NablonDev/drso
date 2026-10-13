@@ -469,6 +469,8 @@ export interface RouteStats {
   corridor_ha: number;
   crossings: Record<string, number>;
   crossings_total: number;
+  /** crossings outside the preferred angle / null point, allowed at the rule's penalty (13 Oct 2026) */
+  crossings_relaxed?: number;
   violations: number;
   warnings: number;
   max_lateral_m: number;

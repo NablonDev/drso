@@ -29,7 +29,7 @@ spans:
   # (Vivek, 6 Oct 2026; was 1.125 x design span in the search only)
   # Long spans are allowed only where the span crosses a river (best guess, AESL to confirm)
   # TSD span tables (8 Oct 2026): one span ≤ 60 % of the 1,200 m adjacent-span sum → 720 m
-  river_crossing_max_span_m: 720
+  river_crossing_max_span_m: 600          # Vivek, 13 Oct 2026: every crossing span may go to 600 m (was rivers only, 720)
   # Search-grid allowance on crossing-span limits (10 Oct 2026): sites are 50 m apart, so a crossing
   # that fits only with a 292-300 m span (e.g. 101.5 m clear of a 66 kV wire each side) was invisible to
   # the search; it may now exceed the limit by half a site spacing, and the tower spotting slides the two

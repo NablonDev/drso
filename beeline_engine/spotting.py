@@ -231,21 +231,42 @@ class Checker:
             hit = ~np.isnan(a)
             if not hit.any():
                 continue
-            fa = float(a[np.argmax(hit)])
+            first = int(np.argmax(hit))
+            last = len(hit) - 1 - int(np.argmax(hit[::-1]))
+            fa = float(a[first])
             d = (head - fa) % 180.0
             acute = min(d, 180.0 - d)
+            # the crossed feature sits at the middle of its hit samples; distances from each tower to it
+            mid = (first + last) / 2.0 * step
             item = {"rule": cr.rule_id, "name": cr.name, "angle_deg": round(acute, 1), "span_m": round(L, 1),
-                    "min_type": cr.min_type, "cost_rs": cr.cost_rs, "major": False}
+                    "min_type": cr.min_type, "cost_rs": cr.cost_rs, "major": False,
+                    "side_a_m": round(mid, 1), "side_b_m": round(L - mid, 1)}
             if getattr(cr, "extension_m", 0):
                 item["extension_m"] = cr.extension_m
             if getattr(cr, "long_span", False):
                 item["long_span"] = True
+            if getattr(cr, "max_dev_deg", None) is not None:
+                item["max_dev_deg"] = float(cr.max_dev_deg)
+            # crossing preferences (Vivek, 13 Oct 2026): angle and, for power lines, the null point
+            pw = getattr(cr, "pref_window", None)
+            item["angle_preferred"] = pw is None or acute >= pw[0] - 1e-3
+            pm = getattr(cr, "pref_mask", None)
+            if pm is not None:
+                mk, _ = self._sample(pm, p, q)
+                item["point_preferred"] = bool(mk[(first + last) // 2])
             if cr.window is not None and acute < cr.window[0] - 1e-3:
                 ok = False
                 item["violation"] = "angle"
             if cr.max_span_m is not None and L > cr.max_span_m + 1e-3:
                 ok = False
                 item["violation"] = "span"
+            side = getattr(cr, "side_m", None)
+            if side is not None:
+                lo, hi = side
+                item["side_window_m"] = [lo, hi]
+                if not (lo - 1e-3 <= mid <= hi + 1e-3 and lo - 1e-3 <= L - mid <= hi + 1e-3):
+                    ok = False
+                    item["violation"] = "side"
             if cr.width_raster is not None and cr.major_threshold_m is not None:
                 w, st = self._sample(cr.width_raster, p, q)
                 width = float(w.sum()) * st
@@ -606,11 +627,12 @@ def build_route(chk: Checker, pts: list[tuple[float, float]], angle_set: set[int
                     if t.type != "G" and t.extension_m < c["extension_m"]:
                         t.extension_m = float(c["extension_m"])
                         t.reasons.append(f"crossing_extension:{c['rule']}")
-            if c["rule"] in sp.max_dev_adjacent_power_deg:
-                lim = sp.max_dev_adjacent_power_deg[c["rule"]]
-                for ti in (s.a - 1, s.b + 1):
-                    if 0 < ti < len(towers) - 1 and towers[ti].deflection_deg > lim:
-                        towers[ti].warnings.append(f"power_adjacent_deviation:{c['rule']}")
+            lim = c.get("max_dev_deg")
+            if lim is not None:
+                # the two crossing towers turn at most max_dev_deg (Vivek, 13 Oct 2026; was a warning at n±1)
+                for ti in (s.a, s.b):
+                    if 0 < ti < len(towers) - 1 and towers[ti].deflection_deg > lim + 1e-6:
+                        towers[ti].violations.append(f"crossing_deviation:{c['rule']}:{towers[ti].deflection_deg:.0f}deg")
     for i in added:
         towers[i].reasons.append("clearance")
     # hilly ground: every tower on a hilly span is a tension tower, B1 at least (Vivek, 7 Oct 2026)
@@ -685,6 +707,8 @@ def _legal_here(chk: Checker, pts, i, sp: SpotParams, cand) -> bool:
         return False
     if i + 2 < n and _deflection(cand, next_, pts[i + 2])[0] > sp.max_dev_deg:
         return False
+    if not _crossing_dev_ok(chk, pts, i, cand):
+        return False
     if sp.tsd:
         # TSD wind span (mean of the two adjacent spans) at the moved tower and both neighbours — the
         # search honoured it on the lattice; a move must not undo that
@@ -696,6 +720,25 @@ def _legal_here(chk: Checker, pts, i, sp: SpotParams, cand) -> bool:
                 L2 = math.hypot(trial[m + 1][0] - trial[m][0], trial[m + 1][1] - trial[m][1])
                 if (L1 + L2) / 2.0 > wind + 1e-3:
                     return False
+    return True
+
+
+def _crossing_dev_ok(chk: Checker, pts, i, cand) -> bool:
+    """With tower i at `cand`: every tower at the end of a span that crosses a capped feature (towers
+    i-1, i, i+1 can be such ends) turns at most that feature's cap (Vivek, 13 Oct 2026)."""
+    n = len(pts)
+    trial = list(pts); trial[i] = cand
+    caps: dict[int, float] = {}
+    for a in (i - 1, i):
+        if 0 <= a < n - 1:
+            for it in chk.span_crossings(trial[a], trial[a + 1])[1]:
+                lim = it.get("max_dev_deg")
+                if lim is not None:
+                    for ti in (a, a + 1):
+                        caps[ti] = min(caps.get(ti, 1e9), lim)
+    for ti, lim in caps.items():
+        if 0 < ti < n - 1 and _deflection(trial[ti - 1], trial[ti], trial[ti + 1])[0] > lim + 1e-6:
+            return False
     return True
 
 
@@ -784,6 +827,7 @@ def _crossing_span_fix(chk: Checker, pts, sp: SpotParams):
     position passing the tower, conductor, crossing, span-length and deviation checks."""
     pts = list(pts)
     n = len(pts)
+    pts = _crossing_side_fix(chk, pts, sp)
     for i in range(1, n - 2):                      # gantry spans are left alone
         p, q = pts[i], pts[i + 1]
         L = math.hypot(q[0] - p[0], q[1] - p[1])
@@ -832,6 +876,73 @@ def _crossing_span_fix(chk: Checker, pts, sp: SpotParams):
                 break
             if done:
                 break
+    return pts
+
+
+def _crossing_side_fix(chk: Checker, pts, sp: SpotParams):
+    """Crossing towers into their window (Vivek, 13 Oct 2026): where a span crosses a wire whose rule sets
+    crossing_side_m, both towers are placed along the alignment lo..hi from the wire (the middle of the
+    window first) and the straight run on each side is spotted again between the crossing tower and the
+    run's end (its spans were at the design span, so a ripple could not absorb the move). A crossing that
+    cannot be placed is left for the violation report."""
+    pts = list(pts)
+    i = 1
+    while i < len(pts) - 2:
+        n = len(pts)
+        p, q = pts[i], pts[i + 1]
+        L = math.hypot(q[0] - p[0], q[1] - p[1])
+        items = [it for it in chk.span_crossings(p, q)[1] if it.get("side_window_m")] if L > 0 else []
+        if not items or all(it.get("violation") != "side" for it in items):
+            i += 1
+            continue
+        it = items[0]
+        lo, hi = it["side_window_m"]
+        ux, uy = (q[0] - p[0]) / L, (q[1] - p[1]) / L
+        X = (p[0] + ux * it["side_a_m"], p[1] + uy * it["side_a_m"])       # the crossed wire on the alignment
+        # the straight run this span belongs to: from the previous turn (or dead-end) to the next
+        run_start = i
+        while run_start > 1 and _deflection(pts[run_start - 1], pts[run_start], pts[run_start + 1])[0] < 1.0:
+            run_start -= 1
+        run_end = i + 1
+        while run_end < n - 2 and _deflection(pts[run_end - 1], pts[run_end], pts[run_end + 1])[0] < 1.0:
+            run_end += 1
+        done = False
+        mid = (lo + hi) / 2
+        for da, db in ((mid, mid), (lo + 5, lo + 5), (hi - 5, hi - 5), (mid, lo + 5), (lo + 5, mid), (hi - 5, mid), (mid, hi - 5)):
+            p2 = (X[0] - ux * da, X[1] - uy * da)
+            q2 = (X[0] + ux * db, X[1] + uy * db)
+            if not (chk.tower_ok(p2[0], p2[1], True) and chk.tower_ok(q2[0], q2[1], True)):
+                log.debug("side fix %d: towers at %g/%g m not legal", i, da, db)
+                continue
+            if not (chk.conductor_ok(p2, q2) and chk.span_crossings(p2, q2)[0]):
+                log.debug("side fix %d: crossing span at %g/%g m not legal", i, da, db)
+                continue
+            # re-spot a window of a few spans each side (the whole run would include the approach
+            # sections, whose shorter spans a single even spacing cannot give), widening if needed
+            for w in (3, 5, 8):
+                start = max(run_start, i - w)
+                end = min(run_end, i + 1 + w)
+                left = _spot_leg(chk, pts[start], p2, sp) if start < i else []
+                right = _spot_leg(chk, q2, pts[end], sp) if end > i + 1 else []
+                if left is None or right is None:
+                    log.debug("side fix %d: window %d..%d cannot be re-spotted (left %s, right %s)", i, start, end, left is not None, right is not None)
+                    continue
+                trial = pts[:start + 1] + list(left) + [p2, q2] + list(right) + pts[end:]
+                k = start + 1 + len(left)                               # p2's index in the trial
+                if any(math.hypot(trial[m + 1][0] - trial[m][0], trial[m + 1][1] - trial[m][1]) < sp.min_span_m - 1e-6
+                       for m in range(start, min(len(trial) - 1, k + 2 + len(right)))):
+                    continue
+                if not (_crossing_dev_ok(chk, trial, k, p2) and _crossing_dev_ok(chk, trial, k + 1, q2)):
+                    continue
+                pts = trial
+                i = k + 1
+                done = True
+                break
+            if done:
+                break
+        if not done:
+            log.info("crossing span %d-%d: no placement within %g-%g m of the crossed wire", i, i + 1, lo, hi)
+        i += 1
     return pts
 
 
@@ -1288,9 +1399,12 @@ def route_cost(comp: Compiled, towers: list[Tower], spans: list[Span], sp: SpotP
     for t in real:
         mix[t.type] += 1
     cross_counts: dict[str, int] = {}
+    relaxed = 0
     for s in spans:
         for c in s.crossings:
             cross_counts[c["rule"]] = cross_counts.get(c["rule"], 0) + 1
+            if not c.get("angle_preferred", True) or c.get("point_preferred") is False:
+                relaxed += 1
     stats = {
         "length_km": round(length / 1000, 3),
         "beeline_km": round(f.length_m / 1000, 3),
@@ -1307,6 +1421,7 @@ def route_cost(comp: Compiled, towers: list[Tower], spans: list[Span], sp: SpotP
         "areas_ha": {k: round(v, 2) for k, v in areas.items()},
         "crossings": cross_counts,
         "crossings_total": sum(cross_counts.values()),
+        "crossings_relaxed": relaxed,                 # outside the preferred angle / null point (13 Oct 2026)
         "extensions": sum(1 for t in real if t.extension_m > 0),
         "violations": sum(len(t.violations) for t in towers),
         "warnings": sum(len(t.warnings) for t in towers),

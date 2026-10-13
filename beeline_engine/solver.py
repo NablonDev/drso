@@ -89,6 +89,7 @@ class SolverParams:
     approach_length_m: float = 0.0             # approach section within this of each gantry (0 = none)
     approach_span_m: float | None = None       # its design span (CEA Schedule VII)
     edge_cache_limit_bytes: float = 8e9        # GPU bytes the edge-geometry cache may take (11 Oct 2026)
+    crossing_dev_max_deg: float | None = None  # deviation cap at the two towers of a crossing span (Vivek, 13 Oct 2026)
 
 
 @dataclass
@@ -191,7 +192,8 @@ class _Rasters:
         self.near = t(compiled.near_existing, torch.float32) if p.proximity_discount > 0 and \
             getattr(compiled, "near_existing", None) is not None else None
         self.cross = [(cr, t(np.nan_to_num(cr.angle, nan=-1.0)),
-                       None if cr.width_raster is None else t(cr.width_raster, torch.bool))
+                       None if cr.width_raster is None else t(cr.width_raster, torch.bool),
+                       None if getattr(cr, "pref_mask_wide", None) is None else t(cr.pref_mask_wide, torch.bool))
                       for cr in compiled.crossings]
         self.par = [t(np.nan_to_num(pr.angle, nan=-1.0)) for pr in compiled.parallels]
         self.par_meta = [(pr.rule_id, getattr(pr, "crossing_exempt", False)) for pr in compiled.parallels]
@@ -278,13 +280,14 @@ def _edge_block(compiled: Compiled, grid: Grid, p: SolverParams, rasters: "_Rast
                         # another stream reads it from the cache
                         torch.cuda.current_stream(rasters.dev).synchronize()
                     cache[key] = geom
-    A, B = geom
-    return B + A * _edge_strip(grid, rasters, c_from, c_to, kidx, n_samples)
+    A, B, X = geom
+    return B + A * _edge_strip(grid, rasters, c_from, c_to, kidx, n_samples), X
 
 
 def _edge_geom(compiled: Compiled, grid: Grid, p: SolverParams, rasters: "_Rasters",
                c_from: int, c_to: int, kidx: np.ndarray, n_samples: int, require_river: bool):
-    """(A, B) for the block: E = B + A × mean strip ₹/m; B carries inf where the edge is invalid."""
+    """(A, B, X) for the block: E = B + A × mean strip ₹/m; B carries inf where the edge is invalid; X marks
+    edges that cross a feature with a deviation cap at its crossing towers."""
     dev = rasters.dev
     f = compiled.frame
     C = c_to - c_from
@@ -368,10 +371,11 @@ def _edge_geom(compiled: Compiled, grid: Grid, p: SolverParams, rasters: "_Raste
         invalid |= ~ok_any
         E = E + 2 * ext_used * p.long_ext_cost_rs_per_m
     crossed_river = torch.zeros_like(invalid)
+    X = torch.zeros_like(invalid)                   # crosses a feature with a deviation cap at its towers
 
     tA = p.tower_cost_rs["A"]
     crossed_by: dict = {}
-    for cr, ang_t, width_t in rasters.cross:
+    for cr, ang_t, width_t, pref_t in rasters.cross:
         a = ang_t[row, col]                        # (C,R,K,S), -1 = none
         hit = a >= 0
         crossed = hit.any(dim=-1)
@@ -385,6 +389,27 @@ def _edge_geom(compiled: Compiled, grid: Grid, p: SolverParams, rasters: "_Raste
             bad |= acute < cr.window[0] - 1e-3
         if cr.max_span_m is not None:
             bad |= length > cr.max_span_m + p.crossing_span_slack_m + 1e-3
+        if cr.side_m is not None:
+            # crossing towers this far from the crossed wire, each side (Vivek, 13 Oct 2026); the wire sits at
+            # the middle of the hit samples; the lattice gets the crossing-span slack, the spotting is exact
+            last = (n_samples - 1) - torch.argmax(hit.flip(-1).to(torch.int8), dim=-1)
+            mid = (first.squeeze(-1).float() + last.float()) / 2.0
+            step = length / float(n_samples - 1)
+            d1 = mid * step
+            d2 = length - d1
+            lo, hi = cr.side_m
+            sl = p.crossing_span_slack_m
+            bad |= (d1 < lo - sl) | (d1 > hi + sl) | (d2 < lo - sl) | (d2 > hi + sl)
+        pen = torch.zeros_like(crossed)
+        if cr.pref_window is not None:
+            pen |= acute < cr.pref_window[0] - 1e-3
+        if pref_t is not None:
+            # read the preferred-position mask at the middle of the hit samples (the wire itself)
+            lastp = (n_samples - 1) - torch.argmax(hit.flip(-1).to(torch.int8), dim=-1, keepdim=True)
+            midp = ((first + lastp) // 2).clamp_(0, n_samples - 1)
+            pen |= ~torch.gather(pref_t[row, col], -1, midp).squeeze(-1)
+        if cr.max_dev_deg is not None:
+            X |= crossed
         min_type = cr.min_type
         cost = cr.cost_rs
         if width_t is not None and cr.major_threshold_m is not None:
@@ -402,6 +427,9 @@ def _edge_geom(compiled: Compiled, grid: Grid, p: SolverParams, rasters: "_Raste
             crossed_river |= crossed
         crossed_by[cr.rule_id] = crossed_by.get(cr.rule_id, torch.zeros_like(crossed)) | crossed
         E = E + torch.where(crossed, add, torch.zeros_like(E))
+        if cr.penalty_rs > 0:
+            # non-preferred crossing (angle or position): allowed at the configured allowance
+            E = E + torch.where(crossed & pen, torch.full_like(E, float(cr.penalty_rs)), torch.zeros_like(E))
         invalid |= crossed & bad
     for pa, (rid, exempt) in zip(rasters.par, rasters.par_meta):
         a = pa[row, col]
@@ -415,18 +443,20 @@ def _edge_geom(compiled: Compiled, grid: Grid, p: SolverParams, rasters: "_Raste
         invalid |= par_bad
     if require_river:
         invalid |= ~crossed_river
-    return A, torch.where(invalid, torch.full_like(E, INF), E)
+    return A, torch.where(invalid, torch.full_like(E, INF), E), X
 
 
 def edge_costs(compiled: Compiled, grid: Grid, p: SolverParams, rasters: "_Rasters",
                c_from: int, c_to: int, n_samples: int, cache: dict | None = None) -> torch.Tensor:
-    """E[c, r, k] for columns c_from..c_to-1 -> tensor (C, R, K) of ₹ (inf = invalid).
-    Long (river-only) offsets are evaluated only where a river lies within reach."""
+    """(E, X): E[c, r, k] for columns c_from..c_to-1 -> tensor (C, R, K) of ₹ (inf = invalid); X marks edges
+    that cross a feature whose crossing towers carry a deviation cap. Long offsets are evaluated only
+    where a long-span feature lies within reach."""
     dev = rasters.dev
     C, R, K = c_to - c_from, grid.nr, len(grid.offsets)
     short = np.nonzero(~grid.is_long)[0]
     E = torch.full((C, R, K), INF, device=dev)
-    E[:, :, short] = _edge_block(compiled, grid, p, rasters, c_from, c_to, short, n_samples, False, cache)
+    X = torch.zeros((C, R, K), dtype=torch.bool, device=dev)
+    E[:, :, short], X[:, :, short] = _edge_block(compiled, grid, p, rasters, c_from, c_to, short, n_samples, False, cache)
     long_ = np.nonzero(grid.is_long)[0]
     if len(long_) and rasters.river_cols is not None and rasters.river_cols[c_from:c_to].any():
         n_long = int(math.ceil(p.river_max_span_m / (compiled.frame.res_m / 2))) + 1
@@ -435,8 +465,10 @@ def edge_costs(compiled: Compiled, grid: Grid, p: SolverParams, rasters: "_Raste
             c1 = min(c_to, c0 + sub)
             if not rasters.river_cols[c0:c1].any():
                 continue
-            E[c0 - c_from:c1 - c_from, :, long_] = _edge_block(compiled, grid, p, rasters, c0, c1, long_, n_long, True, cache)
-    return E
+            Eb, Xb = _edge_block(compiled, grid, p, rasters, c0, c1, long_, n_long, True, cache)
+            E[c0 - c_from:c1 - c_from, :, long_] = Eb
+            X[c0 - c_from:c1 - c_from, :, long_] = Xb
+    return E, X
 
 
 def site_costs(compiled: Compiled, grid: Grid, p: SolverParams) -> tuple[np.ndarray, np.ndarray]:
@@ -589,6 +621,11 @@ def solve(compiled: Compiled, p: SolverParams, cancel_check=None, progress=None)
     nc = grid.nc
     S_np, angle_only_np = site_costs(compiled, grid, p)
     T_np, TA_np = transition_matrix(grid, p)
+    T45_np = TA45_np = None
+    if p.crossing_dev_max_deg is not None and p.crossing_dev_max_deg < p.max_dev_deg - 1e-9:
+        # the two towers of a crossing span turn at most crossing_dev_max_deg (Vivek, 13 Oct 2026)
+        from dataclasses import replace as _replace
+        T45_np, TA45_np = transition_matrix(grid, _replace(p, max_dev_deg=float(p.crossing_dev_max_deg)))
     strip_np = prepare_strip(compiled, p)
     dead_end = p.tower_cost_rs["D60"]
     seedA = gantry_seeds(compiled, grid, p, S_np, strip_np, at_end=False, dead_end_rs=dead_end)
@@ -600,6 +637,8 @@ def solve(compiled: Compiled, p: SolverParams, cancel_check=None, progress=None)
     angle_only = torch.as_tensor(angle_only_np, device=dev)
     T = torch.as_tensor(T_np, device=dev)
     TA = torch.as_tensor(TA_np, device=dev)
+    T45 = torch.as_tensor(T45_np, device=dev) if T45_np is not None else None
+    TA45 = torch.as_tensor(TA45_np, device=dev) if TA45_np is not None else None
     SA = torch.as_tensor(seedA, device=dev)
     SB = torch.as_tensor(seedB, device=dev)
     rasters = _Rasters(compiled, p, dev, strip_np)
@@ -611,6 +650,7 @@ def solve(compiled: Compiled, p: SolverParams, cancel_check=None, progress=None)
     dcmax = int(grid.offsets[:, 0].max())
     ring = dcmax + 1
     Wring = torch.full((ring, R, K), INF, device=dev)
+    Xring = torch.zeros((ring, R, K), dtype=torch.bool, device=dev)       # the edge into each site crossed a capped feature
     arg = torch.zeros((nc + 1, R, K), dtype=torch.int16, device=dev)
     rows = torch.arange(R, device=dev).view(R, 1)
     src_rows = rows - drs.view(1, K)                 # (R, K)
@@ -640,12 +680,14 @@ def solve(compiled: Compiled, p: SolverParams, cancel_check=None, progress=None)
         # arrivals at column c
         if c == 0:
             V = torch.full((R, K), INF, device=dev)
+            cross_in = torch.zeros((R, K), dtype=torch.bool, device=dev)
         else:
             src_c = c - dcs
             ok_c = src_c >= 0
             ring_idx = torch.remainder(src_c, ring).view(1, K).expand(R, K)
             V = Wring[ring_idx, src_rows_c, kidx]
             V = torch.where(row_ok & ok_c.view(1, K), V, torch.full_like(V, INF))
+            cross_in = Xring[ring_idx, src_rows_c, kidx] & row_ok & ok_c.view(1, K)
             reach[c] = torch.isfinite(V).any()
         if c in end_cols:
             if p.dead_end_max_dev_deg is not None:
@@ -659,9 +701,17 @@ def solve(compiled: Compiled, p: SolverParams, cancel_check=None, progress=None)
             end_k[c] = vk
         if c == nc:
             break
+        if E_chunk is None or c >= E_start + E_chunk.shape[0]:
+            E_start = c
+            E_chunk, X_chunk = edge_costs(compiled, grid, p, rasters, c, min(nc, c + chunk), n_samples, cache)
+        cross_out = X_chunk[c - E_start]                  # (R, K): the edge leaving this site crosses a capped feature
         # tower at column c: from an arrival (type by deflection) or as the first dead-end
         tot = V.unsqueeze(2) + T.unsqueeze(0)             # (R, K, K)
         totA = V.unsqueeze(2) + TA.unsqueeze(0)
+        if T45 is not None:
+            capped = cross_in.unsqueeze(2) | cross_out.unsqueeze(1)          # (R, K_in, K_out)
+            tot = torch.where(capped, V.unsqueeze(2) + T45.unsqueeze(0), tot)
+            totA = torch.where(capped, V.unsqueeze(2) + TA45.unsqueeze(0), totA)
         tot = torch.where(angle_only[c].view(R, 1, 1), totA, tot)
         mval, am = tot.min(dim=1)
         M = mval + S[c].view(R, 1)
@@ -679,11 +729,9 @@ def solve(compiled: Compiled, p: SolverParams, cancel_check=None, progress=None)
         am = torch.where(use_seed, start_marker, am)
         arg[c] = am
         reach_map[c] = torch.isfinite(M).any(dim=1)
-        if E_chunk is None or c >= E_start + E_chunk.shape[0]:
-            E_start = c
-            E_chunk = edge_costs(compiled, grid, p, rasters, c, min(nc, c + chunk), n_samples, cache)
         E = E_chunk[c - E_start]
         Wring[c % ring] = M + E
+        Xring[c % ring] = cross_out
         if progress and c % 100 == 0:
             progress(c / nc)
 

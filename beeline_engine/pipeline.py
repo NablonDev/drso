@@ -218,7 +218,8 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
                                  raster_margin_m=float(eng["grid"].get("raster_margin_m", 0.0)),
                                  angle_tower_rules=tuple(eng["crossings"].get("angle_tower_rules") or ()),
                                  relaxed=relaxed, chw_ref_m=chw_ref, rasterizer=shared["R"],
-                                 raster_cache=raster_cache, precedent_towers=prec_towers if precedent else None)
+                                 raster_cache=raster_cache, precedent_towers=prec_towers if precedent else None,
+                                 tower_cost_rs=tower_type_cost(costs, inp.kv))
         c = one(hw, None)
         shared["R"] = c.rasterizer
         if ap_zone is not None and ap_hw < hw:
@@ -304,7 +305,8 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
                         long_ext_cost_rs_per_m=tower_cost["D45"] * ext_pct / 18.0,
                         dead_end_max_dev_deg=float(tsd["dead_end_max_dev_deg"]) if tsd and tsd.get("dead_end_max_dev_deg") else None,
                         approach_length_m=ap_len, approach_span_m=ap_span, proximity_discount=prox_disc,
-                        ext_zero_tol_m=ext_zero_tol, ext_round_tol_m=ext_round_tol)
+                        ext_zero_tol_m=ext_zero_tol, ext_round_tol_m=ext_round_tol,
+                        crossing_dev_max_deg=_crossing_dev_cap(rules))
     sp = SpotParams(design_span_m=design, span_max_m=smax_search,
                     raster_prefilter=bool(eng["grid"].get("raster_prefilter", True)),
                     min_span_m=float(rules["crossing_span_limits"].params["min_span_m"]),
@@ -637,6 +639,13 @@ def _approvals(sr, comp, rules) -> None:
     sr.stats["precedent_items"] = used
     sr.stats["approval_items"] = items
     sr.stats["approval_months"] = max([i["months"] for i in items], default=0)
+
+
+def _crossing_dev_cap(rules: dict) -> float | None:
+    """The tightest deviation cap any crossing rule puts on its crossing towers (Vivek, 13 Oct 2026: 45°)."""
+    caps = [float(r.params["max_dev_adjacent_deg"]) for r in rules.values()
+            if r.enabled and r.mechanism == "crossing" and r.params.get("max_dev_adjacent_deg") is not None]
+    return min(caps) if caps else None
 
 
 def _variant_params(base: SolverParams, var: dict, design: float) -> SolverParams:
@@ -977,6 +986,19 @@ def _route_events(sr, frame, comp, findex, rules, sp, layer_names, inp, dem, blo
                                           "tower_a": a.no, "tower_b": b.no, "type_a": a.type, "type_b": b.type,
                                           "rule_id": c["rule"], "chainage_km": round(mid.x / 1000, 2)},
                              chainage_km=round(mid.x / 1000, 2), source=_source(it, inp.layers)))
+            # crossing preferences (Vivek, 13 Oct 2026): say what was relaxed and why it was allowed
+            why = []
+            if not c.get("angle_preferred", True):
+                why.append(f"at {c['angle_deg']:.0f}° instead of 90° ± 5°")
+            if c.get("point_preferred") is False:
+                why.append("away from the null point of the crossed span (allowed within ± 20 % of it)")
+            if why:
+                cr_rule = rules.get(c["rule"])
+                pen = float((cr_rule.params.get("relax_penalty_pct") if cr_rule else 0) or 0)
+                evs.append(event("CROSSING_RELAXED", {"feature": label, "tower_a": a.no, "tower_b": b.no,
+                                                      "what": "; ".join(why), "allowance_pct": pen,
+                                                      "chainage_km": round(mid.x / 1000, 2)},
+                                 chainage_km=round(mid.x / 1000, 2), severity="warn"))
     for t in T:
         if "section" in t.reasons or "section_hilly" in t.reasons:
             km = sp.hilly_section_km if "section_hilly" in t.reasons else sp.section_km
@@ -1001,15 +1023,14 @@ def _route_events(sr, frame, comp, findex, rules, sp, layer_names, inp, dem, blo
                 evs.append(event("CLEARANCE_SHORT", {"tower_a": t.no, "clearance_m": sp_i.min_clearance_m if sp_i else 0,
                                                      "clearance_req": sp.ground_clearance_m, "dem": demmod.SOURCE},
                                  chainage_km=round(t.x / 1000, 2), severity="warn"))
-            elif w.startswith("power_adjacent_deviation"):
-                rid = w.partition(":")[2] or "power_line"
-                kind = "low tension" if rid == "power_line_lt" else "high tension"
-                evs.append(event("RULE_WARNING", {"tower": t.no, "what": f"deviates {t.deflection_deg:.0f}° next to a {kind} power-line crossing; the rule allows {sp.max_dev_adjacent_power_deg.get(rid, 45):g}° at n±1",
-                                                  "code": w}, chainage_km=round(t.x / 1000, 2), severity="warn"))
         for v in t.violations:
             what = {"tower_buffer": "tower stands inside a no-go buffer",
                     "conductor_buffer": "span passes through a conductor no-go buffer",
-                    "max_deviation": f"turns {v.split(':')[-1].replace('deg', '°')}, beyond the maximum deviation"}.get(
+                    "max_deviation": f"turns {v.split(':')[-1].replace('deg', '°')}, beyond the maximum deviation",
+                    "crossing_deviation": f"turns {v.split(':')[-1].replace('deg', '°')} as a crossing tower; the rule allows 45°",
+                    "crossing_side": "crossing span: a crossing tower is outside its distance window from the crossed wire",
+                    "crossing_angle": "crossing span: outside the allowed crossing angle",
+                    "crossing_span": "crossing span: longer than the rule allows"}.get(
                 v.split(":")[0], v.replace("_", " "))
             evs.append(event("VIOLATION", {"tower": t.no, "what": what, "code": v},
                              chainage_km=round(t.x / 1000, 2), severity="warn"))

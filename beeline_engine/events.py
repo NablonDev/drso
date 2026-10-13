@@ -14,6 +14,7 @@ TEMPLATES = {
     "TURN_BACK": "At km {chainage_km:.1f}, the route turns {deflection:.0f}° {dir} at tower {tower} ({type}) back towards the bee-line, the obstacle behind it cleared.",
     "TURN": "At km {chainage_km:.1f}, the route turns {deflection:.0f}° {dir} at tower {tower} ({type}) — the cheapest line through the cost surface here, no single feature forces it.",
     "CROSSING": "Crosses {feature} at {angle_deg:.0f}° on a {span_m:.0f} m span between towers {tower_a} and {tower_b} (Type {type_a} / {type_b}).",
+    "CROSSING_RELAXED": "The crossing of {feature} between towers {tower_a} and {tower_b} is {what} — outside the preferred crossing, allowed because the preferred one would have cost more than the {allowance_pct:g} % of a crossing tower the rule grants.",
     "SECTION_POINT": "Tower {tower} at km {chainage_km:.1f} is a section point (Type {type}) — tension towers may not be more than {section_km:g} km apart.",
     "CLEARANCE_TOWER": "Tower {tower} at km {chainage_km:.1f} was added on the ridge: the span could not keep {clearance_req:g} m ground clearance even with +18 m extensions (DEM: {dem}).",
     "EXTENSION": "Tower {tower} at km {chainage_km:.1f} carries a +{extension_m:.0f} m extension to keep {clearance_req:g} m ground clearance (DEM: {dem}).",

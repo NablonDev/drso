@@ -105,11 +105,15 @@ def tower_schedule_csv(route: dict) -> bytes:
 def crossing_schedule_csv(route: dict) -> bytes:
     buf = io.StringIO()
     w = csv.writer(buf)
-    w.writerow(["from_tower", "to_tower", "span_m", "rule", "feature", "angle_deg", "major", "min_tower_type", "cost_lakh"])
+    w.writerow(["from_tower", "to_tower", "span_m", "rule", "feature", "angle_deg", "angle_preferred", "at_null_point",
+                "side_a_m", "side_b_m", "side_window_m", "major", "min_tower_type", "cost_lakh"])
     names = {e["data"].get("tower_a"): e["data"].get("feature") for e in route["events"] if e["type"] == "CROSSING"}
     for s in route["spans"]:
         for c in s["crossings"]:
+            win = c.get("side_window_m")
             w.writerow([s["a"], s["b"], s["length_m"], c["rule"], names.get(s["a"], c["name"]), c["angle_deg"],
+                        c.get("angle_preferred", ""), "" if c.get("point_preferred") is None else c["point_preferred"],
+                        c.get("side_a_m", ""), c.get("side_b_m", ""), f"{win[0]:g}-{win[1]:g}" if win else "",
                         c.get("major", False), c["min_type"], round(c["cost_rs"] / 1e5, 2)])
     return buf.getvalue().encode("utf-8")
 

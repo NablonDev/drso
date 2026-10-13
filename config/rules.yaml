@@ -83,6 +83,9 @@ groups:
         params:
           - {key: min_angle_deg, label: "Minimum angle", type: num, unit: "°", value: 75}
           - {key: preferred_angle_deg, label: "Preferred angle", type: num, unit: "°", value: 90}
+          - {key: preferred_angle_tol_deg, label: "… tolerance", type: num, unit: "°", value: 5}
+          - {key: max_span_m, label: "Max crossing span", type: num, unit: m, value: 600}
+          - {key: max_dev_adjacent_deg, label: "Max deviation at the two crossing towers", type: num, unit: "°", value: 45}
           - {key: parallel_setback_m, label: "Conductor buffer, parallel run", type: num, unit: m, value: 30}
 
   - key: nogo
@@ -309,10 +312,12 @@ groups:
         params:
           - {key: tower_setback_m, label: "Tower setback from the track centreline", type: num, unit: m, value: 107.5}
           - {key: parallel_setback_m, label: "Conductor buffer, parallel run", type: num, unit: m, value: {765: 41, 400: 30.5, 220: 25, 132: 21}}
-          - {key: angle_deg, label: "Crossing angle", type: rng, unit: "°", value: [80, 100]}
-          - {key: max_span_m, label: "Max crossing span", type: num, unit: m, value: 300}
+          - {key: angle_deg, label: "Allowed crossing angle", type: rng, unit: "°", value: [80, 100]}
+          - {key: max_span_m, label: "Max crossing span", type: num, unit: m, value: 600}   # Vivek, 13 Oct 2026: was 300 (80 % of the design span)
           - {key: tower_type, label: "Crossing tower type", type: sel, value: "D", options: ["B", "C", "D", "B/C/D"]}
-          - {key: pct_design_span, label: "Or % of design span", type: num, unit: "%", value: 80}
+          - {key: preferred_angle_deg, label: "Preferred crossing angle", type: num, unit: "°", value: 90}
+          - {key: preferred_angle_tol_deg, label: "… tolerance", type: num, unit: "°", value: 5}
+          - {key: max_dev_adjacent_deg, label: "Max deviation at the two crossing towers", type: num, unit: "°", value: 45}
 
       - id: national_highway
         name: "National highway"
@@ -323,9 +328,12 @@ groups:
         params:
           - {key: tower_setback_m, label: "Tower setback from the centreline", type: num, unit: m, value: {765: 92.5, 400: 80, 220: 80, 132: 80}}
           - {key: parallel_setback_m, label: "Parallel-run setback", type: num, unit: m, value: 320}
-          - {key: angle_deg, label: "Crossing angle", type: rng, unit: "°", value: [80, 100]}
-          - {key: max_span_m, label: "Max crossing span", type: num, unit: m, value: 250}
+          - {key: angle_deg, label: "Allowed crossing angle", type: rng, unit: "°", value: [80, 100]}
+          - {key: max_span_m, label: "Max crossing span", type: num, unit: m, value: 600}   # Vivek, 13 Oct 2026: was 250
           - {key: tower_type, label: "Crossing tower type", type: sel, value: "B/C/D", options: ["B", "C", "D", "B/C/D"]}
+          - {key: preferred_angle_deg, label: "Preferred crossing angle", type: num, unit: "°", value: 90}
+          - {key: preferred_angle_tol_deg, label: "… tolerance", type: num, unit: "°", value: 5}
+          - {key: max_dev_adjacent_deg, label: "Max deviation at the two crossing towers", type: num, unit: "°", value: 45}
 
       - id: state_highway
         name: "State highway"
@@ -336,8 +344,12 @@ groups:
         params:
           - {key: tower_setback_m, label: "Tower setback from the centreline", type: num, unit: m, value: 87}
           - {key: parallel_setback_m, label: "Conductor buffer, parallel run", type: num, unit: m, value: {765: 40.5, 400: 30, 220: 24.5, 132: 20.5}}
-          - {key: angle_deg, label: "Crossing angle", type: rng, unit: "°", value: [70, 110]}
+          - {key: angle_deg, label: "Allowed crossing angle", type: rng, unit: "°", value: [70, 110]}
+          - {key: max_span_m, label: "Max crossing span", type: num, unit: m, value: 600}
           - {key: tower_type, label: "Crossing tower type", type: sel, value: "A/B/C/D", options: ["A/B/C/D", "B/C/D", "D"]}
+          - {key: preferred_angle_deg, label: "Preferred crossing angle", type: num, unit: "°", value: 90}
+          - {key: preferred_angle_tol_deg, label: "… tolerance", type: num, unit: "°", value: 5}
+          - {key: max_dev_adjacent_deg, label: "Max deviation at the two crossing towers", type: num, unit: "°", value: 45}
 
       - id: bridges
         name: "Bridges and flyovers"
@@ -347,9 +359,12 @@ groups:
         mechanism: crossing
         params:
           - {key: tower_setback_m, label: "Tower buffer", type: num, unit: m, value: 0}
-          - {key: angle_deg, label: "Crossing angle", type: rng, unit: "°", value: [80, 100]}
-          - {key: max_span_m, label: "Max crossing span", type: num, unit: m, value: 250}
+          - {key: angle_deg, label: "Allowed crossing angle", type: rng, unit: "°", value: [80, 100]}
+          - {key: max_span_m, label: "Max crossing span", type: num, unit: m, value: 600}   # Vivek, 13 Oct 2026: was 250
           - {key: tower_type, label: "Crossing tower type", type: sel, value: "D", options: ["B", "C", "D", "B/C/D"]}
+          - {key: preferred_angle_deg, label: "Preferred crossing angle", type: num, unit: "°", value: 90}
+          - {key: preferred_angle_tol_deg, label: "… tolerance", type: num, unit: "°", value: 5}
+          - {key: max_dev_adjacent_deg, label: "Max deviation at the two crossing towers", type: num, unit: "°", value: 45}
           - {key: flyover_extension_m, label: "Flyover: crossing tower extension", type: num, unit: m, value: 18}
 
       - id: river
@@ -360,7 +375,11 @@ groups:
         params:
           - {key: tower_setback_m, label: "Bank buffer, each side", type: num, unit: m, value: 150}
           - {key: parallel_setback_m, label: "Conductor buffer, parallel run", type: num, unit: m, value: 150}
-          - {key: angle_deg, label: "Crossing angle", type: num, unit: "°", value: 90}
+          - {key: angle_deg, label: "Allowed crossing angle (±15°)", type: num, unit: "°", value: 90}
+          - {key: max_span_m, label: "Max crossing span", type: num, unit: m, value: 600}   # Vivek, 13 Oct 2026: was the 720 m long-span ceiling
+          - {key: preferred_angle_deg, label: "Preferred crossing angle", type: num, unit: "°", value: 90}
+          - {key: preferred_angle_tol_deg, label: "… tolerance", type: num, unit: "°", value: 5}
+          - {key: max_dev_adjacent_deg, label: "Max deviation at the two crossing towers", type: num, unit: "°", value: 45}
           - {key: major_threshold_m, label: "Major crossing threshold", type: num, unit: m, value: 600}
           - {key: major_tower_type, label: "Major tower type", type: sel, value: "D", options: ["B", "C", "D", "B/C/D"]}
           - {key: tower_type, label: "Minor tower type", type: sel, value: "A/B/C", options: ["A/B/C", "B", "C", "D", "B/C/D"]}
@@ -374,7 +393,11 @@ groups:
           - {key: half_width_m, label: "Canal half-width (added to the buffers)", type: num, unit: m, value: 15}
           - {key: tower_setback_m, label: "Tower buffer from the canal edge", type: num, unit: m, value: 30}
           - {key: parallel_setback_m, label: "Conductor buffer from the canal edge", type: num, unit: m, value: 30}
-          - {key: angle_deg, label: "Crossing angle", type: sel, value: "Any", options: ["Any", "90°", "75–90°", "80–100°"]}
+          - {key: angle_deg, label: "Allowed crossing angle", type: sel, value: "Any", options: ["Any", "90°", "75–90°", "80–100°"]}
+          - {key: max_span_m, label: "Max crossing span", type: num, unit: m, value: 600}
+          - {key: preferred_angle_deg, label: "Preferred crossing angle", type: num, unit: "°", value: 90}
+          - {key: preferred_angle_tol_deg, label: "… tolerance", type: num, unit: "°", value: 5}
+          - {key: max_dev_adjacent_deg, label: "Max deviation at the two crossing towers", type: num, unit: "°", value: 45}
           # Vivek, 9 Oct 2026: no angle rule for the canal — the span that crosses it is not a parallel run,
           # so it may cross at any angle; spans running alongside within the buffer stay blocked
           - {key: crossing_exempt_from_parallel, label: "Crossing span exempt from the parallel check", type: sel, value: "Yes", options: ["Yes", "No"]}
@@ -388,7 +411,11 @@ groups:
         params:
           - {key: tower_setback_m, label: "Tower buffer from the centreline", type: num, unit: m, value: 40}
           - {key: parallel_setback_m, label: "Conductor buffer from the centreline", type: num, unit: m, value: 40}
-          - {key: angle_deg, label: "Crossing angle", type: sel, value: "Any", options: ["Any", "90°", "75–90°", "80–100°"]}
+          - {key: angle_deg, label: "Allowed crossing angle", type: sel, value: "Any", options: ["Any", "90°", "75–90°", "80–100°"]}
+          - {key: max_span_m, label: "Max crossing span", type: num, unit: m, value: 600}
+          - {key: preferred_angle_deg, label: "Preferred crossing angle", type: num, unit: "°", value: 90}
+          - {key: preferred_angle_tol_deg, label: "… tolerance", type: num, unit: "°", value: 5}
+          - {key: max_dev_adjacent_deg, label: "Max deviation at the two crossing towers", type: num, unit: "°", value: 45}
           - {key: tower_type, label: "Tower type", type: sel, value: "A/B/C", options: ["A", "B", "C", "D", "A/B/C"]}
 
       - id: power_line
@@ -401,17 +428,28 @@ groups:
           # Vivek, 11 Oct 2026: both distances = our tower height, upper limit of the standard body by line
           # voltage (765: 80, 400: 55, 220: 40, 132: 32, 66: 22 m), no extension and no extra buffer; the
           # falling-tower premise is one-sided — our conductor keeps only CHW from their towers and wires
-          - {key: tower_setback_m, label: "Tower to existing tower (our tower height)", type: num, unit: m, value: {765: 80, 400: 55, 220: 40, 132: 32}}
-          - {key: conductor_setback_m, label: "Tower to existing conductor (our tower height)", type: num, unit: m, value: {765: 80, 400: 55, 220: 40, 132: 32}}
-          - {key: crossing_tower_clear_pct, label: "No crossing next to an existing tower, share of its span", type: num, unit: "%", value: 20}
-          - {key: crossing_tower_clear_m, label: "… fallback where the span is not mapped", type: num, unit: m, value: 80}
-          - {key: angle_deg, label: "Crossing angle", type: rng, unit: "°", value: [70, 110]}
+          # Vivek, 13 Oct 2026: the standard body without extension is 72.5 m at 765 kV; a normal tower keeps that from
+          # existing towers and conductors when not crossing. (55 / 40 / 32 m for the other line voltages as supplied.)
+          - {key: tower_setback_m, label: "Tower to existing tower (our tower height)", type: num, unit: m, value: {765: 72.5, 400: 55, 220: 40, 132: 32}}
+          - {key: conductor_setback_m, label: "Tower to existing conductor (our tower height)", type: num, unit: m, value: {765: 72.5, 400: 55, 220: 40, 132: 32}}
+          # Crossing preferences (Vivek, 13 Oct 2026): preferred = at the null point and at 90°; allowed = within
+          # crossing_point_allowed_pct of their span from the null point and within angle_deg. A crossing outside the
+          # preference costs the search relax_penalty_pct of the crossing tower's price, so it is used only where the
+          # preferred crossing would cost more (a detour, extra towers, or no route).
+          - {key: crossing_point_pref_pct, label: "Preferred: at the null point, ± share of their span", type: num, unit: "%", value: 5}
+          - {key: crossing_point_allowed_pct, label: "Allowed: from the null point, ± share of their span", type: num, unit: "%", value: 20}
+          - {key: crossing_tower_clear_m, label: "… fallback clear of a tower where its span is not mapped", type: num, unit: m, value: 80}
+          - {key: preferred_angle_deg, label: "Preferred crossing angle", type: num, unit: "°", value: 90}
+          - {key: preferred_angle_tol_deg, label: "… tolerance", type: num, unit: "°", value: 5}
+          - {key: angle_deg, label: "Allowed crossing angle", type: rng, unit: "°", value: [70, 110]}
           - {key: angle_min_kv, label: "Crossing angle applies from", type: num, unit: kV, value: 66}
-          - {key: max_span_m, label: "Max crossing span", type: num, unit: m, value: 350}   # Vivek, 10 Oct 2026: was 300; existing EHV crossings here median 300-313 m, 50-60 % over 300
+          # the two crossing towers stand 1.2-1.7 × our tower height from the crossed conductor, no more (72.5 m → 87-123 m)
+          - {key: crossing_side_m, label: "Crossing tower to the crossed conductor, each side (min-max)", type: rng, unit: m, value: {765: [87, 123], 400: [66, 94], 220: [48, 68], 132: [38, 54]}}
+          - {key: relax_penalty_pct, label: "Search allowance for a non-preferred crossing, % of the crossing tower's price", type: num, unit: "%", value: 20}
           - {key: tower_type, label: "Tower type", type: sel, value: "B/C/D", options: ["A/B/C/D", "B", "C", "D", "B/C/D"]}
           - {key: tower_type_400kv, label: "Tower type, lines of 400 kV and above", type: sel, value: "D", options: ["B/C/D", "D"]}
           - {key: parallel_setback_m, label: "Conductor buffer, parallel run", type: num, unit: m, value: {765: 33.5, 400: 23, 220: 17.5, 132: 13.5}}
-          - {key: max_dev_adjacent_deg, label: "Max deviation at n±1", type: num, unit: "°", value: 45}
+          - {key: max_dev_adjacent_deg, label: "Max deviation at the two crossing towers", type: num, unit: "°", value: 45}
 
       # Added 6 Oct 2026 with the HT / LT split (Vivek): same values as the high tension rule for
       # now, set independently. Same shutdown crossing cost.
@@ -425,17 +463,28 @@ groups:
           # Vivek, 11 Oct 2026: both distances = our tower height, upper limit of the standard body by line
           # voltage (765: 80, 400: 55, 220: 40, 132: 32, 66: 22 m), no extension and no extra buffer; the
           # falling-tower premise is one-sided — our conductor keeps only CHW from their towers and wires
-          - {key: tower_setback_m, label: "Tower to existing tower (our tower height)", type: num, unit: m, value: {765: 80, 400: 55, 220: 40, 132: 32}}
-          - {key: conductor_setback_m, label: "Tower to existing conductor (our tower height)", type: num, unit: m, value: {765: 80, 400: 55, 220: 40, 132: 32}}
-          - {key: crossing_tower_clear_pct, label: "No crossing next to an existing tower, share of its span", type: num, unit: "%", value: 20}
-          - {key: crossing_tower_clear_m, label: "… fallback where the span is not mapped", type: num, unit: m, value: 80}
-          - {key: angle_deg, label: "Crossing angle", type: rng, unit: "°", value: [70, 110]}
+          # Vivek, 13 Oct 2026: the standard body without extension is 72.5 m at 765 kV; a normal tower keeps that from
+          # existing towers and conductors when not crossing. (55 / 40 / 32 m for the other line voltages as supplied.)
+          - {key: tower_setback_m, label: "Tower to existing tower (our tower height)", type: num, unit: m, value: {765: 72.5, 400: 55, 220: 40, 132: 32}}
+          - {key: conductor_setback_m, label: "Tower to existing conductor (our tower height)", type: num, unit: m, value: {765: 72.5, 400: 55, 220: 40, 132: 32}}
+          # Crossing preferences (Vivek, 13 Oct 2026): preferred = at the null point and at 90°; allowed = within
+          # crossing_point_allowed_pct of their span from the null point and within angle_deg. A crossing outside the
+          # preference costs the search relax_penalty_pct of the crossing tower's price, so it is used only where the
+          # preferred crossing would cost more (a detour, extra towers, or no route).
+          - {key: crossing_point_pref_pct, label: "Preferred: at the null point, ± share of their span", type: num, unit: "%", value: 5}
+          - {key: crossing_point_allowed_pct, label: "Allowed: from the null point, ± share of their span", type: num, unit: "%", value: 20}
+          - {key: crossing_tower_clear_m, label: "… fallback clear of a tower where its span is not mapped", type: num, unit: m, value: 80}
+          - {key: preferred_angle_deg, label: "Preferred crossing angle", type: num, unit: "°", value: 90}
+          - {key: preferred_angle_tol_deg, label: "… tolerance", type: num, unit: "°", value: 5}
+          - {key: angle_deg, label: "Allowed crossing angle", type: rng, unit: "°", value: [70, 110]}
           - {key: angle_min_kv, label: "Crossing angle applies from", type: num, unit: kV, value: 66}
-          - {key: max_span_m, label: "Max crossing span", type: num, unit: m, value: 350}   # Vivek, 10 Oct 2026: was 300; existing EHV crossings here median 300-313 m, 50-60 % over 300
+          # the two crossing towers stand 1.2-1.7 × our tower height from the crossed conductor, no more (72.5 m → 87-123 m)
+          - {key: crossing_side_m, label: "Crossing tower to the crossed conductor, each side (min-max)", type: rng, unit: m, value: {765: [87, 123], 400: [66, 94], 220: [48, 68], 132: [38, 54]}}
+          - {key: relax_penalty_pct, label: "Search allowance for a non-preferred crossing, % of the crossing tower's price", type: num, unit: "%", value: 20}
           - {key: tower_type, label: "Tower type", type: sel, value: "A/B/C/D", options: ["A/B/C/D", "B", "C", "D", "B/C/D"]}
           - {key: tower_type_400kv, label: "Tower type, lines of 400 kV and above", type: sel, value: "D", options: ["B/C/D", "D"]}
           - {key: parallel_setback_m, label: "Conductor buffer, parallel run", type: num, unit: m, value: {765: 33.5, 400: 23, 220: 17.5, 132: 13.5}}
-          - {key: max_dev_adjacent_deg, label: "Max deviation at n±1", type: num, unit: "°", value: 45}
+          - {key: max_dev_adjacent_deg, label: "Max deviation at the two crossing towers", type: num, unit: "°", value: 45}
 
   - key: gng
     title: "Land classes — go or no-go"

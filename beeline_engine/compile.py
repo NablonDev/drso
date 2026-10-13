@@ -51,6 +51,13 @@ class CrossingRaster:
     major_cost_rs: float = 0.0
     extension_m: float = 0.0               # body extension each crossing tower carries (flyovers)
     long_span: bool = False                # spans longer than the design span may cross it (rivers; relaxed water)
+    # crossing preferences (Vivek, 13 Oct 2026): a crossing outside them is allowed at a search penalty
+    pref_window: tuple[float, float] | None = None   # preferred crossing angle (acute scale), e.g. (85, 90)
+    pref_mask: np.ndarray | None = None              # 1 where the crossed wire is at its null point (± share of the span)
+    pref_mask_wide: np.ndarray | None = None         # the same widened by two cells, read by the search at its hit sample
+    side_m: tuple[float, float] | None = None        # each crossing tower this far from the crossed wire (min, max)
+    max_dev_deg: float | None = None                 # deviation cap at the two crossing towers
+    penalty_rs: float = 0.0                          # search cost of a non-preferred crossing
 
 
 @dataclass
@@ -425,6 +432,38 @@ def _within(dist: np.ndarray | None, d: float) -> np.ndarray | None:
 
 
 # ----------------------------------------------------------------------------------------
+def _span_mid_pieces(lines, towers, epsg: int, half_frac: float) -> list:
+    """The part of each mapped span of the existing line within ± half_frac of its length around the null
+    point (its midpoint), in UTM — where the new line prefers to cross (Vivek, 13 Oct 2026). Spans whose
+    towers are not mapped have no preferred piece (and no penalty)."""
+    if lines is None or towers is None or not len(lines) or not len(towers) or half_frac <= 0:
+        return []
+    from shapely import STRtree
+    from shapely.ops import substring
+    parts = []
+    for g in lines.geometry.to_crs(epsg):
+        if g is None or g.is_empty:
+            continue
+        parts.extend(x for x in getattr(g, "geoms", [g]) if x.geom_type == "LineString" and x.length > 0)
+    tw = [t for t in towers.geometry.to_crs(epsg) if t is not None and not t.is_empty]
+    if not parts or not tw:
+        return []
+    out = []
+    tree = STRtree(tw)
+    for g in parts:
+        idx = tree.query(g.buffer(15.0))
+        pos = sorted(g.project(tw[i]) for i in idx if g.distance(tw[i]) <= 15.0)
+        for a, b in zip(pos, pos[1:]):
+            span = b - a
+            if span <= 0:
+                continue
+            mid = (a + b) / 2.0
+            piece = substring(g, max(0.0, mid - half_frac * span), min(g.length, mid + half_frac * span))
+            if piece.geom_type == "LineString" and piece.length > 0:
+                out.append(piece)
+    return out
+
+
 def _tower_crossing_bans(lines, towers, epsg: int, clear_m: float, clear_pct: float = 0.0) -> list:
     """Parts of the existing conductors the new line may not cross (UTM). With clear_pct (Vivek,
     10 Oct 2026): a share of each span of the existing line next to its towers — 20 % of a 400 m
@@ -547,7 +586,8 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
                   gantry_buffer_m: float = 10.0, raster_margin_m: float = 0.0,
                   angle_tower_rules: tuple[str, ...] = (), relaxed: bool = False,
                   chw_ref_m: float | None = None, rasterizer=None, raster_cache=None,
-                  terminal_yard_radius_m: float | None = None, precedent_towers=None) -> Compiled:
+                  terminal_yard_radius_m: float | None = None, precedent_towers=None,
+                  tower_cost_rs: dict | None = None) -> Compiled:
     # Terminal yards: the substation(s) the line starts / ends in. They are carved out of the
     # substation rule; the yard (+ gantry buffer) and the go-zone disc are clear for the conductor,
     # and no tower may stand inside the yard other than the dead-end towers at A and B.
@@ -809,9 +849,21 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
                 # the new conductor may cross the existing wire anywhere except next to an existing
                 # tower: crossing_tower_clear_pct of that span (fallback crossing_tower_clear_m)
                 cl = float(p.get("crossing_tower_clear_m", 0))
-                clp = float(p.get("crossing_tower_clear_pct", 0) or 0) / 100.0
+                # allowed band (Vivek, 13 Oct 2026): within crossing_point_allowed_pct of their span from the
+                # null point, i.e. the wire within (50 − allowed) % of the span of each tower is banned
+                allowed = p.get("crossing_point_allowed_pct")
+                clp = (0.5 - float(allowed) / 100.0) if allowed is not None else float(p.get("crossing_tower_clear_pct", 0) or 0) / 100.0
                 bans = _tower_crossing_bans(R.subset(r.layer, ["power_line"]), R.subset(r.layer, ["power_tower"]),
                                             frame.epsg, cl, clp)
+                pref_pieces = _span_mid_pieces(R.subset(r.layer, ["power_line"]), R.subset(r.layer, ["power_tower"]),
+                                               frame.epsg, float(p.get("crossing_point_pref_pct", 0) or 0) / 100.0)
+                pref_mask = pref_wide = None
+                if pref_pieces:
+                    pref_mask = rfeatures.rasterize([(g, 1) for g in pref_pieces], out_shape=shape, transform=frame.transform,
+                                                    fill=0, all_touched=True, dtype="uint8").astype(bool)
+                    # the search reads the mask where a span's samples meet the wire's angle field (within
+                    # 1.5 cells of it): a copy widened by two cells for that; the spotting reads the exact one
+                    pref_wide = ndimage.binary_dilation(pref_mask, iterations=2)
                 # go zone (9 Oct 2026): crossings of lines from GO_ZONE_CROSSING_KV up stay governed there
                 hv = R.by_voltage(r.layer, GO_ZONE_CROSSING_KV, True)
                 d_hv = R.dist(hv, ["power_line"])
@@ -882,6 +934,26 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
             if not built:
                 continue
             fired[r.id] = fired.get(r.id, 0) + 1
+            # crossing preferences (Vivek, 13 Oct 2026)
+            pa = p.get("preferred_angle_deg")
+            pt = float(p.get("preferred_angle_tol_deg", 5) or 5)
+            pref_win = (max(0.0, float(pa) - pt), 90.0) if pa is not None else None
+            side = p.get("crossing_side_m")
+            side_m = (float(side[0]), float(side[1])) if isinstance(side, (list, tuple)) and len(side) == 2 else None
+            mdev = p.get("max_dev_adjacent_deg")
+            pen_pct = float(p.get("relax_penalty_pct", 0) or 0) / 100.0
+            for x in built:
+                x.pref_window = pref_win
+                x.side_m = side_m
+                x.max_dev_deg = float(mdev) if mdev is not None else None
+                if r.id in ("power_line", "power_line_lt"):
+                    x.pref_mask = pref_mask
+                    x.pref_mask_wide = pref_wide
+                    x.max_span_m = None if side_m is not None else x.max_span_m   # the side window bounds the span
+                if x.max_span_m is not None and x.max_span_m > design_span_m + 1e-6:
+                    x.long_span = True                                            # spans up to 600 m over a crossing
+                if pen_pct > 0 and tower_cost_rs:
+                    x.penalty_rs = pen_pct * float(tower_cost_rs.get(x.min_type) or tower_cost_rs.get("D45") or 0.0)
             cr = built[0]
             for extra in built[1:]:
                 if r.id in angle_tower_rules:
