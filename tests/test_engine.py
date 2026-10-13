@@ -134,19 +134,19 @@ def test_railway_crossing_angle_and_span():
     xs = [cr for s in r["spans"] for cr in s["crossings"] if cr["rule"] == "railway"]
     assert len(xs) == 1
     assert xs[0]["angle_deg"] >= 70 - 1e-6
-    assert xs[0]["span_m"] <= 300 + 1e-6                 # min(300 m, 80 % of 400 m)
+    assert xs[0]["span_m"] <= 600 + 1e-6                 # Vivek, 13 Oct 2026: other crossings up to 600 m (was 300)
     a, b = next((s["a"], s["b"]) for s in r["spans"] if s["crossings"])
     types = {t["no"]: t["type"] for t in r["towers"]}
     assert types[a] in ("D45", "D60") and types[b] in ("D45", "D60")   # crossing tower type D
 
 
 def test_wide_river_needs_long_span():
-    """300 m of water + 150 m bank buffers each side: a single span of 600 m or more, longer than the
-    400 m span cap. TSD: one span ≤ 720 m (60 % of the 1,200 m adjacent-span allowance) and the
-    wind span ≤ 400 m, so the crossing towers' other spans are short and the towers are tension type."""
+    """240 m of water + 150 m bank buffers each side: a single span of 540 m or more, longer than the
+    400 m span cap. Crossing spans go to 600 m (Vivek, 13 Oct 2026; was 720) and the TSD wind span is
+    ≤ 400 m, so the crossing towers' other spans are short and the towers are tension type."""
     f = frame()
     c = f.length_m / 2
-    river = frame_geom(f, box(c - 150, -3000, c + 150, 3000))
+    river = frame_geom(f, box(c - 120, -3000, c + 120, 3000))
     line = frame_geom(f, LineString([(c, -3000), (c, 3000)]))
     res = run_solve(solve_input({"river": gdf([river, line], "river", "Test river")}))
     assert res["feasible"]
@@ -155,12 +155,12 @@ def test_wide_river_needs_long_span():
     long_ix = [i for i, s in enumerate(S) if s["length_m"] > 400]       # 765 kV span cap 400 m (9 Oct 2026)
     assert long_ix and all(any(cr["rule"] == "river" for cr in S[i]["crossings"]) for i in long_ix)
     for i in long_ix:
-        assert S[i]["length_m"] <= 720 + 1e-6
+        assert S[i]["length_m"] <= 600 + 1e-6
         assert (S[i - 1]["length_m"] + S[i]["length_m"]) / 2 <= 400 + 1e-6
         assert (S[i]["length_m"] + S[i + 1]["length_m"]) / 2 <= 400 + 1e-6
         assert T[i]["type"] != "A" and T[i + 1]["type"] != "A"
     for x, y in towers_frame(f, r)[1:-1]:
-        assert not (c - 150 - 150 + 0.5 < x < c + 150 + 150 - 0.5)
+        assert not (c - 120 - 150 + 0.5 < x < c + 120 + 150 - 0.5)
 
 
 def test_crossings_take_angle_towers_both_sides():
@@ -879,8 +879,8 @@ def test_angle_span_fix_never_leaves_a_span_below_the_minimum():
 
 
 def test_new_tower_keeps_the_tower_setback_from_existing_conductors():
-    """Vivek, 10 Oct 2026: a new tower keeps the tower height + 40 % (765 kV: 101.5 m) from an existing
-    line's conductors, so a falling tower cannot reach the other line (92.5 m from its towers)."""
+    """Vivek, 13 Oct 2026: a new tower keeps the tower height (765 kV: 72.5 m, no buffer) from an existing
+    line's conductors and towers, so a falling tower cannot reach the other line."""
     f = frame()
     spec = LineSpec(765, "dc")
     rules, costs = resolve_rules(spec), resolve_costs(spec)
@@ -891,13 +891,14 @@ def test_new_tower_keeps_the_tower_setback_from_existing_conductors():
     def forbidden(x, y):
         col, row = f.frame_to_pixel(x, y)
         return bool(comp.tower_forbidden[int(row), int(col)])
-    assert forbidden(c + 60, 0) and forbidden(c - 85, 0)       # 60 / 85 m from the wire, 1.9 km from a tower
-    assert not forbidden(c + 115, 0) and not forbidden(c - 115, 0)
+    assert forbidden(c + 40, 0) and forbidden(c - 60, 0)       # 40 / 60 m from the wire, 1.9 km from a tower
+    assert not forbidden(c + 85, 0) and not forbidden(c - 115, 0)
 
 
 def test_crossing_ban_is_a_share_of_the_existing_span():
-    """Vivek, 10 Oct 2026: no crossing within 20 % of the existing line's span of its towers — 80 m on a
-    400 m span, 20 m on a 66 kV line with poles every 100 m (the old flat 80 m banned the whole wire)."""
+    """Vivek, 13 Oct 2026: a crossing is allowed within ± 20 % of the span from its null point, i.e. not
+    within 30 % of the span of either tower — 120 m on a 400 m span, 30 m on a 66 kV line with poles
+    every 100 m (10 Oct: 20 % next to the towers)."""
     f = frame()
     spec = LineSpec(765, "dc")
     rules, costs = resolve_rules(spec), resolve_costs(spec)
@@ -910,13 +911,13 @@ def test_crossing_ban_is_a_share_of_the_existing_span():
     bans = [vr for vr in comp.conductor_nogo if vr.rule_id == "power_line_lt" and vr.d == 0]
     assert bans, "no crossing bans compiled"
     hit = lambda y: any(vr.hits(Point(c, y).buffer(1.0)) for vr in bans)     # the real check is span-line vs piece
-    assert hit(10) and hit(-15)                 # within 20 m of the poles at 0 / 0
+    assert hit(10) and hit(-15) and hit(25)     # within 30 m of the poles at 0 / 0
     assert not hit(50) and not hit(-50)         # mid-span of a 100 m pole span: crossable
     # the 400 kV helper: towers every 400 m → 80 m
     comp2 = compile_rules(f, {"power": _existing_400(f, c, list(np.arange(-1800, 1801, 400.0)))}, rules, costs, 765, 33.5, 150, 400)
     bans2 = [vr for vr in comp2.conductor_nogo if vr.rule_id == "power_line" and vr.d == 0]
     hit2 = lambda y: any(vr.hits(Point(c, y).buffer(1.0)) for vr in bans2)
-    assert hit2(-1800 + 60) and not hit2(-1800 + 100)
+    assert hit2(-1800 + 60) and hit2(-1800 + 100) and not hit2(-1800 + 150)
 
 
 def test_marsh_allows_towers_on_piles():

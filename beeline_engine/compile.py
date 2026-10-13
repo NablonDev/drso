@@ -418,8 +418,8 @@ GO_ZONE_CROSSING_KV = 220.0   # go zone: crossings of existing lines from this v
 # "Learn from existing lines" (9 Oct 2026): layers whose polygons an existing tower may open, and the
 # rule mechanisms that are eased (crossing rules never are)
 PRECEDENT_LAYERS = {"wet_land", "pond", "lake", "reservoir", "other_water", "crz", "salt_pans",
-                    "reserve_forest", "social_forest", "forest_in_pa", "national_park", "wildlife_sanctuary"}
-PRECEDENT_PA_LAYERS = {"reserve_forest", "social_forest", "forest_in_pa", "national_park", "wildlife_sanctuary"}
+                    "reserve_forest", "social_forest", "forest_in_pa", "national_park", "wildlife_sanctuary", "eco_sensitive_zone"}
+PRECEDENT_PA_LAYERS = {"reserve_forest", "social_forest", "forest_in_pa", "national_park", "wildlife_sanctuary", "eco_sensitive_zone"}
 PRECEDENT_MECHANISMS = {"nogo", "landclass", "wetland", "tower_setback"}
 
 

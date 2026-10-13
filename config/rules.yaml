@@ -224,11 +224,11 @@ groups:
       # Not in the prototype's 29; added because Vivek set "avoid entry" for wildlife areas
       # (5 Oct 2026). Counted as rule 30 — switchable like any other.
       - id: protected_areas
-        name: "National park and wildlife sanctuary"
-        note: "No-Go for every route, the relaxed route included (Vivek, 9 Oct 2026). Only 'Learn from existing lines' may open a sanctuary or park that existing towers already stand in — then with forest diversion approval by area (Rule_Table 69-72: ≤ 5 ha Regional Office 6 months, ≤ 40 ha REC 12, > 40 ha Conservator 18). Eco-sensitive zones and the international border are No-Go but have no data layer yet"
-        # forest package: national parks + sanctuaries + reserve forest inside them; no ESZ delivered yet
+        name: "National park, wildlife sanctuary and eco-sensitive zone"
+        note: "No-Go for every route, the relaxed route included (Vivek, 9 Oct 2026). Only 'Learn from existing lines' may open a sanctuary or park that existing towers already stand in — then with forest diversion approval by area (Rule_Table 69-72: ≤ 5 ha Regional Office 6 months, ≤ 40 ha REC 12, > 40 ha Conservator 18). Eco-sensitive zones joined as No-Go with forest package 2 (Vivek, 13 Oct 2026); the international border is No-Go but has no data layer yet"
+        # forest package 2 (13 Oct 2026): national parks + sanctuaries + reserve forest inside them + ESZ
         layer: national_park
-        also_layers: [wildlife_sanctuary, forest_in_pa]
+        also_layers: [wildlife_sanctuary, forest_in_pa, eco_sensitive_zone]
         mechanism: nogo
         params:
           - {key: tower_setback_m, label: "Tower buffer", type: num, unit: m, value: 0}
