@@ -10,7 +10,6 @@ import Images from "./screens/Images";
 import Sources from "./screens/Sources";
 import Rules from "./screens/Rules";
 import Costs from "./screens/Costs";
-import Review from "./screens/Review";
 import Extracting from "./screens/Extracting";
 import Solve from "./screens/Solve";
 import Why from "./screens/Why";
@@ -85,7 +84,7 @@ export default function App() {
           <Route path="sources" element={<Sources />} />
           <Route path="rules" element={<Rules />} />
           <Route path="costs" element={<Costs />} />
-          <Route path="review" element={<Review />} />
+          <Route path="review" element={<Navigate to="../extracting" replace />} />
           <Route path="extracting" element={<Extracting />} />
           <Route path="layers" element={<LayerReview />} />
           <Route path="solve" element={<Solve />} />

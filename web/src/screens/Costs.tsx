@@ -252,7 +252,7 @@ export default function Costs() {
       </Note>
       <div className="actions">
         <button className="btn ghost" onClick={() => nav(`/runs/${run.id}/rules`)}>Back</button>
-        <button className="btn" onClick={() => nav(`/runs/${run.id}/review`)}>Next: review</button>
+        <button className="btn" onClick={() => nav(`/runs/${run.id}/extracting`)}>Next: extract layers</button>
       </div>
     </section>
   );

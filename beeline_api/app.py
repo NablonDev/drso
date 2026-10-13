@@ -62,7 +62,7 @@ class RunCreate(BaseModel):
     b: Pt
     kv: int
     circuit: Literal["dc"] = "dc"                            # double circuit only (S/C, Q/C out of scope)
-    band_km: float = Field(gt=0.4, le=25)
+    band_km: float = Field(gt=0.4, le=50)      # Vivek, 13 Oct 2026: up to ± 50 km, default 25
     routes_wanted: int = Field(4, ge=1, le=4)
     routes_selected: list[int] | None = None                 # engine route ids; default route 1 only
     note: str | None = None
@@ -95,7 +95,7 @@ class RunPatch(BaseModel):
     b: Pt | None = None
     kv: int | None = None
     circuit: Literal["dc"] | None = None
-    band_km: float | None = Field(None, gt=0.4, le=25)
+    band_km: float | None = Field(None, gt=0.4, le=50)
     routes_wanted: int | None = Field(None, ge=1, le=4)
     routes_selected: list[int] | None = None
     note: str | None = None
@@ -132,7 +132,7 @@ class MappingReq(BaseModel):
 class BandReq(BaseModel):
     a: Pt
     b: Pt
-    band_km: float = Field(gt=0.4, le=25)
+    band_km: float = Field(gt=0.4, le=50)      # Vivek, 13 Oct 2026: up to ± 50 km, default 25
 
 
 class ProcureReq(BaseModel):

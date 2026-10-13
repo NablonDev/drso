@@ -7,6 +7,7 @@ import { hasLayers } from "../components/Shell";
 import { Btn, ErrorNote, Head, Kpi, Loading, Note, Spinner } from "../components/ui";
 import { fmtDec, parseCoord, parsePair } from "../lib/dms";
 import { date, fold, hm, int, num } from "../lib/format";
+import { ROUTE_NAMES, toggleRouteId } from "../lib/routes";
 import { useDebounced } from "../lib/useDebounced";
 
 interface Form {
@@ -17,12 +18,14 @@ interface Form {
   lon2: string;
   kv: number;
   band: number;
+  routes: number[];      // engine route ids to solve (13 Oct 2026)
 }
 
-/** Every line is double circuit (Vivek, 6 Oct 2026); the band defaults to ± 25 km. */
+/** Every line is double circuit (Vivek, 6 Oct 2026); the band defaults to ± 25 km and goes to ± 50 (13 Oct 2026). */
 const CIRCUIT = "dc";
-const BAND_MAX = 25;
-const EMPTY: Form = { name: "", lat1: "", lon1: "", lat2: "", lon2: "", kv: 765, band: BAND_MAX };
+const BAND_MAX = 50;
+const BAND_DEFAULT = 25;
+const EMPTY: Form = { name: "", lat1: "", lon1: "", lat2: "", lon2: "", kv: 765, band: BAND_DEFAULT, routes: [1] };
 
 function fromRun(r: RunDetail): Form {
   return {
@@ -33,6 +36,7 @@ function fromRun(r: RunDetail): Form {
     lon2: fmtDec(r.b_lon),
     kv: r.kv,
     band: Math.min(BAND_MAX, Math.max(1, Math.round(r.band_km))),
+    routes: r.routes_selected?.length ? [...r.routes_selected] : [1],
   };
 }
 
@@ -157,7 +161,9 @@ export default function Corridor() {
     );
   }, [run, f]);
   const nameDirty = Boolean(run) && name !== (run?.name ?? "");
-  const dirty = corridorDirty || nameDirty;
+  // which routes to solve is free to change at any time — it does not touch the layers
+  const routesDirty = Boolean(run) && JSON.stringify(f.routes) !== JSON.stringify(fromRun(run!).routes);
+  const dirty = corridorDirty || nameDirty || routesDirty;
 
   const create = useApiMutation<RunDetail, RunCreateBody>({
     mutationFn: (body) => apiCalls.createRun(body),
@@ -188,11 +194,12 @@ export default function Corridor() {
     if (!a || !b || !name) return;
     if (!runId) {
       const body: RunCreateBody = { name, a, b, kv: f.kv, circuit: CIRCUIT, band_km: f.band };
-      create.mutate({ ...body, routes_selected: [1], reuse_from: reuse });
+      create.mutate({ ...body, routes_selected: f.routes, reuse_from: reuse });
     } else if (corridorDirty) {
-      patch.mutate({ ...(nameDirty ? { name } : {}), a, b, kv: f.kv, band_km: f.band });
-    } else if (nameDirty) {
-      patch.mutate({ name });                       // a rename is allowed even on a locked run
+      patch.mutate({ ...(nameDirty ? { name } : {}), a, b, kv: f.kv, band_km: f.band, routes_selected: f.routes });
+    } else if (nameDirty || routesDirty) {
+      // a rename or a route change is allowed even on a locked run
+      patch.mutate({ ...(nameDirty ? { name } : {}), ...(routesDirty ? { routes_selected: f.routes } : {}) });
     } else {
       nav(`/runs/${runId}/images`);
     }
@@ -378,6 +385,31 @@ export default function Corridor() {
                 <b>The expensive decision on the page.</b> Widening the band later means running the vision models again. Too
                 tight, though, and the route is trapped against an obstacle with no room to go round. The default is ± 25 km.
               </Note>
+            </div>
+          </div>
+
+          <div className="card">
+            <div className="ch">
+              <h3>Routes to solve</h3>
+              <span className="hint" style={{ marginLeft: "auto" }}>{f.routes.length} of 4</span>
+            </div>
+            <div className="cb stack">
+              <div className="seg" role="group" aria-label="Routes to solve" data-testid="routes-to-solve">
+                {ROUTE_NAMES.map(([n, nm]) => (
+                  <button key={n} aria-pressed={f.routes.includes(n)} title={nm} data-testid={`solve-route-${n}`}
+                    onClick={() => set("routes", toggleRouteId(f.routes, n))}>
+                    {n}
+                  </button>
+                ))}
+              </div>
+              <div className="hint" style={{ margin: 0 }}>
+                {f.routes.map((n) => `${n} — ${ROUTE_NAMES.find(([i]) => i === n)?.[1]}`).join(" · ")}
+                {f.routes.includes(4) ? " · route 4 is solved apart from route 1" : ""}
+              </div>
+              <div className="hint" style={{ margin: 0 }}>
+                Each extra route is another search and tower spotting; route 1 alone is the quick path. Changing this later
+                does not touch the layers.
+              </div>
             </div>
           </div>
 

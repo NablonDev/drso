@@ -15,7 +15,6 @@ export type StepKey =
   | "sources"
   | "rules"
   | "costs"
-  | "review"
   | "extracting"
   | "layers"
   | "solve"
@@ -26,12 +25,10 @@ export type StepKey =
 const GROUPS: { title: string; steps: [StepKey, string, string][] }[] = [
   { title: "Set up", steps: [["corridor", "1", "Corridor"], ["images", "2", "Images"], ["sources", "3", "Data sources"]] },
   { title: "Assumptions", steps: [["rules", "4", "Rules"], ["costs", "5", "Costs"]] },
-  {
-    title: "Step 1 — layers",
-    steps: [["review", "6", "Review & extract"], ["extracting", "7", "Extracting layers"], ["layers", "8", "Review the layers"]],
-  },
-  { title: "Step 2 — route", steps: [["solve", "9", "Solve the route"]] },
-  { title: "Results", steps: [["map", "10", "Route map"], ["why", "11", "Why this route"], ["export", "12", "Export"]] },
+  // "Review & extract" removed (Vivek, 13 Oct 2026): extraction starts from the Extract layers screen
+  { title: "Step 1 — layers", steps: [["extracting", "6", "Extract layers"], ["layers", "7", "Review the layers"]] },
+  { title: "Step 2 — route", steps: [["solve", "8", "Solve the route"]] },
+  { title: "Results", steps: [["map", "9", "Route map"], ["why", "10", "Why this route"], ["export", "11", "Export"]] },
 ];
 
 export function hasLayers(run: RunDetail): boolean {
@@ -48,7 +45,7 @@ export function stepEnabled(k: StepKey, run: RunDetail | undefined): boolean {
   if (!run) return k === "corridor";
   switch (k) {
     case "extracting":
-      return run.job?.kind === "extract" || Boolean(run.last_extract);
+      return run.status !== "draft" || run.job?.kind === "extract" || Boolean(run.last_extract);
     case "layers":
       return hasLayers(run);
     case "solve":
@@ -73,7 +70,6 @@ function stepDone(k: StepKey, run: RunDetail | undefined): boolean {
     case "sources":
     case "rules":
     case "costs":
-    case "review":
       return run.status !== "draft";
     case "extracting":
       return run.layers_ready && run.job?.kind !== "extract";
@@ -138,7 +134,7 @@ function Rail({ run, runId }: { run: RunDetail | undefined; runId: string | null
 function disabledWhy(k: StepKey): string {
   switch (k) {
     case "extracting":
-      return "No extraction has been started for this run";
+      return "Available once the corridor is saved";
     case "layers":
       return "Layers are reviewed once they are extracted";
     case "solve":
