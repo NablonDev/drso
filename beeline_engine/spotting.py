@@ -66,6 +66,7 @@ class SpotParams:
     approach_length_m: float = 0.0         # approach section within this of each gantry (CEA Schedule VII)
     approach_span_m: float | None = None
     proximity_discount: float = 0.0         # search-only discount near existing lines (string pulling)
+    proximity_tower_discount: float = 0.0   # the same on towers standing near them (Vivek, 13 Oct 2026)
     extension_pct: float = 9.4              # body extension price, % of the tower per +18 m
     sag_ref_span_m: float | None = None     # span the sag figure belongs to (None = design span)
     section_spans: int | None = None       # TSD D: ≤ 15 spans between section points (plain)
@@ -428,7 +429,10 @@ def _chain_cost(comp: Compiled, sp: SpotParams, pts, inner_types) -> float:
     for (x, y), t in zip(pts[1:-1], inner_types):
         px = int(np.clip((x - f.x0) / f.res_m, 0, f.width - 1))
         py = int(np.clip((f.y_top - y) / f.res_m, 0, f.height - 1))
-        c += sp.tower_cost_rs[t] + _tower_site_rs(comp, t, px, py)
+        tc = sp.tower_cost_rs[t] + _tower_site_rs(comp, t, px, py)
+        if sp.proximity_tower_discount > 0 and comp.near_existing is not None and comp.near_existing[py, px]:
+            tc *= 1.0 - sp.proximity_tower_discount
+        c += tc
     width = 2 * comp.half_width_m
     for (x0, y0), (x1, y1) in zip(pts[:-1], pts[1:]):
         L = math.hypot(x1 - x0, y1 - y0)

@@ -253,6 +253,7 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
     # stay close to existing lines: search-only discount (9 Oct 2026)
     _pr = rules.get("existing_line_proximity")
     prox_disc = float(_pr.params.get("discount_pct", 0) or 0) / 100.0 if _pr is not None and _pr.enabled else 0.0
+    prox_tdisc = float(_pr.params.get("tower_discount_pct", 0) or 0) / 100.0 if _pr is not None and _pr.enabled else 0.0
     # terrain in the search: the DEM on the rule grid; costs from the same tables the spotting uses
     terrain = dem is not None and dem.ok
     if terrain:
@@ -305,6 +306,7 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
                         long_ext_cost_rs_per_m=tower_cost["D45"] * ext_pct / 18.0,
                         dead_end_max_dev_deg=float(tsd["dead_end_max_dev_deg"]) if tsd and tsd.get("dead_end_max_dev_deg") else None,
                         approach_length_m=ap_len, approach_span_m=ap_span, proximity_discount=prox_disc,
+                        proximity_tower_discount=prox_tdisc,
                         ext_zero_tol_m=ext_zero_tol, ext_round_tol_m=ext_round_tol,
                         crossing_dev_max_deg=_crossing_dev_cap(rules))
     sp = SpotParams(design_span_m=design, span_max_m=smax_search,
@@ -324,7 +326,7 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
                     hilly_design_span_m=float(rules["design_span"].params["hilly_m"]),
                     hilly_section_km=float(rules["section_interval"].params["hilly_km"]),
                     hilly_rise_m=hilly_rise, tsd=tsd, approach_length_m=ap_len, approach_span_m=ap_span,
-                    proximity_discount=prox_disc, extension_pct=ext_pct * 100.0,
+                    proximity_discount=prox_disc, proximity_tower_discount=prox_tdisc, extension_pct=ext_pct * 100.0,
                     section_spans=int(rules["section_interval"].params.get("plain_spans") or 0) or None,
                     hilly_section_spans=int(rules["section_interval"].params.get("hilly_spans") or 0) or None)
 

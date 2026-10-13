@@ -665,12 +665,15 @@ groups:
       # Soft rules (Vivek, 9 Oct 2026): they steer the search, never the reported cost.
       - id: existing_line_proximity
         name: "Stay close to existing lines (search only)"
-        note: "Spans within the set distance of an existing line or tower of at least the set voltage get a discount on their line and RoW cost in the search and the tower spotting — the route is pulled towards existing corridors. The reported cost of every route is the true cost, without the discount. Parallel-spacing and crossing rules still apply."
+        note: "Spans within the set distance of an existing line or tower of at least the set voltage get a discount on their line and RoW cost, and towers standing there a discount on their price, in the search and the tower spotting — the route is pulled towards existing corridors, which are ground-surveyed and built to the real rules (Vivek, 13 Oct 2026). The reported cost of every route is the true cost, without the discount. Parallel-spacing and crossing rules still apply."
         layer: power
         mechanism: soft
         params:
           - {key: distance_m, label: "Within", type: num, unit: m, value: 1000}
-          - {key: discount_pct, label: "Search discount", type: num, unit: "%", value: 20}
+          - {key: discount_pct, label: "Search discount on spans (line + RoW)", type: num, unit: "%", value: 20}
+          # Vivek, 13 Oct 2026: existing lines are ground-surveyed and built to the real rules, so staying near them
+          # also corrects LULC errors — the towers standing within the distance get the same search discount
+          - {key: tower_discount_pct, label: "Search discount on towers", type: num, unit: "%", value: 20}
           - {key: min_kv, label: "Existing lines from", type: num, unit: kV, value: 220}
 
       - id: precedent_easing

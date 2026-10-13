@@ -1072,7 +1072,7 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
     # ---- soft: near an existing line (search-only discount, 9 Oct 2026) -------------------
     near_existing = None
     pr = rules.get("existing_line_proximity")
-    if pr is not None and pr.enabled and float(pr.params.get("discount_pct", 0) or 0) > 0:
+    if pr is not None and pr.enabled and (float(pr.params.get("discount_pct", 0) or 0) > 0 or float(pr.params.get("tower_discount_pct", 0) or 0) > 0):
         reach = float(pr.params.get("distance_m", 1000))
         mkv = float(pr.params.get("min_kv", 220))
         for lyr in ("power", "power_lt"):

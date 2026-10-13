@@ -90,6 +90,7 @@ class SolverParams:
     approach_span_m: float | None = None       # its design span (CEA Schedule VII)
     edge_cache_limit_bytes: float = 8e9        # GPU bytes the edge-geometry cache may take (11 Oct 2026)
     crossing_dev_max_deg: float | None = None  # deviation cap at the two towers of a crossing span (Vivek, 13 Oct 2026)
+    proximity_tower_discount: float = 0.0      # search-only discount on towers near existing lines (Vivek, 13 Oct 2026)
 
 
 @dataclass
@@ -481,6 +482,8 @@ def site_costs(compiled: Compiled, grid: Grid, p: SolverParams) -> tuple[np.ndar
     col = np.clip(px.astype(int), 0, f.width - 1)
     row = np.clip(py.astype(int), 0, f.height - 1)
     S = compiled.site_cost[row, col].astype(np.float64)
+    if p.proximity_tower_discount > 0 and getattr(compiled, "near_existing", None) is not None:
+        S = S * (1.0 - p.proximity_tower_discount * compiled.near_existing[row, col])
     S = S + p.lateral_penalty_rs_per_m * np.abs(fy)
     forbidden = compiled.tower_forbidden
     if p.site_tolerance_m > 0:
@@ -634,6 +637,16 @@ def solve(compiled: Compiled, p: SolverParams, cancel_check=None, progress=None)
         side = 0.0 if not np.isfinite(seedA).any() else compiled.frame.length_m
         return SolveOutcome(False, INF, [], [], grid, side, time.time() - t0)
     S = torch.as_tensor(S_np, device=dev)
+    # tower price discount per site near an existing line (search only, Vivek 13 Oct 2026): scales the
+    # type-by-deflection cost the DP adds at that site
+    tfac = None
+    if p.proximity_tower_discount > 0 and getattr(compiled, "near_existing", None) is not None:
+        f_ = compiled.frame
+        cc_, rr_ = np.meshgrid(np.arange(nc + 1), np.arange(R), indexing="ij")
+        fx_, fy_ = grid.site_xy(cc_, rr_)
+        px_, py_ = f_.frame_to_pixel(fx_, fy_)
+        nr_ = compiled.near_existing[np.clip(py_.astype(int), 0, f_.height - 1), np.clip(px_.astype(int), 0, f_.width - 1)]
+        tfac = torch.as_tensor(1.0 - p.proximity_tower_discount * nr_.astype(np.float32), device=dev)
     angle_only = torch.as_tensor(angle_only_np, device=dev)
     T = torch.as_tensor(T_np, device=dev)
     TA = torch.as_tensor(TA_np, device=dev)
@@ -706,12 +719,13 @@ def solve(compiled: Compiled, p: SolverParams, cancel_check=None, progress=None)
             E_chunk, X_chunk = edge_costs(compiled, grid, p, rasters, c, min(nc, c + chunk), n_samples, cache)
         cross_out = X_chunk[c - E_start]                  # (R, K): the edge leaving this site crosses a capped feature
         # tower at column c: from an arrival (type by deflection) or as the first dead-end
-        tot = V.unsqueeze(2) + T.unsqueeze(0)             # (R, K, K)
-        totA = V.unsqueeze(2) + TA.unsqueeze(0)
+        sc = tfac[c].view(R, 1, 1) if tfac is not None else 1.0
+        tot = V.unsqueeze(2) + T.unsqueeze(0) * sc             # (R, K, K)
+        totA = V.unsqueeze(2) + TA.unsqueeze(0) * sc
         if T45 is not None:
             capped = cross_in.unsqueeze(2) | cross_out.unsqueeze(1)          # (R, K_in, K_out)
-            tot = torch.where(capped, V.unsqueeze(2) + T45.unsqueeze(0), tot)
-            totA = torch.where(capped, V.unsqueeze(2) + TA45.unsqueeze(0), totA)
+            tot = torch.where(capped, V.unsqueeze(2) + T45.unsqueeze(0) * sc, tot)
+            totA = torch.where(capped, V.unsqueeze(2) + TA45.unsqueeze(0) * sc, totA)
         tot = torch.where(angle_only[c].view(R, 1, 1), totA, tot)
         mval, am = tot.min(dim=1)
         M = mval + S[c].view(R, 1)
