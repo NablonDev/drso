@@ -181,7 +181,7 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
     ap_rule = rules.get("approach_section")
     ap_len = float(ap_rule.params.get("length_m", 0) or 0) if ap_rule is not None and ap_rule.enabled else 0.0
     ap_hw = float(ap_rule.params.get("half_width_m", hw)) if ap_len > 0 else hw
-    ap_span = float(ap_rule.params.get("span_m", design)) if ap_len > 0 else None
+    ap_span = float(ap_rule.params.get("span_m") or design) if ap_len > 0 else None    # empty = the design span
     ap_zone = None
     if ap_len > 0:
         from shapely.geometry import Point as _Pt

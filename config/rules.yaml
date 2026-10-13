@@ -665,7 +665,8 @@ groups:
         params:
           - {key: length_m, label: "Distance from the gantry", type: num, unit: m, value: 2000}
           - {key: half_width_m, label: "Approach half-width (RoW / 2)", type: num, unit: m, value: {765: 27, 400: 19, 220: 12, 132: 9.5}}
-          - {key: span_m, label: "Approach maximum span", type: num, unit: m, value: {765: 250, 400: 250, 220: 200, 132: 150}}
+          # Vivek, 13 Oct 2026: no separate approach span limit — the normal design span applies (empty = design span)
+          - {key: span_m, label: "Approach maximum span (empty = design span)", type: num, unit: m, value: null}
           - {key: go_zone_m, label: "Go zone round each gantry", type: num, unit: m, value: 500}
 
       # Soft rules (Vivek, 9 Oct 2026): they steer the search, never the reported cost.
