@@ -155,6 +155,8 @@ export interface Run {
   circuit: Circuit;
   band_km: number;
   routes_wanted: number;
+  /** engine route ids to solve (13 Oct 2026); route 4 needs route 1 */
+  routes_selected: number[];
   sources: Record<string, SourceSetting> | null;
   rule_overrides: Record<string, RuleOverride> | null;
   cost_overrides: Record<string, Record<string, number>> | null;

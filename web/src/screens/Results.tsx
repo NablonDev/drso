@@ -398,23 +398,33 @@ function Body({ s }: { s: Solve }) {
             <>
               <div className="eyebrow" style={{ marginBottom: 8 }}>Routes</div>
               <div data-testid="route-cards">
-                {routes.map((r) => (
-                  <button key={r.id} className="routecard" aria-pressed={r.id === sel.id} onClick={() => select(r.id)}>
-                    <span className="swatch" style={{ background: routeColour(r.id) }} />
-                    <span>
-                      <span className="nm">Route {r.id} — {r.name}</span>
-                      <span className="sub">
-                        {num(r.stats.length_km, 1)} km · {int(r.stats.towers)} towers · {num(r.stats.forest_ha, 1)} ha forest
-                        {r.stats.approval_months ? ` · approvals ~${r.stats.approval_months} months` : ""}
-                      </span>
-                    </span>
-                    <span className="cost">{crore(r.cost.total, { unit: false, digits: 1 })}<span>₹ Cr</span></span>
-                  </button>
-                ))}
+                {routes.map((r) => {
+                  const shown = !hidden.includes(r.id);
+                  return (
+                    <div key={r.id} className={`routecard ${shown ? "" : "loff"}`} data-selected={r.id === sel.id}>
+                      <button className="rsel" aria-pressed={r.id === sel.id} onClick={() => select(r.id)}>
+                        <span className="swatch" style={{ background: routeColour(r.id) }} />
+                        <span>
+                          <span className="nm">Route {r.id} — {r.name}</span>
+                          <span className="sub">
+                            {num(r.stats.length_km, 1)} km · {int(r.stats.towers)} towers · {num(r.stats.forest_ha, 1)} ha forest
+                            {r.stats.approval_months ? ` · approvals ~${r.stats.approval_months} months` : ""}
+                          </span>
+                        </span>
+                        <span className="cost">{crore(r.cost.total, { unit: false, digits: 1 })}<span>₹ Cr</span></span>
+                      </button>
+                      <button className={`eye ${shown ? "" : "off"}`} aria-pressed={shown} data-testid={`show-route-${r.id}`}
+                        aria-label={shown ? `Hide route ${r.id} on the map` : `Show route ${r.id} on the map`}
+                        title={shown ? "Hide on the map" : "Show on the map"}
+                        onClick={() => setHidden((h) => (h.includes(r.id) ? h.filter((x) => x !== r.id) : [...h, r.id]))}>
+                        <EyeIcon off={!shown} />
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
             </>
           ) : null}
-          {feasible ? <RouteToggles routes={routes} hidden={hidden} setHidden={setHidden} /> : null}
           <RouteLayers layers={layersQ.data?.layers ?? []} on={on} setOn={setOn} />
           <div className="card" style={{ marginTop: 10 }}>
             <div className="cb stack">
@@ -697,37 +707,14 @@ function Failure({ s, onWiden }: { s: Solve; onWiden: () => void }) {
 
 
 
-/** Show or hide each calculated route on the map (its corridor strip and towers go with it). */
-function RouteToggles({ routes, hidden, setHidden }: {
-  routes: { id: number; name: string }[];
-  hidden: number[];
-  setHidden: (f: (h: number[]) => number[]) => void;
-}) {
-  const nOn = routes.filter((r) => !hidden.includes(r.id)).length;
+/** Eye / eye-off, the route's visibility toggle on its card (Vivek, 13 Oct 2026). */
+function EyeIcon({ off }: { off: boolean }) {
   return (
-    <div className="card" style={{ marginTop: 10 }} data-testid="route-toggles">
-      <div className="ch">
-        <h3 style={{ fontSize: 13 }}>Routes on the map</h3>
-        <span className="hint" style={{ marginLeft: "auto" }}>{nOn} of {routes.length} shown</span>
-      </div>
-      <div className="row" style={{ gap: 4, padding: "6px 9px", flexWrap: "wrap" }}>
-        <button className="mini" onClick={() => setHidden(() => [])}>All</button>
-        <button className="mini" onClick={() => setHidden(() => routes.map((r) => r.id))}>None</button>
-      </div>
-      {routes.map((r) => {
-        const v = !hidden.includes(r.id);
-        return (
-          <div key={r.id} className={`lrow ${v ? "" : "loff"}`}>
-            <label className="ln">
-              <input type="checkbox" checked={v} aria-label={`Show route ${r.id}`} data-testid={`show-route-${r.id}`}
-                onChange={() => setHidden((h) => (h.includes(r.id) ? h.filter((x) => x !== r.id) : [...h, r.id]))} />
-              <i className="sw" style={{ background: routeColour(r.id) }} />
-              <span><b>Route {r.id}</b><em>{r.name}</em></span>
-            </label>
-          </div>
-        );
-      })}
-    </div>
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12z" />
+      <circle cx="12" cy="12" r="3" />
+      {off ? <path d="M4 4l16 16" /> : null}
+    </svg>
   );
 }
 

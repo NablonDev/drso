@@ -188,7 +188,7 @@ export default function Corridor() {
     if (!a || !b || !name) return;
     if (!runId) {
       const body: RunCreateBody = { name, a, b, kv: f.kv, circuit: CIRCUIT, band_km: f.band };
-      create.mutate({ ...body, routes_wanted: 4, reuse_from: reuse });
+      create.mutate({ ...body, routes_selected: [1], reuse_from: reuse });
     } else if (corridorDirty) {
       patch.mutate({ ...(nameDirty ? { name } : {}), a, b, kv: f.kv, band_km: f.band });
     } else if (nameDirty) {

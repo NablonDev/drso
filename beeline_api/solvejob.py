@@ -67,6 +67,7 @@ def build_manifest(run: dict, rls: list[dict], solve_result: dict | None) -> dic
                      "b": {"lon": run["b_lon"], "lat": run["b_lat"]},
                      "b_name": run.get("b_name"), "band_km": run["band_km"]},
         "line": {"kv": run["kv"], "circuit": run["circuit"], "routes_wanted": run["routes_wanted"],
+                 "routes_selected": run.get("routes_selected"),
                  **((solve_result or {}).get("line") or {})},
         "sources": [{"layer": r["layer_key"], "mode": r["mode"], "producer": r["producer"], "source": r["source"],
                      "file": r["file_name"], "model": r["model"], "model_version": r["model_version"],
@@ -103,6 +104,7 @@ def run_solve_job(job: dict, rep: Reporter):
     inp = SolveInput(a=(run["a_lon"], run["a_lat"]), b=(run["b_lon"], run["b_lat"]), band_km=run["band_km"],
                      kv=run["kv"], circuit=run["circuit"], layers=inputs, a_name=run.get("a_name") or "A",
                      b_name=run.get("b_name") or "B", routes_wanted=run["routes_wanted"],
+                     route_ids=[int(x) for x in (run.get("routes_selected") or [])] or None,
                      rule_overrides={k: {kk: vv for kk, vv in v.items()} for k, v in (run["rule_overrides"] or {}).items()},
                      cost_overrides=run["cost_overrides"] or {}, dem_dir=settings.DEM_DIR,
                      cache_dir=settings.DATA / "cache" / "rasters")

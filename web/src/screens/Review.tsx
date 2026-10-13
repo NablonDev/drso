@@ -8,6 +8,11 @@ import { Btn, ErrorNote, Head, Loading, Note } from "../components/ui";
 import { clock, corridorName, date, fmtLatLon, hm, int, lineSpec, num, seconds } from "../lib/format";
 import { useUi } from "../store/ui";
 
+/** The engine's four routes (engine.yaml routes), in solve order. */
+const ROUTE_NAMES: [number, string][] = [
+  [1, "Least cost"], [2, "Minimum deviation from the bee-line"], [3, "Relaxed route"], [4, "Second least cost"],
+];
+
 export default function Review() {
   const run = useRunCtx();
   const nav = useNavigate();
@@ -17,11 +22,20 @@ export default function Review() {
   const costs = useCosts(run.id).data;
   const names = useUi((s) => s.uploadNames);
 
-  const routes = useApiMutation<RunDetail, number>({
-    mutationFn: (n) => apiCalls.patchRun(run.id, { routes_wanted: n }),
-    errorTitle: "Routes wanted not changed",
+  // routes to solve (Vivek, 13 Oct 2026): any subset; route 4 is solved apart from route 1, so it needs it
+  const routes = useApiMutation<RunDetail, number[]>({
+    mutationFn: (ids) => apiCalls.patchRun(run.id, { routes_selected: ids }),
+    errorTitle: "Routes to solve not changed",
     onSuccess: (r) => qc.setQueryData(qk.run(r.id), r),
   });
+  const selectedRoutes = routes.isPending && routes.variables ? routes.variables : (run.routes_selected ?? [1]);
+  const toggleRoute = (id: number) => {
+    let next = selectedRoutes.includes(id) ? selectedRoutes.filter((x) => x !== id) : [...selectedRoutes, id];
+    if (id === 4 && next.includes(4) && !next.includes(1)) next = [...next, 1];
+    if (id === 1 && !next.includes(1)) next = next.filter((x) => x !== 4);
+    if (next.length === 0) return;
+    routes.mutate([...next].sort((a, b) => a - b));
+  };
   const [forceModels, setForceModels] = useState(false);
   const extract = useApiMutation<Job, void>({
     mutationFn: () => apiCalls.extract(run.id, undefined, forceModels),
@@ -102,15 +116,19 @@ export default function Review() {
                     </td>
                   </tr>
                   <tr>
-                    <td>Routes wanted</td>
+                    <td>Routes to solve</td>
                     <td>
-                      <div className="seg" role="group" aria-label="Routes wanted">
-                        {[1, 2, 3, 4].map((n) => (
-                          <button key={n} aria-pressed={(routes.isPending ? routes.variables : run.routes_wanted) === n}
-                            disabled={routes.isPending || Boolean(run.job)} onClick={() => routes.mutate(n)}>
+                      <div className="seg" role="group" aria-label="Routes to solve" data-testid="routes-to-solve">
+                        {ROUTE_NAMES.map(([n, nm]) => (
+                          <button key={n} aria-pressed={selectedRoutes.includes(n)} title={nm} data-testid={`solve-route-${n}`}
+                            disabled={routes.isPending || Boolean(run.job)} onClick={() => toggleRoute(n)}>
                             {n}
                           </button>
                         ))}
+                      </div>
+                      <div className="hint">
+                        {selectedRoutes.map((n) => `${n} — ${ROUTE_NAMES.find(([i]) => i === n)?.[1]}`).join(" · ")}
+                        {selectedRoutes.includes(4) ? " (route 4 is solved apart from route 1)" : ""}
                       </div>
                     </td>
                   </tr>
@@ -202,8 +220,8 @@ export default function Review() {
                 <tr>
                   <td><span className="pill p-acc">2</span></td>
                   <td>
-                    <b>Solve the route</b> — cost surface, {rules ? rules.n_rules - rules.n_off : "all"} rules, {run.routes_wanted} alignment
-                    {run.routes_wanted > 1 ? "s" : ""}, towers, decision log
+                    <b>Solve the route</b> — cost surface, {rules ? rules.n_rules - rules.n_off : "all"} rules, {selectedRoutes.length} alignment
+                    {selectedRoutes.length > 1 ? "s" : ""}, towers, decision log
                     <div className="hint">Re-runnable on the same layers as often as you like</div>
                   </td>
                   <td className="mono" style={{ textAlign: "right" }}>{lastSolveS ? seconds(lastSolveS) : "about 1m"}</td>

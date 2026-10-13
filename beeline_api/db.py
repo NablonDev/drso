@@ -110,6 +110,13 @@ create table if not exists features (
 alter table features add column if not exists attrs jsonb;
 -- corridor name (mandatory from 6 Oct 2026); older runs get "A – B" from their point names, else their id
 alter table runs add column if not exists name text;
+-- routes to solve, by engine route id (Vivek, 13 Oct 2026): new runs solve route 1 only; older runs keep
+-- the first routes_wanted routes they were set up with
+alter table runs add column if not exists routes_selected jsonb;
+update runs set routes_selected = (select jsonb_agg(i) from generate_series(1, greatest(1, least(4, routes_wanted))) i)
+  where routes_selected is null;
+alter table runs alter column routes_selected set default '[1]'::jsonb;
+alter table runs alter column routes_selected set not null;
 update runs set name = coalesce(nullif(concat_ws(' – ', nullif(a_name, ''), nullif(b_name, '')), ''), id) where name is null;
 create index if not exists features_geom on features using gist (geom);
 create index if not exists features_lv on features (layer_version_id);

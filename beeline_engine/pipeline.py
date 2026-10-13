@@ -58,6 +58,7 @@ class SolveInput:
     a_name: str = "A"
     b_name: str = "B"
     routes_wanted: int = 4
+    route_ids: list[int] | None = None   # engine route ids to solve (Vivek, 13 Oct 2026); None = first routes_wanted
     rule_overrides: dict = field(default_factory=dict)
     cost_overrides: dict = field(default_factory=dict)
     dem_dir: Path | None = None
@@ -331,7 +332,13 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
     rule_layer = {r.id: r.layer for r in rules.values()}
     global_events = _global_events(inp, frame, rules, comp, findex, layer_names, rule_layer, dem, dem_note)
 
-    variants = eng["routes"][: max(1, min(4, inp.routes_wanted))]
+    if inp.route_ids:
+        want = set(inp.route_ids)
+        if 4 in want:
+            want.add(1)                                 # route 4 is solved apart from route 1
+        variants = [v for v in eng["routes"] if v["id"] in want] or eng["routes"][:1]
+    else:
+        variants = eng["routes"][: max(1, min(4, inp.routes_wanted))]
     n_var = len(variants)
     workers = _route_workers(eng, n_var)
     timings["route_workers"] = workers

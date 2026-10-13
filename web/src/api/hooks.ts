@@ -247,6 +247,7 @@ export interface RunCreateBody {
   circuit?: string;
   band_km: number;
   routes_wanted?: number;
+  routes_selected?: number[];
   note?: string | null;
   reuse_from?: string | null;
 }

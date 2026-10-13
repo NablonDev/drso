@@ -92,7 +92,7 @@ export default function Solve() {
             <div className="row" style={{ justifyContent: "space-between" }}>
               <div>
                 <div style={{ fontSize: 13, fontWeight: 500 }}>
-                  Solving {run.routes_wanted} alignment{run.routes_wanted > 1 ? "s" : ""} · {job.stage ?? "starting"}
+                  Solving {(run.routes_selected ?? []).length || run.routes_wanted} alignment{((run.routes_selected ?? []).length || run.routes_wanted) > 1 ? "s" : ""} · {job.stage ?? "starting"}
                 </div>
                 <div className="hint">
                   {nRules ?? "All"} rules over {features !== undefined ? int(features) : "the extracted"} features · no imagery is read in this step
@@ -136,7 +136,7 @@ export default function Solve() {
             <div className="row" style={{ justifyContent: "space-between", gap: 12 }}>
               <div style={{ maxWidth: "60ch" }}>
                 <div style={{ fontSize: 13, fontWeight: 500 }}>
-                  {run.routes_wanted} alignment{run.routes_wanted > 1 ? "s" : ""} · {nRules ?? "all"} rules ·{" "}
+                  {(run.routes_selected ?? []).length || run.routes_wanted} alignment{((run.routes_selected ?? []).length || run.routes_wanted) > 1 ? "s" : ""} · {nRules ?? "all"} rules ·{" "}
                   {features !== undefined ? `${int(features)} features` : "extracted layers"}
                 </div>
                 <div className="hint">

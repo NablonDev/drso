@@ -42,6 +42,20 @@ class Pt(BaseModel):
     name: str | None = None
 
 
+def _routes_selected(v):
+    """Routes to solve (Vivek, 13 Oct 2026): a non-empty subset of the engine's route ids, ordered; route 4
+    (second least cost, kept apart from route 1) needs route 1."""
+    ids = sorted({int(x) for x in (v or [])})
+    if not ids:
+        ids = [1]
+    bad = [i for i in ids if i < 1 or i > 4]
+    if bad:
+        raise ValueError(f"unknown route id {bad[0]} (routes are 1–4)")
+    if 4 in ids and 1 not in ids:
+        raise ValueError("route 4 (second least cost) is solved apart from route 1 — select route 1 as well")
+    return ids
+
+
 class RunCreate(BaseModel):
     name: str = Field(min_length=1, max_length=80)          # corridor name, shown on every page
     a: Pt
@@ -50,8 +64,14 @@ class RunCreate(BaseModel):
     circuit: Literal["dc"] = "dc"                            # double circuit only (S/C, Q/C out of scope)
     band_km: float = Field(gt=0.4, le=25)
     routes_wanted: int = Field(4, ge=1, le=4)
+    routes_selected: list[int] | None = None                 # engine route ids; default route 1 only
     note: str | None = None
     reuse_from: str | None = None
+
+    @field_validator("routes_selected")
+    @classmethod
+    def _routes(cls, v):
+        return _routes_selected(v)
 
     @field_validator("kv")
     @classmethod
@@ -77,8 +97,14 @@ class RunPatch(BaseModel):
     circuit: Literal["dc"] | None = None
     band_km: float | None = Field(None, gt=0.4, le=25)
     routes_wanted: int | None = Field(None, ge=1, le=4)
+    routes_selected: list[int] | None = None
     note: str | None = None
     accept_partial: bool | None = None
+
+    @field_validator("routes_selected")
+    @classmethod
+    def _routes(cls, v):
+        return None if v is None else _routes_selected(v)
 
 
 class SourceSet(BaseModel):
@@ -254,11 +280,12 @@ def create_run(req: RunCreate):
     seq = db.one("select nextval('run_seq') as n")["n"]
     rid = f"{fam}-{seq:04d}"
     gv = geo.validate((req.a.lon, req.a.lat), (req.b.lon, req.b.lat))
+    sel = req.routes_selected or [1]
     db.exec_("""insert into runs (id, family, rev, name, note, a_lon, a_lat, a_name, b_lon, b_lat, b_name, kv, circuit, band_km,
-                                  routes_wanted, status, geo)
-                values (%s,%s,1,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'draft',%s)""",
+                                  routes_wanted, routes_selected, status, geo)
+                values (%s,%s,1,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'draft',%s)""",
              (rid, fam, req.name, req.note, req.a.lon, req.a.lat, req.a.name, req.b.lon, req.b.lat, req.b.name, req.kv,
-              req.circuit, req.band_km, req.routes_wanted, db.J(gv)))
+              req.circuit, req.band_km, len(sel), db.J(sel), db.J(gv)))
     if req.reuse_from:
         _reuse(rid, req.reuse_from)
     return get_run(rid)
@@ -326,6 +353,9 @@ def patch_run(run_id: str, req: RunPatch):
                 raise HTTPException(400, f"voltage must be one of {VOLTAGES}")
             sets.append(f"{k}=%s")
             vals.append(v)
+    if req.routes_selected is not None:
+        sets += ["routes_selected=%s", "routes_wanted=%s"]
+        vals += [db.J(req.routes_selected), len(req.routes_selected)]
     if corridor:
         sets.append("imagery=null")
     if sets:
@@ -358,10 +388,10 @@ def copy_run(run_id: str, req: CopyReq):
     seq = db.one("select nextval('run_seq') as n")["n"]
     nid = f"{r['family']}-{seq:04d}"
     db.exec_("""insert into runs (id, family, rev, parent_id, name, note, a_lon, a_lat, a_name, b_lon, b_lat, b_name, kv,
-                                  circuit, band_km, routes_wanted, sources, rule_overrides, cost_overrides, imagery,
+                                  circuit, band_km, routes_wanted, routes_selected, sources, rule_overrides, cost_overrides, imagery,
                                   accept_partial, status, geo)
                 select %s, family, rev+1, id, name, %s, a_lon, a_lat, a_name, b_lon, b_lat, b_name, kv, circuit, band_km,
-                       routes_wanted, sources, rule_overrides, cost_overrides, imagery, accept_partial,
+                       routes_wanted, routes_selected, sources, rule_overrides, cost_overrides, imagery, accept_partial,
                        case when exists (select 1 from run_layers where run_id=%s) then 'review' else 'draft' end, geo
                 from runs where id=%s""", (nid, req.note, run_id, run_id))
     db.exec_("""insert into run_layers (run_id, layer_key, layer_version_id, carried, stale)
