@@ -977,27 +977,35 @@ def test_crossing_span_slack_is_removed_by_spotting():
     assert all(math.hypot(b[0] - a[0], b[1] - a[1]) >= 100 for a, b in zip(out[:-1], out[1:]))
 
 
-def test_grid_tower_in_a_setback_is_snapped_to_the_nearest_legal_spot():
+def test_grid_tower_in_a_setback_is_snapped_to_the_cheapest_legal_spot():
     """10 Oct 2026: the search may use a site whose legal cell lies within 25 m; the spotting moves such a
-    tower to the nearest legal point that keeps both spans and all turns legal."""
-    from beeline_engine.spotting import Checker, SpotParams, _snap_to_legal
+    tower to a legal point within the nudge radius that keeps both spans and all turns legal — since
+    14 Oct 2026 the cheapest by exact local cost: next to a village road crossing at 30°, a 14 m sideways
+    step would clear its 30 m setback but kinks the line (B1); a 24 m slide along the line keeps an A."""
+    from beeline_engine.config import TOWER_TYPES
+    from beeline_engine.spotting import Checker, SpotParams, _snap_to_legal, _deflection
     f = frame()
     spec = LineSpec(765, "dc")
     rules, costs = resolve_rules(spec), resolve_costs(spec)
     c = f.length_m / 2
-    house = frame_geom(f, box(c - 10, 100, c + 10, 120))                  # a building north of the line
-    comp = compile_rules(f, {"buildings": gdf([house], "building")}, rules, costs, 765, 33.5, 150, 400)
-    sp = SpotParams(design_span_m=400, span_max_m=400, min_span_m=100, max_dev_deg=60, type_bands={},
-                    section_km=5, parallel_angle_deg=30, tower_cost_rs={}, ground_clearance_m=18.15,
-                    lowest_attachment_m=32.6, sag_at_design_m=14.278, go_radius_m=150, nudge_radius_m=30)
+    k = math.cos(math.radians(30)), math.sin(math.radians(30))
+    road = frame_geom(f, LineString([(c - 1500 * k[0], -1500 * k[1]), (c + 1500 * k[0], 1500 * k[1])]))
+    comp = compile_rules(f, {"village_roads": gdf([road], "village_road")}, rules, costs, 765, 33.5, 150, 400)
+    prices = {"A": 2.0e7, "B1": 2.6e7, "C1": 3.0e7, "D45": 3.6e7, "D60": 4.0e7}
+    sp = SpotParams(design_span_m=400, span_max_m=400, min_span_m=100, max_dev_deg=60,
+                    type_bands={"A": 2, "B1": 15, "C1": 30, "D45": 45, "D60": 60},
+                    section_km=5, parallel_angle_deg=30, tower_cost_rs={t: prices.get(t, 4.0e7) for t in TOWER_TYPES},
+                    ground_clearance_m=18.15, lowest_attachment_m=32.6, sag_at_design_m=14.278, go_radius_m=150,
+                    nudge_radius_m=30)
     chk = Checker(comp, sp)
-    bad = (c, 100 - 101.5 + 15)                                            # 15 m inside the 101.5 m tower setback
+    bad = (c - 36.0, 0.0)                                                  # 18 m from the road: inside its 30 m setback
     assert not chk.tower_ok(*bad, True)
-    pts = [(c - 700, -20.0), (c - 350, -10.0), bad, (c + 350, -10.0), (c + 700, -20.0)]
+    pts = [(c - 1086, 0.0), (c - 736, 0.0), (c - 386, 0.0), bad, (c + 314, 0.0), (c + 664, 0.0), (c + 1014, 0.0)]
     out = _snap_to_legal(chk, pts, sp)
-    assert out[2] != bad and chk.tower_ok(*out[2], True)
-    assert math.hypot(out[2][0] - bad[0], out[2][1] - bad[1]) <= 30 + 1e-6
-    assert out[0] == pts[0] and out[4] == pts[4]
+    assert out[3] != bad and chk.tower_ok(*out[3], True)
+    assert math.hypot(out[3][0] - bad[0], out[3][1] - bad[1]) <= 35 + 1e-6
+    assert _deflection(out[2], out[3], out[4])[0] <= 2.0 + 1e-6        # still a suspension tower: it slid along the line
+    assert out[0] == pts[0] and out[6] == pts[6]
 
 
 def test_forest_cap_prices_forest_up_until_the_route_stays_under_it():

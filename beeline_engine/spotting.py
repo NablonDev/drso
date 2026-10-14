@@ -56,6 +56,7 @@ class SpotParams:
     max_dev_adjacent_power_deg: dict[str, float] = field(default_factory=dict)
     river_max_span_m: float = 0.0
     nudge_radius_m: float = 30.0
+    cost_polish: bool = True               # final single-tower cost descent (14 Oct 2026)
     raster_prefilter: bool = True         # skip the vector tower rules in clearly free cells (11 Oct 2026)
     gantry_min_span_m: float = 0.0        # gantry to first / last tower, at least (Vivek, 13 Oct 2026)
     refine_crossings: bool = True         # fine local re-optimisation round power-line crossings (14 Oct 2026)
@@ -644,6 +645,10 @@ def build_route(chk: Checker, pts: list[tuple[float, float]], angle_set: set[int
         pts = _split_hilly(chk, pts, sp)
         pts, added = _respot_for_clearance(chk, pts, sp)
     pts = _crossing_turn_split(chk, pts, sp)
+    polish = None
+    if sp.cost_polish:
+        pts, saved, moves = _cost_polish(chk, pts, sp)
+        polish = {"moves": moves, "saved_cr": round(saved / 1e7, 3)}
     towers: list[Tower] = []
     n = len(pts)
     for i, (x, y) in enumerate(pts):
@@ -752,6 +757,8 @@ def build_route(chk: Checker, pts: list[tuple[float, float]], angle_set: set[int
     if sp.tsd:
         _tsd_checks(towers, spans, sp)
     cost, stats = route_cost(comp, towers, spans, sp)
+    if polish is not None:
+        stats["cost_polish"] = polish
     return SpottedRoute(towers, spans, cost, stats, "pulled" if angle_set is None else "grid")
 
 
@@ -865,7 +872,8 @@ def _crossing_turn_split(chk: Checker, pts, sp: SpotParams, radius_m: float = 20
         cap = _dev_cap(chk, sp, pts[i - 1], pts[i], pts[i + 1])
         if cap >= sp.max_dev_deg or _deflection(pts[i - 1], pts[i], pts[i + 1])[0] <= cap + 1e-6:
             continue
-        done = False
+        # one objective (14 Oct 2026): the cheapest legal neighbour move, by exact local cost
+        cands = []
         for r in rings:
             for j in (i - 1, i + 1):
                 if j <= 0 or j >= n - 1:
@@ -875,16 +883,113 @@ def _crossing_turn_split(chk: Checker, pts, sp: SpotParams, radius_m: float = 20
                     trial = list(pts); trial[j] = cand
                     if _deflection(trial[i - 1], trial[i], trial[i + 1])[0] > cap + 1e-6:
                         continue
-                    if _legal_here(chk, pts, j, sp, cand):
-                        log.info("crossing turn split: tower %d moved %.0f m so tower %d turns <= %.0f deg", j, r, i, cap)
-                        pts = trial
-                        done = True
-                        break
-                if done:
-                    break
-            if done:
+                    cands.append((_local_cost(chk, sp, trial, j, r=3), j, r, cand, trial))
+        for cost, j, r, cand, trial in sorted(cands, key=lambda z: z[0]):
+            if _legal_here(chk, pts, j, sp, cand):
+                log.info("crossing turn split: tower %d moved %.0f m so tower %d turns <= %.0f deg", j, r, i, cap)
+                pts = trial
                 break
     return pts
+
+
+# ---- one objective for the repairs (Vivek, 14 Oct 2026) ---------------------------------------------
+# Every repair picks the cheapest legal candidate by the exact local cost (tower types from the deflections
+# that result, crossing / hilly minimum types, spans, RoW and the search surcharges), and a final polish
+# moves single towers wherever that lowers the cost; before, repairs took the nearest legal spot.
+
+def _type_at(chk: Checker, sp: SpotParams, pts, k: int) -> str | None:
+    n = len(pts)
+    if k <= 0 or k >= n - 1:
+        return None
+    if k == 1 or k == n - 2:
+        return "D60"
+    dfl, _ = _deflection(pts[k - 1], pts[k], pts[k + 1])
+    t = tower_type_for(dfl, sp.type_bands) or "D60"
+    for a, b in ((pts[k - 1], pts[k]), (pts[k], pts[k + 1])):
+        for it in chk.span_crossings(a, b)[1]:
+            if it.get("min_type"):
+                t = max_type(t, it["min_type"])
+        if sp.hilly_design_span_m and chk.is_hilly(a, b):
+            t = max_type(t, "B1")
+    return t
+
+
+def _local_cost(chk: Checker, sp: SpotParams, pts, i: int, r: int = 2) -> float:
+    """Exact cost of towers i-r+1 .. i+r-1 and the spans from i-r to i+r (types from the deflections)."""
+    a, b = max(0, i - r), min(len(pts) - 1, i + r)
+    types = [_type_at(chk, sp, pts, k) for k in range(a + 1, b)]
+    if any(t is None for t in types):
+        return float("inf")
+    return _chain_cost(chk.c, sp, pts[a:b + 1], types)
+
+
+def _clearance_kept(chk: Checker, sp: SpotParams, old, new, i: int) -> bool:
+    """Moving tower i must not make either of its spans clear the ground worse than before (below the
+    required clearance) — the extensions that would buy it back are not in the local cost."""
+    if chk.dem is None or not getattr(chk.dem, "ok", False):
+        return True
+    for a, b in ((i - 1, i), (i, i + 1)):
+        c1, _ = _span_clearance(chk, new[a], new[b], sp)
+        if c1 is None or c1 >= sp.ground_clearance_m:
+            continue
+        c0, _ = _span_clearance(chk, old[a], old[b], sp)
+        if c0 is None or c1 < c0 - 0.05:
+            return False
+    return True
+
+
+def _is_crossing_tower(chk: Checker, pts, i: int) -> bool:
+    """Tower i ends a span over a power line with a crossing-tower window (placed by the refinement)."""
+    for a, b in ((i - 1, i), (i, i + 1)):
+        if 0 <= a and b < len(pts) and any(it.get("side_window_m") for it in chk.span_crossings(pts[a], pts[b])[1]):
+            return True
+    return False
+
+
+def _cost_polish(chk: Checker, pts, sp: SpotParams, passes: int = 3, min_gain_rs: float = 1e5):
+    """Final pass: each tower (not a gantry, dead end or power-line crossing tower) tries spots along the
+    line (±10..50 m), across it (±5..20 m) and both; the cheapest that passes every exact check and keeps
+    the ground clearance replaces it when it saves at least min_gain_rs. Repeats until nothing improves.
+    Returns (points, ₹ saved, moves)."""
+    pts = list(pts)
+    n = len(pts)
+    saved, moves = 0.0, 0
+    along = (10, 20, 35, 50)
+    across = (5, 10, 20)
+    for _ in range(passes):
+        gain_pass = 0.0
+        for i in range(2, n - 2):
+            if _is_crossing_tower(chk, pts, i):
+                continue
+            hx, hy = pts[i + 1][0] - pts[i - 1][0], pts[i + 1][1] - pts[i - 1][1]
+            hn = math.hypot(hx, hy) or 1.0
+            ux, uy = hx / hn, hy / hn
+            vx, vy = -uy, ux
+            offs = [(s * a, 0.0) for a in along for s in (1, -1)] + [(0.0, s * c) for c in across for s in (1, -1)] + \
+                   [(s * a, t * c) for a in (10, 20) for c in (5, 10) for s in (1, -1) for t in (1, -1)]
+            base = _local_cost(chk, sp, pts, i)
+            cands = []
+            for da, dc in offs:
+                c = (pts[i][0] + ux * da + vx * dc, pts[i][1] + uy * da + vy * dc)
+                trial = list(pts); trial[i] = c
+                if min(math.hypot(c[0] - pts[i - 1][0], c[1] - pts[i - 1][1]),
+                       math.hypot(pts[i + 1][0] - c[0], pts[i + 1][1] - c[1])) < sp.min_span_m:
+                    continue
+                cost = _local_cost(chk, sp, trial, i)
+                if cost < base - min_gain_rs:
+                    cands.append((cost, c, trial))
+            for cost, c, trial in sorted(cands, key=lambda z: z[0]):
+                if _legal_here(chk, pts, i, sp, c) and _clearance_kept(chk, sp, pts, trial, i):
+                    gain_pass += base - cost
+                    moves += 1
+                    pts = trial
+                    break
+        saved += gain_pass
+        if gain_pass < min_gain_rs:
+            break
+    if moves:
+        log.info("cost polish: %d moves, ₹%.2f Cr saved (search prices)", moves, saved / 1e7)
+    return pts, saved, moves
 
 def _snap_to_legal(chk: Checker, pts, sp: SpotParams):
     """The search accepts a lattice site when a legal cell lies within nudge_radius_m of it (10 Oct
@@ -902,6 +1007,23 @@ def _snap_to_legal(chk: Checker, pts, sp: SpotParams):
         hx, hy = next_[0] - prev_[0], next_[1] - prev_[1]
         hn = math.hypot(hx, hy) or 1.0
         found = None
+        # one objective (14 Oct 2026): every legal spot in reach, the cheapest by exact local cost (a slide
+        # along the line that keeps a suspension tower beats a sideways step that makes it a B1)
+        best = None
+        for rad in range(5, int(sp.nudge_radius_m) + 6, 5):
+            for k in range(24):
+                a = 2 * math.pi * k / 24
+                c = (x + rad * math.cos(a), y + rad * math.sin(a))
+                if not chk.tower_ok(c[0], c[1], angle_tower=True):
+                    continue
+                if _legal_here(chk, pts, i, sp, c):
+                    trial = list(pts); trial[i] = c
+                    cost = _local_cost(chk, sp, trial, i)
+                    if best is None or cost < best[0]:
+                        best = (cost, c)
+        if best is not None:
+            pts[i] = best[1]
+            continue
         for rad in range(5, int(sp.nudge_radius_m) + 6, 5):
             angles = sorted((2 * math.pi * k / 24 for k in range(24)),
                             key=lambda a: abs(math.cos(a) * hx / hn + math.sin(a) * hy / hn))
@@ -909,9 +1031,6 @@ def _snap_to_legal(chk: Checker, pts, sp: SpotParams):
                 c = (x + rad * math.cos(a), y + rad * math.sin(a))
                 if not chk.tower_ok(c[0], c[1], angle_tower=True):
                     continue
-                if _legal_here(chk, pts, i, sp, c):
-                    found = c
-                    break
                 # a neighbouring span at the cap: let a straight neighbour slide to make room
                 trial = list(pts); trial[i] = c
                 for nb, far in ((i - 1, i - 2), (i + 1, i + 2)):

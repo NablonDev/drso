@@ -489,6 +489,8 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
         if cvs is not cv:
             # spotted on the forest-surcharged compile (string pulling is cost-aware); costed at true prices
             cost2, stats2 = route_cost(cv, sr.towers, sr.spans, sp)
+            if "cost_polish" in sr.stats:
+                stats2["cost_polish"] = sr.stats["cost_polish"]
             sr = SpottedRoute(sr.towers, sr.spans, cost2, stats2, sr.method)
         spot_s = time.time() - t
         forest_ev = None
@@ -525,6 +527,8 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
                 # straighten back through the forest), then re-cost the towers at the true prices
                 sr2 = spot(cvp, pts2, sp, dem=dem)
                 cost2, stats2 = route_cost(cv, sr2.towers, sr2.spans, sp)
+                if "cost_polish" in sr2.stats:
+                    stats2["cost_polish"] = sr2.stats["cost_polish"]
                 sr2 = SpottedRoute(sr2.towers, sr2.spans, cost2, stats2, sr2.method)
                 rec.update(spotted=True, spot_s=round(time.time() - t3, 1), ha=sr2.stats.get("forest_ha"))
                 if sr2.stats.get("forest_ha", 0) < best[0].stats.get("forest_ha", 0):
