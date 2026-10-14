@@ -890,6 +890,12 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
                 vec(tower_geoms, r.id, r.layer, ["power_tower"], td)
                 add(_within(R.dist(r.layer, ["power_line"]), cs), tower_forbidden, r.id)
                 vec(tower_geoms, r.id, r.layer, ["power_line"], cs)
+                # our conductor keeps the same distance from their towers (Vivek, 14 Oct 2026: a falling existing
+                # tower must not reach our wire either)
+                ct = float(p.get("conductor_tower_setback_m", 0) or 0)
+                if ct > 0:
+                    add(_within(R.dist(r.layer, ["power_tower"]), ct), conductor_forbidden, r.id)
+                    vec(cond_geoms, r.id, r.layer, ["power_tower"], ct)
                 # the new conductor may cross the existing wire anywhere except next to an existing
                 # tower: crossing_tower_clear_pct of that span (fallback crossing_tower_clear_m)
                 cl = float(p.get("crossing_tower_clear_m", 0))
