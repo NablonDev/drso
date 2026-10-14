@@ -206,6 +206,23 @@ class Checker:
             log.warning("prefilter disagreement at (%.0f, %.0f): raster clear, vector hit", x, y)
         return ok
 
+    def _rule_intersects(self, rule_id: str, p, q):
+        """True / False when the rule's vector features do / do not meet the span; None without features."""
+        trees = self.__dict__.setdefault("_rule_trees", {})
+        if rule_id not in trees:
+            from shapely import STRtree
+            geoms = []
+            for r in list(self.tower_rules) + list(self.cond_rules):
+                if r.rule_id == rule_id:
+                    geoms.extend(list(r.geoms))
+            trees[rule_id] = (STRtree(geoms), geoms) if geoms else None
+        t = trees[rule_id]
+        if t is None:
+            return None
+        tree, geoms = t
+        seg = LineString([p, q])
+        return any(geoms[j].intersects(seg) for j in tree.query(seg))
+
     def conductor_ok(self, p, q) -> bool:
         line = LineString([p, q])
         # go zone: crossings of >= 220 kV lines near their towers stay banned (clipped to the zone)
@@ -275,7 +292,9 @@ class Checker:
             if cr.rule_id in ("power_line", "power_line_lt"):
                 ex = _wire_sides(self, cr.rule_id, p, q)          # exact, from the wire geometry
                 if ex is not None:
-                    sa, sb, along_a, along_b, null_exact = ex
+                    sa, sb, along_a, along_b, null_exact, ac_min = ex
+                    if ac_min is not None:
+                        acute = min(acute, ac_min)                # the tightest angle over every wire crossed
             item = {"rule": cr.rule_id, "name": cr.name, "angle_deg": round(acute, 1), "span_m": round(L, 1),
                     "min_type": cr.min_type, "cost_rs": cr.cost_rs, "major": False,
                     "side_a_m": round(sa, 1), "side_b_m": round(sb, 1),
@@ -341,9 +360,14 @@ class Checker:
         if L > self.sp.design_span_m + 1e-3 and not self.is_hilly(p, q):
             limit = self.sp.design_span_m
         if L > limit + 1e-3:
-            if L > self.sp.river_max_span_m + 1e-3 or not any(c.get("long_span") for c in out):
+            if L > self.sp.river_max_span_m + 1e-3 or not any(c.get("long_span") and c.get("geom_crossed") is not False for c in out):
                 ok = False
-        crossed_rules = {c.get("rule") for c in out}
+        # a crossing is a crossing only where the feature's geometry meets the span (audit, 14 Oct 2026: the
+        # raster band of 1.5 cells round a canal / pipeline made a near-miss a "crossing", which exempted a
+        # parallel run and excused a 498 m span); rules without vector features keep the raster's word
+        for c in out:
+            c["geom_crossed"] = self._rule_intersects(c["rule"], p, q)
+        crossed_rules = {c.get("rule") for c in out if c.get("geom_crossed") is not False}
         for pr in self.c.parallels:
             if getattr(pr, "crossing_exempt", False) and pr.rule_id in crossed_rules:
                 continue                    # the crossing span itself is not a parallel run (canal)
@@ -525,6 +549,8 @@ def _leg_model(chk: Checker, p, q, sp: SpotParams, design: float, hilly_leg: boo
             line = (1 - t) * (z[i] + sp.lowest_attachment_m) + t * (z[j] + sp.lowest_attachment_m) - 4 * sag * t * (1 - t)
             need = max(0.0, sp.ground_clearance_m - float(np.min(line - z[i:j + 1])))
             ext = nearest_step(need, steps_a) if need > 0 else 0.0
+            if ext is None and steps_a and need <= rounding_cover(list(steps_a) + [EXTENSION_M]) + 1e-9:
+                ext = max(steps_a)            # the largest A step serves up to halfway to the D step (as the search)
             if ext is None:
                 return None
             c += 2 * tA * sp.extension_pct / 100.0 * ext / 18.0
@@ -874,12 +900,14 @@ def build_route(chk: Checker, pts: list[tuple[float, float]], angle_set: set[int
     for i in range(n - 1):
         L = math.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1])
         gantry_span = i == 0 or i == n - 2
-        cr = [] if gantry_span else chk.span_crossings(pts[i], pts[i + 1])[1]
+        okv, cr = (True, []) if gantry_span else chk.span_crossings(pts[i], pts[i + 1])
         s = Span(i, i + 1, L, cr, hilly=(not gantry_span) and chk.is_hilly(pts[i], pts[i + 1]))
         spans.append(s)
         for c in cr:
             if c.get("violation"):
                 towers[i].violations.append(f"crossing_{c['violation']}:{c['rule']}")
+        if not okv and not any(c.get("violation") for c in cr):
+            towers[i].violations.append("span_rule")     # over the span limit or a parallel run (audit, 14 Oct 2026)
         if not chk.conductor_ok(pts[i], pts[i + 1]):
             towers[i if i > 0 else 1].violations.append("conductor_buffer")
         if gantry_span and L < sp.gantry_min_span_m - 1e-6:
@@ -978,11 +1006,13 @@ def _legal_here(chk: Checker, pts, i, sp: SpotParams, cand) -> bool:
             return False
         if not chk.conductor_ok(a, b) or not chk.span_crossings(a, b)[0]:
             return False
-    if _deflection(prev_, cand, next_)[0] > sp.max_dev_deg:
+    de = float(sp.tsd.get("dead_end_max_dev_deg", 180) or 180) if sp.tsd else 180.0     # audit, 14 Oct 2026
+    cap = lambda k: min(sp.max_dev_deg, de) if k in (1, n - 2) else sp.max_dev_deg
+    if _deflection(prev_, cand, next_)[0] > cap(i):
         return False
-    if i >= 2 and _deflection(pts[i - 2], prev_, cand)[0] > sp.max_dev_deg:
+    if i >= 2 and _deflection(pts[i - 2], prev_, cand)[0] > cap(i - 1):
         return False
-    if i + 2 < n and _deflection(cand, next_, pts[i + 2])[0] > sp.max_dev_deg:
+    if i + 2 < n and _deflection(cand, next_, pts[i + 2])[0] > cap(i + 1):
         return False
     if not _crossing_dev_ok(chk, pts, i, cand):
         return False
@@ -1090,7 +1120,7 @@ def _crossing_turn_split(chk: Checker, pts, sp: SpotParams, radius_m: float = 20
                         continue
                     cands.append((_local_cost(chk, sp, trial, j, r=3), j, r, cand, trial))
         for cost, j, r, cand, trial in sorted(cands, key=lambda z: z[0]):
-            if _legal_here(chk, pts, j, sp, cand):
+            if _legal_here(chk, pts, j, sp, cand) and _clearance_kept(chk, sp, pts, trial, j):
                 log.info("crossing turn split: tower %d moved %.0f m so tower %d turns <= %.0f deg", j, r, i, cap)
                 pts = trial
                 break
@@ -1784,19 +1814,26 @@ def _wire_sides(chk, rule_id, p, q):
     hits.sort(key=lambda h: h[0])
     (ta, la), (tb, lb) = hits[0], hits[-1]
     # exact distance of each crossing from the null point of the crossed span, as a share of that span
-    # (0 = mid-span, 0.5 = at an existing tower); the largest over the wires this span crosses (14 Oct 2026)
+    # (0 = mid-span, 0.5 = at an existing tower); the largest over the wires this span crosses (14 Oct 2026);
+    # and the crossing angle at EACH wire (audit, 14 Oct 2026: a span over two 66 kV ways was measured once)
     pos_of = {id(ln): pos for _, ln, pos in chk._wire_list}
-    null = None
+    head = math.degrees(math.atan2(q[1] - p[1], q[0] - p[0]))
+    null, acute_min = None, None
     for t_, ln in hits:
         pos = pos_of.get(id(ln)) or []
         sx = ln.project(seg.interpolate(t_))
+        w0, w1 = ln.interpolate(max(0.0, sx - 5.0)), ln.interpolate(min(ln.length, sx + 5.0))
+        wa = math.degrees(math.atan2(w1.y - w0.y, w1.x - w0.x))
+        d_ = (head - wa) % 180.0
+        ac = min(d_, 180.0 - d_)
+        acute_min = ac if acute_min is None else min(acute_min, ac)
         lo = max((v for v in pos if v <= sx), default=None)
         hi = min((v for v in pos if v >= sx), default=None)
         if lo is None or hi is None or hi - lo < 1.0:
             continue
         off = abs(sx - (lo + hi) / 2.0) / (hi - lo)
         null = off if null is None else max(null, off)
-    return la.distance(_Pt(p)), lb.distance(_Pt(q)), ta, seg.length - tb, null
+    return la.distance(_Pt(p)), lb.distance(_Pt(q)), ta, seg.length - tb, null, acute_min
 
 def _wires(chk: Checker):
     """[(rule_id, wire LineString, sorted tower positions along it)] of the existing power lines (frame)."""
@@ -1839,9 +1876,23 @@ def _refine_crossings(chk: Checker, pts, sp: SpotParams):
     from shapely.geometry import LineString as _LS, Point as _Pt
     from .config import tower_type_for
     pts = list(pts)
-    crs = {cr.rule_id: cr for cr in chk.c.crossings if getattr(cr, "side_m", None) is not None}
+    crs_all: dict = {}
+    for cr_ in chk.c.crossings:
+        if getattr(cr_, "side_m", None) is not None:
+            crs_all.setdefault(cr_.rule_id, []).append(cr_)
+    crs = {rid: lst[0] for rid, lst in crs_all.items()}
     if not crs:
         return pts
+    fr_ = chk.c.frame
+
+    def raster_at(rid, X):
+        """The rule's raster whose angle field carries this wire (the parts by voltage share a rule id)."""
+        col = int(np.clip((X.x - fr_.x0) / fr_.res_m, 0, fr_.width - 1))
+        row = int(np.clip((fr_.y_top - X.y) / fr_.res_m, 0, fr_.height - 1))
+        for cr_ in crs_all[rid]:
+            if np.isfinite(cr_.angle[row, col]):
+                return cr_
+        return crs_all[rid][0]
     wires = _wires(chk)
     i = 3
     while i < len(pts) - 4:
@@ -1852,10 +1903,10 @@ def _refine_crossings(chk: Checker, pts, sp: SpotParams):
             i += 1
             continue
         rid, ln, pos = hit[0]
-        cr = crs[rid]
-        lo, hi = cr.side_m
         X0 = ln.intersection(seg)
         X0 = X0 if X0.geom_type == "Point" else X0.centroid
+        cr = raster_at(rid, X0)                      # audit, 14 Oct 2026: was the last part by rule id
+        lo, hi = cr.side_m
         s0 = ln.project(X0)
         a_ = max([v for v in pos if v <= s0], default=None)
         b_ = min([v for v in pos if v >= s0], default=None)
@@ -2350,7 +2401,10 @@ def _tsd_checks(towers: list[Tower], spans: list[Span], sp: SpotParams) -> None:
         dead_end = "dead_end" in t.reasons
         if dead_end:
             if t.deflection_deg > float(T.get("dead_end_max_dev_deg", 180)) + 1e-6:
-                t.warnings.append(f"dead_end_deviation:{t.deflection_deg:.0f}deg")
+                t.violations.append(f"dead_end_deviation:{t.deflection_deg:.0f}deg")     # Vivek's 15° rule (audit, 14 Oct 2026)
+            lim = span_sum_limit(T["span_sum"], t.type, t.deflection_deg)
+            if lim is not None and max(L1, L2) > frac * lim + 1e-3:
+                t.warnings.append(f"span_sum_single:{max(L1, L2):.0f}/{frac * lim:.0f}m")
             continue
         nt = fit_type_for_spans(T["span_sum"], t.type, t.deflection_deg, L1, L2, frac)
         if nt is None:

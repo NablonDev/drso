@@ -903,8 +903,8 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
             tb = cb if p.get("treatment") == "Last resort" else 0.0      # Rule_Table: the buffer holds towers too
             for lyr, cls in ((r.layer, r.classes), ("lulc", r.also_lulc_classes),
                              *((extra, None) for extra in (r.also_layers or []))):
-                if lyr == "lulc" and cls is None and r.layer != "lulc":
-                    continue
+                if lyr == "lulc" and cls is None:
+                    continue                 # (audit 14 Oct 2026: with r.layer == "lulc" this took every LULC polygon)
                 dist = R.dist(lyr, cls)
                 add(_within(dist, cb), conductor_forbidden, r.id)
                 add(_within(dist, tb), tower_forbidden, r.id)
@@ -1040,7 +1040,9 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
             pen_pct = float(p.get("relax_penalty_pct", 0) or 0) / 100.0
             srp = float(p.get("side_relax_pct_per_25m", 0) or 0) / 100.0
             for x in built:
-                x.pref_window = pref_win
+                # the 90° preference (and its penalty) only where the angle rule applies: for power lines the
+                # part below angle_min_kv has no window and takes no preference (audit, 14 Oct 2026)
+                x.pref_window = None if (r.id in ("power_line", "power_line_lt") and x.window is None) else pref_win
                 x.side_m = side_m
                 x.band_half_m = frame.res_m * 1.5
                 x.max_dev_deg = float(mdev) if mdev is not None else None
@@ -1054,7 +1056,7 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
                     x.max_span_m = None if side_m is not None else x.max_span_m   # the side window bounds the span
                 if x.max_span_m is not None and x.max_span_m > design_span_m + 1e-6:
                     x.long_span = True                                            # spans up to 600 m over a crossing
-                if pen_pct > 0 and tower_cost_rs:
+                if pen_pct > 0 and tower_cost_rs and x.pref_window is not None:
                     x.penalty_rs = pen_pct * float(tower_cost_rs.get(x.min_type) or tower_cost_rs.get("D45") or 0.0)
                 if side_m is not None and srp > 0 and tower_cost_rs:
                     x.side_relax_rs_per_m = srp * float(tower_cost_rs.get(x.min_type) or tower_cost_rs.get("D45") or 0.0) / 25.0

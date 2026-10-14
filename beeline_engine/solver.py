@@ -322,6 +322,7 @@ def _edge_geom(compiled: Compiled, grid: Grid, p: SolverParams, rasters: "_Raste
                 (torch.hypot(xm - f.length_m, ym) <= p.approach_length_m)
         invalid |= in_ap & (length > p.approach_span_m + 1e-3)
     E = (length * compiled.conductor_rs_per_m).expand(C, R, K)
+    U = torch.zeros(E.shape, device=dev)            # ₹ over an A forced on EACH end tower (hilly span, crossing)
     if rasters.near is not None:
         # stay close to existing lines: search-only discount by the share of the span near one
         fac = 1.0 - p.proximity_discount * rasters.near[row, col].mean(dim=-1)
@@ -352,8 +353,9 @@ def _edge_geom(compiled: Compiled, grid: Grid, p: SolverParams, rasters: "_Raste
             invalid |= hil_any & (length > p.hilly_span_max_m + 1e-3)
         if p.plain_span_max_m is not None:
             invalid |= ~hil_any & (length > p.plain_span_max_m + 1e-3)
-        # hilly ground: every tower is a tension tower (Vivek, 7 Oct 2026); one tower's extra per span
-        E = E + hil_any.float() * p.hilly_tower_extra_rs
+        # hilly ground: every tower is a tension tower (Vivek, 7 Oct 2026) — charged at the tower as a forced
+        # type, once (audit, 14 Oct 2026: it was added per span on top of the deflection type at bent towers)
+        U = torch.maximum(U, hil_any.float() * p.hilly_tower_extra_rs)
     if rasters.z is not None and require_river and p.long_ext_steps:
         # long crossing span (TSD): both crossing towers raised to clear the ground at this span's
         # sag; the extension step sets the wind span the towers allow, so the span plus a minimum
@@ -378,7 +380,6 @@ def _edge_geom(compiled: Compiled, grid: Grid, p: SolverParams, rasters: "_Raste
         E = E + 2 * ext_used * p.long_ext_cost_rs_per_m
     crossed_river = torch.zeros_like(invalid)
     X = torch.zeros_like(invalid)                   # crosses a feature with a deviation cap at its towers
-    U = torch.zeros(E.shape, device=dev)            # ₹ over an A that the crossing forces on EACH end tower
 
     tA = p.tower_cost_rs["A"]
     crossed_by: dict = {}

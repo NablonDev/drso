@@ -358,7 +358,7 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
     n_var = len(variants)
     workers = _route_workers(eng, n_var)
     timings["route_workers"] = workers
-    relaxed_lock = threading.Lock()
+    relaxed_lock = threading.RLock()      # re-entrant: compiled_variant() calls itself for forest-priced copies (audit, 14 Oct 2026)
     relaxed_box: dict = {}
     frac_by: dict[int, float] = {}
     stage_by: dict[int, str] = {}
@@ -521,7 +521,7 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
                 def search_at(mult):
                     cvp_ = compiled_variant(bool(var.get("relaxed")), precedent=prec_used, forest_mult=mult)
                     t2_ = time.time()
-                    out_ = solve(cvp_, p, cancel_check=check_cancel, progress=sub)
+                    out_ = solve(_srch(cvp_, var), p, cancel_check=check_cancel, progress=sub)     # hill surcharge kept (audit, 14 Oct 2026)
                     rec_ = {"mult": round(mult, 3), "solve_s": round(time.time() - t2_, 1), "feasible": out_.feasible, "spotted": False}
                     if out_.feasible:
                         rec_["grid_ha"] = round(_line_forest_ha(cv, _outcome_line(out_)), 2)
@@ -550,7 +550,7 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
                     vprog(vi, 0.5, f"Route {var['id']}: forest {best[0].stats['forest_ha']:.0f} ha over the {forest_cap:g} ha cap — forest priced ×{hi_m:.2f}")
                     pts2 = [(float(x), float(y)) for x, y in (out2.grid.site_xy(c, r) for c, r in out2.sites)]
                     t3 = time.time()
-                    sr2 = spot(cvp, pts2, sp, dem=dem)
+                    sr2 = spot(_srch(cvp, var), pts2, sp, dem=dem)
                     cost2, stats2 = route_cost(cv, sr2.towers, sr2.spans, sp)
                     if "cost_polish" in sr2.stats:
                         stats2["cost_polish"] = sr2.stats["cost_polish"]
@@ -570,7 +570,7 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
                   vprog(vi, 0.5, f"Route {var['id']}: forest {best[0].stats['forest_ha']:.0f} ha over the {forest_cap:g} ha cap — forest priced ×{mult:g}")
                   cvp = compiled_variant(bool(var.get("relaxed")), precedent=prec_used, forest_mult=mult)
                   t2 = time.time()
-                  out2 = solve(cvp, p, cancel_check=check_cancel, progress=sub)
+                  out2 = solve(_srch(cvp, var), p, cancel_check=check_cancel, progress=sub)
                   rec = {"mult": mult, "solve_s": round(time.time() - t2, 1), "feasible": out2.feasible}
                   cap_passes.append(rec)
                   if not out2.feasible:
@@ -584,7 +584,7 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
                   t3 = time.time()
                   # spot on the priced-up compile too (string pulling is cost-aware and would otherwise
                   # straighten back through the forest), then re-cost the towers at the true prices
-                  sr2 = spot(cvp, pts2, sp, dem=dem)
+                  sr2 = spot(_srch(cvp, var), pts2, sp, dem=dem)
                   cost2, stats2 = route_cost(cv, sr2.towers, sr2.spans, sp)
                   if "cost_polish" in sr2.stats:
                       stats2["cost_polish"] = sr2.stats["cost_polish"]
@@ -1185,6 +1185,8 @@ def _route_events(sr, frame, comp, findex, rules, sp, layer_names, inp, dem, blo
                     "crossing_side": "crossing span: a crossing tower is outside its distance window from the crossed wire",
                     "crossing_angle": "crossing span: outside the allowed crossing angle",
                     "crossing_null_point": "crossing span: crosses the existing line more than 20 % of its span from the null point",
+                    "span_rule": "span over the limit for its ground, or a parallel run too close to a feature",
+                    "dead_end_deviation": f"dead-end tower turns {v.split(':')[-1].replace('deg', '°')}; the rule allows 15°",
                     "gantry_span": f"gantry span of {v.split(':')[-1]}, under the {sp.gantry_min_span_m:g} m minimum",
                     "crossing_span": "crossing span: longer than the rule allows"}.get(
                 v.split(":")[0], v.replace("_", " "))
