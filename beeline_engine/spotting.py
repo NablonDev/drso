@@ -364,15 +364,16 @@ def _deflection(p0, p1, p2) -> tuple[float, str]:
     return abs(d), ("L" if d > 0 else "R" if d < 0 else "-")
 
 
-def _spot_leg(chk: Checker, p, q, sp: SpotParams):
+def _spot_leg(chk: Checker, p, q, sp: SpotParams, exact: bool = False):
     """Intermediate tower positions on a straight leg p->q, or None if no spotting works.
 
-    Vivek, 14 Oct 2026: no preference for even spacing. The towers stand wherever the exact checks allow,
-    at the positions that make the leg cheapest: suspension towers (price + site extras), the body
-    extensions each span's ground clearance needs, and the B1 upgrade on a hilly span. A 1-D dynamic
-    programme over 10 m positions along the leg; spans between the minimum and the design span. A span
-    the crossing checks reject is struck and the programme repeated. A single long span (rivers and
-    other 600 m crossings) is tried first, as before."""
+    exact=False (string pulling, repairs: a feasibility probe): even spacing, else uneven with the same
+    tower count — the old, fast behaviour. exact=True (the final re-spot of every straight run, merges,
+    the best straighten candidates): Vivek, 14 Oct 2026, no preference for even spacing — the towers stand
+    wherever the checks allow at the positions that make the leg cheapest (suspension towers, site extras,
+    the body extensions each span's clearance needs, the B1 upgrade on a hilly span): a 1-D programme over
+    10 m positions, spans between the minimum and the design span; a span the crossing checks reject is
+    struck and the programme repeated. A single long crossing span is tried first either way."""
     if not chk.conductor_ok(p, q):
         return None
     d = math.hypot(q[0] - p[0], q[1] - p[1])
@@ -384,20 +385,114 @@ def _spot_leg(chk: Checker, p, q, sp: SpotParams):
     if ok1 and d <= design + 1e-6:
         return []
     if ok1 and d <= sp.river_max_span_m and any(it.get("long_span") for it in items1):
-        return []                             # one long span over the crossing (as before)
-    return _leg_dp(chk, p, q, sp, design, hilly_leg)
+        return []                             # one long span over the crossing
+    if exact:
+        return _leg_dp(chk, p, q, sp, design, hilly_leg)
+    n0 = max(1, math.ceil(d / design - 1e-9), math.ceil(d / sp.span_max_m - 1e-9))
+    for n in range(n0, n0 + 5):
+        span = d / n
+        if span < sp.min_span_m and n > 1:
+            break
+        pts = [(p[0] + (q[0] - p[0]) * i / n, p[1] + (q[1] - p[1]) * i / n) for i in range(1, n)]
+        if _even_leg_ok(chk, p, q, pts, span, n, hilly_leg, sp):
+            return pts
+        if 1 < n <= min(n0 + 1, UNEVEN_MAX_SPANS):
+            un = _uneven_leg(chk, p, q, n, design, sp)
+            if un is not None:
+                return un
+    return None
 
 
-def _leg_dp(chk: Checker, p, q, sp: SpotParams, design: float, hilly_leg: bool, step: float = 10.0):
+def _even_leg_ok(chk: Checker, p, q, pts, span: float, n: int, hilly_leg: bool, sp: SpotParams) -> bool:
+    if not all(chk.tower_ok(x, y, angle_tower=False) for x, y in pts):
+        return False
+    seq = [p] + pts + [q]
+    if sp.approach_span_m is not None and span > sp.approach_span_m + 1e-3 and \
+            any(chk.in_approach(a, b) for a, b in zip(seq[:-1], seq[1:])):
+        return False      # approach section: 250 m spans
+    if hilly_leg and span > sp.design_span_m + 1e-3 and n > 1 and \
+            not all(chk.is_hilly(a, b) for a, b in zip(seq[:-1], seq[1:])):
+        return False      # a span longer than the plain value must itself be on hilly ground
+    return all(chk.span_crossings(a, b)[0] for a, b in zip(seq[:-1], seq[1:]))
+
+
+UNEVEN_MAX_SPANS = 8          # uneven spacing is tried on legs of up to this many spans
+
+
+def _uneven_leg(chk: Checker, p, q, n: int, design: float, sp: SpotParams, step: float = 10.0):
+    """n spans on the straight leg p->q with towers where they may stand, spans as even as possible.
+    Every span within ±15 % of the even span (and the span cap): two neighbouring spans then keep
+    the TSD rule one span ≤ 60 % of their sum. Minimises the squared deviation from even spacing;
+    a span the exact checks reject is struck and the search repeated (a few times at most)."""
     d = math.hypot(q[0] - p[0], q[1] - p[1])
-    lo, hi = sp.min_span_m, min(design, sp.span_max_m)
-    if d < 2 * lo - 1e-6 and d > hi + 1e-6:
+    ideal = d / n
+    lo, hi = max(sp.min_span_m, ideal * 0.85), min(design, ideal * 1.15)
+    if lo > hi:
         return None
     m = int(d // step)
-    pos = np.array([0.0] + [i * step for i in range(1, m + 1) if i * step < d - lo + 1e-6 and i * step >= lo - 1e-6] + [d])
-    n = len(pos)
+    xs = [i * step for i in range(1, m + 1) if i * step < d - lo + 1e-6]
+    pos = [0.0] + xs + [d]
     at = lambda t: (p[0] + (q[0] - p[0]) * t / d, p[1] + (q[1] - p[1]) * t / d)
-    # ground along the leg at the candidate positions (one DEM read); clearance per span from it
+    _ok: dict = {0: True, len(pos) - 1: True}
+
+    def ok_at(j):                         # tower_ok, evaluated on first use only
+        if j not in _ok:
+            _ok[j] = chk.tower_ok(*at(pos[j]), angle_tower=False)
+        return _ok[j]
+    bad: set = set()
+    for _ in range(6):
+        INF_ = float("inf")
+        best = [[INF_] * len(pos) for _ in range(n + 1)]
+        arg = [[-1] * len(pos) for _ in range(n + 1)]
+        best[0][0] = 0.0
+        for k in range(1, n + 1):
+            for j in range(1, len(pos)):
+                # tower k can only stand between k·lo and k·hi from p, and (n-k)·lo..(n-k)·hi from q
+                if pos[j] < k * lo - 1e-6 or pos[j] > k * hi + 1e-6 or \
+                        d - pos[j] < (n - k) * lo - 1e-6 or d - pos[j] > (n - k) * hi + 1e-6:
+                    continue
+                if (k < n and j == len(pos) - 1) or (k == n and j != len(pos) - 1) or not ok_at(j):
+                    continue
+                for i in range(j - 1, -1, -1):
+                    L = pos[j] - pos[i]
+                    if L > hi + 1e-6:
+                        break
+                    if L < lo - 1e-6 or best[k - 1][i] == INF_ or (i, j) in bad:
+                        continue
+                    c = best[k - 1][i] + (L - ideal) ** 2
+                    if c < best[k][j]:
+                        best[k][j], arg[k][j] = c, i
+        if best[n][len(pos) - 1] == INF_:
+            return None
+        idx, j = [], len(pos) - 1
+        for k in range(n, 0, -1):
+            idx.append(j)
+            j = arg[k][j]
+        idx.append(0)
+        idx = idx[::-1]
+        seq = [at(pos[i]) for i in idx]
+        seq[0], seq[-1] = p, q
+        failed = None
+        for a_i, b_i, a, b in zip(idx[:-1], idx[1:], seq[:-1], seq[1:]):
+            if not chk.span_crossings(a, b)[0]:
+                failed = (a_i, b_i)
+                break
+        if failed is None:
+            return seq[1:-1]
+        bad.add(failed)
+    return None
+
+
+
+
+def _leg_model(chk: Checker, p, q, sp: SpotParams, design: float, hilly_leg: bool, pos):
+    """Cost pieces of a straight leg p->q with candidate tower positions `pos` (m from p, 0 and d included):
+    tower_rs(j) = a suspension tower at pos[j] (price + site extras); span_rs(i, j) = the body extensions the
+    span's ground clearance needs on both towers (closest step; None = needs a taller type), the B1 upgrade
+    when the ground rises more than the hilly limit, and the plain-span rule on hilly legs."""
+    d = math.hypot(q[0] - p[0], q[1] - p[1])
+    pos = np.asarray(pos, float)
+    at = lambda t: (p[0] + (q[0] - p[0]) * t / d, p[1] + (q[1] - p[1]) * t / d)
     z = None
     if chk.dem is not None and getattr(chk.dem, "ok", False):
         lon, lat = chk.c.frame.frame_to_lonlat(p[0] + (q[0] - p[0]) * pos / d, p[1] + (q[1] - p[1]) * pos / d)
@@ -408,30 +503,22 @@ def _leg_dp(chk: Checker, p, q, sp: SpotParams, design: float, hilly_leg: bool, 
     tB = sp.tower_cost_rs.get("B1", tA)
     steps_a = _ext_steps(sp, "A")
     f = chk.c.frame
-    _tok: dict = {0: True, n - 1: True}
     _site: dict = {}
 
-    def tower_ok(j):
-        if j not in _tok:
-            x, y = at(pos[j])
-            _tok[j] = chk.tower_ok(x, y, angle_tower=False)
-        return _tok[j]
-
-    def site(j):
+    def tower_rs(j):
         if j not in _site:
             x, y = at(pos[j])
             px = int(np.clip((x - f.x0) / f.res_m, 0, f.width - 1))
             py = int(np.clip((f.y_top - y) / f.res_m, 0, f.height - 1))
-            _site[j] = _tower_site_rs(chk.c, "A", px, py)
+            _site[j] = tA + _tower_site_rs(chk.c, "A", px, py)
         return _site[j]
 
-    def span_cost(i, j):
-        """₹ of span i->j: extensions its clearance needs (both towers, closest step; None = needs a taller
-        type), the B1 upgrade when the ground rises more than the hilly limit, and the plain-span rule."""
+    def span_rs(i, j):
         L = pos[j] - pos[i]
         c = 0.0
         if z is not None:
-            if hilly_leg and L > sp.design_span_m + 1e-3 and not (sp.hilly_rise_m is not None and abs(z[j] - z[i]) > sp.hilly_rise_m):
+            hilly_span = sp.hilly_rise_m is not None and abs(z[j] - z[i]) > sp.hilly_rise_m
+            if hilly_leg and L > sp.design_span_m + 1e-3 and not hilly_span:
                 return None                   # a span longer than the plain value must itself be on hilly ground
             sag = sp.sag_at_design_m * (L / (sp.sag_ref_span_m or sp.design_span_m)) ** 2
             t = (pos[i:j + 1] - pos[i]) / L
@@ -441,13 +528,48 @@ def _leg_dp(chk: Checker, p, q, sp: SpotParams, design: float, hilly_leg: bool, 
             if ext is None:
                 return None
             c += 2 * tA * sp.extension_pct / 100.0 * ext / 18.0
-            if sp.hilly_rise_m is not None and abs(z[j] - z[i]) > sp.hilly_rise_m:
+            if hilly_span:
                 c += tB - tA
         elif hilly_leg and L > sp.design_span_m + 1e-3:
             return None
         if sp.approach_span_m is not None and L > sp.approach_span_m + 1e-3 and chk.in_approach(at(pos[i]), at(pos[j])):
             return None
         return c
+    return at, tower_rs, span_rs
+
+
+def _leg_objective(chk: Checker, sp: SpotParams, seq) -> float:
+    """The leg programme's own cost of a given straight tower sequence (first and last are the anchors)."""
+    p, q = seq[0], seq[-1]
+    pos = [math.hypot(x - p[0], y - p[1]) for x, y in seq]
+    hilly_leg = bool(sp.hilly_design_span_m) and chk.is_hilly(p, q)
+    design = sp.hilly_design_span_m if hilly_leg else sp.design_span_m
+    _, tower_rs, span_rs = _leg_model(chk, p, q, sp, design, hilly_leg, pos)
+    tot = 0.0
+    for j in range(1, len(pos)):
+        sc = span_rs(j - 1, j)
+        if sc is None:
+            return float("inf")
+        tot += sc + (tower_rs(j) if j < len(pos) - 1 else 0.0)
+    return tot
+
+
+def _leg_dp(chk: Checker, p, q, sp: SpotParams, design: float, hilly_leg: bool, step: float = 10.0):
+    d = math.hypot(q[0] - p[0], q[1] - p[1])
+    lo, hi = sp.min_span_m, min(design, sp.span_max_m)
+    if d > hi + 1e-6 and d < 2 * lo - 1e-6:
+        return None
+    m = int(d // step)
+    pos = np.array([0.0] + [i * step for i in range(1, m + 1) if i * step < d - lo + 1e-6 and i * step >= lo - 1e-6] + [d])
+    n = len(pos)
+    at, tower_rs, span_rs = _leg_model(chk, p, q, sp, design, hilly_leg, pos)
+    _tok: dict = {0: True, n - 1: True}
+
+    def tower_ok(j):
+        if j not in _tok:
+            x, y = at(pos[j])
+            _tok[j] = chk.tower_ok(x, y, angle_tower=False)
+        return _tok[j]
 
     bad: set = set()
     for _ in range(8):
@@ -458,14 +580,14 @@ def _leg_dp(chk: Checker, p, q, sp: SpotParams, design: float, hilly_leg: bool, 
         for j in range(1, n):
             if j < n - 1 and not tower_ok(j):
                 continue
-            tc = 0.0 if j == n - 1 else tA + site(j)
+            tc = 0.0 if j == n - 1 else tower_rs(j)
             for i in range(j - 1, -1, -1):
                 L = pos[j] - pos[i]
                 if L > hi + 1e-6:
                     break
                 if L < lo - 1e-6 or best[i] == INF_ or (i, j) in bad:
                     continue
-                sc = span_cost(i, j)
+                sc = span_rs(i, j)
                 if sc is None:
                     continue
                 c = best[i] + sc + tc
@@ -491,6 +613,35 @@ def _leg_dp(chk: Checker, p, q, sp: SpotParams, design: float, hilly_leg: bool, 
         bad.add(failed)
     return None
 
+
+def _respot_runs(chk: Checker, pts, sp: SpotParams, min_gain_rs: float = 1e5):
+    """Final placement (Vivek, 14 Oct 2026: no even spans): every straight run between anchors (vertices,
+    crossing towers, dead ends) is spotted again by the leg programme — towers wherever they may stand, at
+    the cheapest positions — and kept when the programme's own cost drops and every check passes."""
+    pts = list(pts)
+    moves, saved = 0, 0.0
+    n = len(pts)
+    anchors = [k for k in range(1, n - 1) if k in (1, n - 2) or _is_vertex(pts, k) or _is_crossing_tower(chk, pts, k)]
+    out = []
+    for a, b in zip(anchors[:-1], anchors[1:]):
+        if b - a < 2:
+            continue
+        cur = _leg_objective(chk, sp, pts[a:b + 1])
+        new = _spot_leg(chk, pts[a], pts[b], sp, exact=True)
+        if new is None:
+            continue
+        cost = _leg_objective(chk, sp, [pts[a]] + list(new) + [pts[b]])
+        if cost < cur - min_gain_rs:
+            out.append((a, b, list(new), cur - cost))
+    for a, b, new, gain in reversed(out):            # apply from the end: earlier indices stay valid
+        trial = pts[:a + 1] + new + pts[b:]
+        if _run_legal(chk, sp, trial, a + 1, a + len(new), fixed=set()) if new else True:
+            pts = trial
+            moves += 1
+            saved += gain
+    if moves:
+        log.info("re-spot runs: %d runs, ₹%.2f Cr (leg programme prices)", moves, saved / 1e7)
+    return pts, saved, moves
 
 def _tower_site_rs(comp: Compiled, t: str, px: int, py: int) -> float:
     """Exact per-tower extras of type t at a raster cell: foundation extra over a normal one
@@ -691,11 +842,15 @@ def build_route(chk: Checker, pts: list[tuple[float, float]], angle_set: set[int
     added_pts = {pts[k] for k in added}
     pts = _crossing_turn_split(chk, pts, sp)
     polish = None
-    if sp.cost_polish:
+    if sp.cost_polish and angle_set is None:         # the final alignment only (the grid route is the fallback)
         pts, s_saved, s_moves = _straighten_runs(chk, pts, sp)
+        pts, m_saved, m_moves = _merge_bends(chk, pts, sp)
         pts, saved, moves = _cost_polish(chk, pts, sp)
+        pts, r_saved, r_moves = _respot_runs(chk, pts, sp)
         polish = {"moves": moves, "saved_cr": round(saved / 1e7, 3),
-                  "straighten_moves": s_moves, "straighten_saved_cr": round(s_saved / 1e7, 3)}
+                  "straighten_moves": s_moves, "straighten_saved_cr": round(s_saved / 1e7, 3),
+                  "merge_moves": m_moves, "merge_saved_cr": round(m_saved / 1e7, 3),
+                  "respot_runs": r_moves, "respot_saved_cr": round(r_saved / 1e7, 3)}
     added = {k for k, pt in enumerate(pts) if pt in added_pts}
     towers: list[Tower] = []
     n = len(pts)
@@ -1182,6 +1337,14 @@ def _straighten_runs(chk: Checker, pts, sp: SpotParams, max_run: int = 5, reach_
                         cands.append((cost, trial, jn, da == 0 and dc == 0))
             for cost, trial, jn, j_kept in sorted(cands, key=lambda z: z[0]):
                 if _run_legal(chk, sp, trial, i + 1, jn, fixed={jn} if j_kept else set()):
+                    # the winner's run placed by the leg programme (uneven), when that is cheaper and legal too
+                    run2 = _spot_leg(chk, trial[i], trial[jn], sp, exact=True)
+                    if run2 is not None:
+                        trial2 = trial[:i + 1] + list(run2) + trial[jn:]
+                        jn2 = i + len(run2) + 1
+                        cost2 = _chain_cost(chk.c, sp, trial2[i - 1:jn2 + 2], [_type_at(chk, sp, trial2, k) for k in range(i, jn2 + 1)])
+                        if cost2 <= cost and _run_legal(chk, sp, trial2, i + 1, jn2, fixed={jn2} if j_kept else set()):
+                            trial, jn, cost = trial2, jn2, cost2
                     log.info("straighten %d..%d: %d -> %d spans, ₹%.2f Cr", i, j, j - i, jn - i, (base - cost) / 1e7)
                     saved += base - cost
                     moves += 1
@@ -1192,6 +1355,95 @@ def _straighten_runs(chk: Checker, pts, sp: SpotParams, max_run: int = 5, reach_
                 break
         if not done:
             i += 1
+    return pts, saved, moves
+
+
+# ---- angle-point moves (Vivek, 14 Oct 2026: reduce angle towers under the rules) ----------------------
+
+def _is_vertex(pts, k: int) -> bool:
+    return 0 < k < len(pts) - 1 and _deflection(pts[k - 1], pts[k], pts[k + 1])[0] > 2.0
+
+
+def _turn_sign(pts, k: int) -> int:
+    ax, ay = pts[k][0] - pts[k - 1][0], pts[k][1] - pts[k - 1][1]
+    bx, by = pts[k + 1][0] - pts[k][0], pts[k + 1][1] - pts[k][1]
+    c = ax * by - ay * bx
+    return 1 if c > 0 else -1 if c < 0 else 0
+
+
+def _ray_intersection(a, b, c, d):
+    """X on the line a->b beyond b and on the line d->c beyond c (the two outer legs converge), else None."""
+    r = (b[0] - a[0], b[1] - a[1])
+    s_ = (c[0] - d[0], c[1] - d[1])
+    den = r[0] * s_[1] - r[1] * s_[0]
+    if abs(den) < 1e-9:
+        return None
+    qp = (d[0] - a[0], d[1] - a[1])
+    t = (qp[0] * s_[1] - qp[1] * s_[0]) / den
+    u = (qp[0] * r[1] - qp[1] * r[0]) / den
+    if t <= 1.0 + 1e-9 or u <= 1.0 + 1e-9:
+        return None
+    return (a[0] + t * r[0], a[1] + t * r[1])
+
+
+def _merge_bends(chk: Checker, pts, sp: SpotParams, max_gap_m: float = 1200.0, min_gain_rs: float = 1e5):
+    """Two same-direction bends within max_gap_m become one bend where their outer legs meet (the tangent
+    intersection): C1 + C1 -> one D45, B1 + B1 -> one C1. The towers between the outer anchors are spotted
+    again by the leg programme; the merged vertex may sit up to 30 m off the exact intersection. Kept when
+    cheaper by exact cost and every check passes. Crossing towers and dead ends are never merged."""
+    pts = list(pts)
+    moves, saved = 0, 0.0
+    offs = [(0.0, 0.0)] + [(r * math.cos(a), r * math.sin(a)) for r in (15.0, 30.0) for a in np.linspace(0, 2 * math.pi, 8, endpoint=False)]
+    i = 2
+    while i < len(pts) - 3:
+        n = len(pts)
+        if not _is_vertex(pts, i) or _is_crossing_tower(chk, pts, i):
+            i += 1
+            continue
+        j = i + 1
+        while j < n - 2 and not _is_vertex(pts, j):
+            j += 1
+        if j >= n - 2 or _is_crossing_tower(chk, pts, j) or _turn_sign(pts, i) != _turn_sign(pts, j):
+            i += 1
+            continue
+        if sum(math.hypot(pts[k + 1][0] - pts[k][0], pts[k + 1][1] - pts[k][1]) for k in range(i, j)) > max_gap_m:
+            i += 1
+            continue
+        X = _ray_intersection(pts[i - 1], pts[i], pts[j], pts[j + 1])
+        if X is None or _deflection(pts[i - 1], X, pts[j + 1])[0] > sp.max_dev_deg + 1e-6:
+            i += 1
+            continue
+        # the straight runs on both sides are spotted again from the neighbouring vertices (or dead ends), so
+        # the extra tangent length is absorbed by their span slack instead of costing a tower
+        ip = i - 1
+        while ip > 1 and not _is_vertex(pts, ip) and not _is_crossing_tower(chk, pts, ip):
+            ip -= 1
+        jn = j + 1
+        while jn < n - 2 and not _is_vertex(pts, jn) and not _is_crossing_tower(chk, pts, jn):
+            jn += 1
+        base = _chain_cost(chk.c, sp, pts[ip - 1:jn + 2], [_type_at(chk, sp, pts, k) for k in range(ip, jn + 1)])
+        best = None
+        for ox, oy in offs:
+            Xc = (X[0] + ox, X[1] + oy)
+            if not chk.tower_ok(Xc[0], Xc[1], angle_tower=True):
+                continue
+            left = _spot_leg(chk, pts[ip], Xc, sp, exact=True)
+            right = _spot_leg(chk, Xc, pts[jn], sp, exact=True) if left is not None else None
+            if left is None or right is None:
+                continue
+            trial = pts[:ip + 1] + list(left) + [Xc] + list(right) + pts[jn:]
+            kend = ip + len(left) + len(right) + 1       # last new tower; pts[jn] sits at kend + 1
+            cost = _chain_cost(chk.c, sp, trial[ip - 1:kend + 3], [_type_at(chk, sp, trial, k) for k in range(ip, kend + 2)])
+            if cost < base - min_gain_rs and (best is None or cost < best[0]):
+                best = (cost, trial, kend, ip)
+        if best is not None and _run_legal(chk, sp, best[1], best[3] + 1, best[2], fixed=set()):
+            log.info("merge bends %d+%d: ₹%.2f Cr", i, j, (base - best[0]) / 1e7)
+            saved += base - best[0]
+            moves += 1
+            pts = best[1]
+            i = max(2, best[3])
+            continue
+        i += 1
     return pts, saved, moves
 
 def _snap_to_legal(chk: Checker, pts, sp: SpotParams):
