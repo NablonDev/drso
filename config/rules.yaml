@@ -459,9 +459,10 @@ groups:
           # Vivek, 13 Oct 2026: the standard body without extension is 72.5 m at 765 kV; a normal tower keeps that from
           # existing towers and conductors when not crossing. (55 / 40 / 32 m for the other line voltages as supplied.)
           - {key: tower_setback_m, label: "Tower to existing tower (our tower height)", type: num, unit: m, value: {765: 72.5, 400: 55, 220: 40, 132: 32}}
-          - {key: conductor_setback_m, label: "Tower to existing conductor (our tower height)", type: num, unit: m, value: {765: 72.5, 400: 55, 220: 40, 132: 32}}
+          # Vivek, 14 Oct 2026: 80 m between our towers and existing conductors (was the tower height, 72.5 m)
+          - {key: conductor_setback_m, label: "Our tower to existing conductor", type: num, unit: m, value: {765: 80, 400: 80, 220: 80, 132: 80}}
           # Vivek, 14 Oct 2026: our conductor as far from their towers as our towers are from their conductors
-          - {key: conductor_tower_setback_m, label: "Our conductor to existing tower (our tower height)", type: num, unit: m, value: {765: 72.5, 400: 55, 220: 40, 132: 32}}
+          - {key: conductor_tower_setback_m, label: "Our conductor to existing tower", type: num, unit: m, value: {765: 80, 400: 80, 220: 80, 132: 80}}   # Vivek, 14 Oct 2026: 80 m
           # Crossing preferences (Vivek, 13 Oct 2026): preferred = at the null point and at 90°; allowed = within
           # crossing_point_allowed_pct of their span from the null point and within angle_deg. A crossing outside the
           # preference costs the search relax_penalty_pct of the crossing tower's price, so it is used only where the
@@ -502,7 +503,8 @@ groups:
           # Vivek, 13 Oct 2026: the standard body without extension is 72.5 m at 765 kV; a normal tower keeps that from
           # existing towers and conductors when not crossing. (55 / 40 / 32 m for the other line voltages as supplied.)
           - {key: tower_setback_m, label: "Tower to existing tower (our tower height)", type: num, unit: m, value: {765: 72.5, 400: 55, 220: 40, 132: 32}}
-          - {key: conductor_setback_m, label: "Tower to existing conductor (our tower height)", type: num, unit: m, value: {765: 72.5, 400: 55, 220: 40, 132: 32}}
+          # Vivek, 14 Oct 2026: 80 m between our towers and existing conductors (was the tower height, 72.5 m)
+          - {key: conductor_setback_m, label: "Our tower to existing conductor", type: num, unit: m, value: {765: 80, 400: 80, 220: 80, 132: 80}}
           # 66 / 33 kV poles stand 60–100 m apart, so a line crossing one cannot keep a tower height from every pole:
           # here the conductor keeps the corridor half-width from the poles (Vivek, 14 Oct 2026 — HT lines: tower height)
           - {key: conductor_tower_setback_m, label: "Our conductor to existing pole (corridor half-width)", type: num, unit: m, value: {765: 33.5, 400: 23, 220: 17.5, 132: 13.5}}

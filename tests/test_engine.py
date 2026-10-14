@@ -894,8 +894,8 @@ def test_new_tower_keeps_the_tower_setback_from_existing_conductors():
     def forbidden(x, y):
         col, row = f.frame_to_pixel(x, y)
         return bool(comp.tower_forbidden[int(row), int(col)])
-    assert forbidden(c + 40, 0) and forbidden(c - 60, 0)       # 40 / 60 m from the wire, 1.9 km from a tower
-    assert not forbidden(c + 85, 0) and not forbidden(c - 115, 0)
+    assert forbidden(c + 40, 0) and forbidden(c - 75, 0)       # 40 / 75 m from the wire (80 m since 14 Oct 2026)
+    assert not forbidden(c + 100, 0) and not forbidden(c - 115, 0)
 
 
 def test_crossing_ban_is_a_share_of_the_existing_span():

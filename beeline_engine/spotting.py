@@ -1156,8 +1156,9 @@ def _refine_crossings(chk: Checker, pts, sp: SpotParams):
                                    for m in range(len(chain) - 1)):
                                 continue
                             full = pts[:i - 2] + chain + pts[i + 4:]
-                            if any(_deflection(full[m - 1], full[m], full[m + 1])[0] > sp.max_dev_deg + 1e-6
-                                   for m in range(max(1, j0), min(len(full) - 1, j0 + len(chain)))):
+                            # every tower whose turn the new layout changes: A, the chain, B and B's successor
+                            dev_rng = range(max(1, j0), min(len(full) - 1, j0 + len(chain) + 1))
+                            if any(_deflection(full[m - 1], full[m], full[m + 1])[0] > sp.max_dev_deg + 1e-6 for m in dev_rng):
                                 continue
                             # legs cached; the crossing span and the two crossing towers per pair
                             c = (lcost + rcost + _chain_cost(chk.c, sp, [p, q], [])
@@ -1173,7 +1174,10 @@ def _refine_crossings(chk: Checker, pts, sp: SpotParams):
                             if not (chk.conductor_ok(p, q) and chk.span_crossings(p, q)[0]):
                                 continue
                             if any(_deflection(full[m - 1], full[m], full[m + 1])[0] > _dev_cap(chk, sp, full[m - 1], full[m], full[m + 1]) + 1e-6
-                                   for m in range(max(1, j0), min(len(full) - 1, j0 + len(chain)))):
+                                   for m in dev_rng):
+                                continue
+                            # the spans either side of the chain must still be legal with the new end towers
+                            if j0 >= 1 and not (chk.conductor_ok(full[j0 - 1], full[j0]) and chk.span_crossings(full[j0 - 1], full[j0])[0]):
                                 continue
                             best = (c, full, j0 + 1 + len(left))
         if best is not None:
