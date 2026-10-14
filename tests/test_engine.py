@@ -639,9 +639,9 @@ def test_approach_section_spans_and_free_go_zone():
     for (x0, y0), (x1, y1), s in zip(pts[1:-2], pts[2:-1], rt["spans"][1:-1]):
         mx, my = (x0 + x1) / 2, (y0 + y1) / 2
         if math.hypot(mx, my) <= 2000 or math.hypot(mx - f.length_m, my) <= 2000:
-            assert s["length_m"] <= 250 + 1e-6, s["length_m"]
+            assert s["length_m"] <= 400 + 1e-6, s["length_m"]      # 13 Oct 2026: no separate approach span limit
     # the gantry spans keep the approach span too (Vivek, 9 Oct 2026)
-    assert rt["spans"][0]["length_m"] <= 250 + 1e-6 and rt["spans"][-1]["length_m"] <= 250 + 1e-6
+    assert 100 - 1e-6 <= rt["spans"][0]["length_m"] <= 400 + 1e-6 and 100 - 1e-6 <= rt["spans"][-1]["length_m"] <= 400 + 1e-6
 
 
 # ---- speed-ups (9 Oct 2026): vectorised frame transform, raster cache, parallel routes ------------
@@ -778,11 +778,14 @@ def test_go_zone_keeps_crossings_of_220kv_and_above():
         return any(np.isfinite(v) for v in vals)
     assert angle_at(300, 0)                 # 400 kV inside the go zone: still a governed crossing
     assert not angle_at(400, 0)             # 132 kV inside the go zone: waived
-    # no crossing within 80 m of an existing 400 kV tower, inside the go zone too; the 132 kV one is waived
+    # Vivek, 14 Oct 2026: inside the go zone a >= 220 kV crossing keeps only its angle window — the
+    # no-crossing stretch next to their towers is waived there
     def cond_near(x, y):
         col, row = f.frame_to_pixel(x, y)
         return bool(comp.conductor_forbidden[int(row) - 1:int(row) + 2, int(col) - 1:int(col) + 2].any())
-    assert cond_near(300, 230) and not cond_near(400, 230)
+    assert not cond_near(300, 230) and not cond_near(400, 230)
+    go = [cr for cr in comp.crossings if cr.rule_id == "power_line" and cr.name.endswith("(go zone)")]
+    assert go and all(cr.side_m is None and cr.max_dev_deg is None and cr.window is not None for cr in go)
 
 
 # ---- learn from existing lines; protected areas No-Go; proximity pull (9 Oct 2026) ----------------

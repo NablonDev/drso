@@ -702,7 +702,7 @@ groups:
 
       - id: approach_section
         name: "Approach section near substation"
-        note: "CEA Technical Standards (1st Amendment) 2025, Schedule VII: near the substation the RoW narrows (765 kV D/C 54 m) and the span is at most 250 m. Applied within the set distance of each gantry, start and end (Vivek, 8 Oct 2026: 2 km); buffers tied to the corridor half-width shrink with it. Go zone (Vivek, 9 Oct 2026: 500 m round each gantry): no setback, crossing or water rule applies — a tower may stand in a pond or wetland — only a tower base may not overlap a substation or an existing tower (power, telecom, wind turbine). Base = the largest tower type's base square; an existing tower is taken as the same size."
+        note: "CEA Technical Standards (1st Amendment) 2025, Schedule VII: near the substation the RoW narrows (765 kV D/C 54 m) and the span is at most 250 m. Applied within the set distance of each gantry, start and end (Vivek, 8 Oct 2026: 2 km); buffers tied to the corridor half-width shrink with it. Go zone (Vivek, 9 Oct 2026: 500 m round each gantry): no setback, crossing or water rule applies — a tower may stand in a pond or wetland — only a tower base may not overlap a substation or an existing tower (power, telecom, wind turbine). Crossings of lines from 220 kV up keep only their angle window there (Vivek, 14 Oct 2026: no crossing-tower window, null-point band or 45° cap in the go zone). Base = the largest tower type's base square; an existing tower is taken as the same size."
         mechanism: geometry
         params:
           - {key: length_m, label: "Distance from the gantry", type: num, unit: m, value: 2000}

@@ -932,8 +932,7 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
                     hv_bans = _tower_crossing_bans(R.subset(hv, ["power_line"]), R.subset(hv, ["power_tower"]),
                                                    frame.epsg, cl, clp)
                     if hv_bans:
-                        go_hv_bans.extend(hv_bans)
-                        go_conductor.append(VecRule(r.id, r.layer, [frame.geom_utm_to_frame(g) for g in hv_bans], 0.0))
+                        go_hv_bans.extend(hv_bans)       # kept for reference; not enforced in the go zone (14 Oct 2026)
                 if bans:
                     # raster: one cell shorter at each end (a 20 m raster cannot hold the ends exactly);
                     # the exact pieces go to the spotting's vector check
@@ -1176,14 +1175,22 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
         angle_forbidden[zm] = False
         conductor_forbidden[zm] = False
         keep = zm & ~ybm
-        conductor_forbidden |= hv_ban_mask & keep
-        # lines that end in the terminal yard are not crossings of the new line there; elsewhere in the
-        # go zone only crossings of lines below GO_ZONE_CROSSING_KV are waived
+        # Vivek, 14 Oct 2026 (Shivlaka end): inside the go zone a crossing of a >= GO_ZONE_CROSSING_KV line keeps
+        # only its angle window (and the vertical clearance) — no crossing-tower window, null-point band or 45°
+        # cap; lines below that voltage and every other feature are waived as before
+        go_cross = []
         for cr in crossings:
             if cr.rule_id in ("power_line", "power_line_lt"):
-                cr.angle[zm & ~(keep & go_hv_near)] = np.nan
-            else:
-                cr.angle[zm] = np.nan
+                hv = keep & go_hv_near & ~np.isnan(cr.angle)
+                if hv.any() and cr.window is not None:
+                    from dataclasses import replace as _rep
+                    ga = np.full(cr.angle.shape, np.nan, np.float32)
+                    ga[hv] = cr.angle[hv]
+                    go_cross.append(_rep(cr, angle=ga, side_m=None, pref_window=None, pref_mask=None, pref_mask_wide=None,
+                                         null_offset=None, null_offset_wide=None, max_dev_deg=None, penalty_rs=0.0,
+                                         side_relax_rs_per_m=0.0, max_span_m=None, name=cr.name + " (go zone)"))
+            cr.angle[zm] = np.nan
+        crossings.extend(go_cross)
         for pr in parallels:
             pr.angle[zm] = np.nan
         if yards is not None:
