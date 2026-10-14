@@ -615,6 +615,7 @@ def build_route(chk: Checker, pts: list[tuple[float, float]], angle_set: set[int
     if dem is not None and dem.ok:
         pts = _split_hilly(chk, pts, sp)
         pts, added = _respot_for_clearance(chk, pts, sp)
+    pts = _crossing_turn_split(chk, pts, sp)
     towers: list[Tower] = []
     n = len(pts)
     for i, (x, y) in enumerate(pts):
@@ -820,6 +821,42 @@ def _shift_chain(chk: Checker, pts, i, j, d: float, sp: SpotParams, depth: int =
         trial = deeper
     return trial if _legal_here(chk, trial, i, sp, cand) else None
 
+
+
+def _crossing_turn_split(chk: Checker, pts, sp: SpotParams, radius_m: float = 200.0, step_m: float = 10.0):
+    """Last repair (14 Oct 2026): a crossing tower that still turns more than its crossing cap (45°) —
+    typically the sideways jog over an existing line our route runs beside — shares the turn with a
+    neighbour: the neighbour moves (nearest first, up to radius_m) to where the crossing tower is
+    within its cap and every exact check at the neighbour passes (_legal_here). Indices are kept, so
+    the clearance insertions stay valid."""
+    pts = list(pts)
+    n = len(pts)
+    rings = [r * step_m for r in range(1, int(radius_m / step_m) + 1)]
+    dirs = [(math.cos(a), math.sin(a)) for a in np.linspace(0, 2 * math.pi, 24, endpoint=False)]
+    for i in range(1, n - 1):
+        cap = _dev_cap(chk, sp, pts[i - 1], pts[i], pts[i + 1])
+        if cap >= sp.max_dev_deg or _deflection(pts[i - 1], pts[i], pts[i + 1])[0] <= cap + 1e-6:
+            continue
+        done = False
+        for r in rings:
+            for j in (i - 1, i + 1):
+                if j <= 0 or j >= n - 1:
+                    continue
+                for dx, dy in dirs:
+                    cand = (pts[j][0] + dx * r, pts[j][1] + dy * r)
+                    trial = list(pts); trial[j] = cand
+                    if _deflection(trial[i - 1], trial[i], trial[i + 1])[0] > cap + 1e-6:
+                        continue
+                    if _legal_here(chk, pts, j, sp, cand):
+                        log.info("crossing turn split: tower %d moved %.0f m so tower %d turns <= %.0f deg", j, r, i, cap)
+                        pts = trial
+                        done = True
+                        break
+                if done:
+                    break
+            if done:
+                break
+    return pts
 
 def _snap_to_legal(chk: Checker, pts, sp: SpotParams):
     """The search accepts a lattice site when a legal cell lies within nudge_radius_m of it (10 Oct
