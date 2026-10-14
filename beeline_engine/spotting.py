@@ -845,11 +845,13 @@ def build_route(chk: Checker, pts: list[tuple[float, float]], angle_set: set[int
     if sp.cost_polish and angle_set is None:         # the final alignment only (the grid route is the fallback)
         pts, s_saved, s_moves = _straighten_runs(chk, pts, sp)
         pts, m_saved, m_moves = _merge_bends(chk, pts, sp)
+        pts, v_saved, v_moves = _vertex_descent(chk, pts, sp)
         pts, saved, moves = _cost_polish(chk, pts, sp)
         pts, r_saved, r_moves = _respot_runs(chk, pts, sp)
         polish = {"moves": moves, "saved_cr": round(saved / 1e7, 3),
                   "straighten_moves": s_moves, "straighten_saved_cr": round(s_saved / 1e7, 3),
                   "merge_moves": m_moves, "merge_saved_cr": round(m_saved / 1e7, 3),
+                  "vertex_moves": v_moves, "vertex_saved_cr": round(v_saved / 1e7, 3),
                   "respot_runs": r_moves, "respot_saved_cr": round(r_saved / 1e7, 3)}
     added = {k for k, pt in enumerate(pts) if pt in added_pts}
     towers: list[Tower] = []
@@ -1460,6 +1462,84 @@ def _merge_bends(chk: Checker, pts, sp: SpotParams, max_gap_m: float = 1200.0, m
             i = max(2, best[3])
             continue
         i += 1
+    return pts, saved, moves
+
+
+def _vertex_descent(chk: Checker, pts, sp: SpotParams, passes: int = 2, min_gain_rs: float = 1e5,
+                    radii=(20.0, 40.0, 80.0, 120.0)):
+    """Idea 4 (Vivek, 14 Oct 2026): continuous angle-point optimisation. Every vertex (a bend that is not a
+    crossing tower or dead end) tries, in turn, each spot on a star round it (8 directions x radii) and its
+    own removal; both legs out to the neighbouring anchors (vertices, crossing towers, dead ends) are spotted
+    again. The cheapest candidate by exact cost that passes every check replaces it; the winner's legs are
+    then placed by the leg programme when that is cheaper still. Passes repeat until nothing improves."""
+    pts = list(pts)
+    moves, saved = 0, 0.0
+    dirs = [(math.cos(a), math.sin(a)) for a in np.linspace(0, 2 * math.pi, 8, endpoint=False)]
+    for _ in range(passes):
+        gain_pass = 0.0
+        v = 2
+        while v < len(pts) - 2:
+            n = len(pts)
+            if not _is_vertex(pts, v) or _is_crossing_tower(chk, pts, v):
+                v += 1
+                continue
+            ip = v - 1
+            while ip > 1 and not _is_vertex(pts, ip) and not _is_crossing_tower(chk, pts, ip):
+                ip -= 1
+            jn = v + 1
+            while jn < n - 2 and not _is_vertex(pts, jn) and not _is_crossing_tower(chk, pts, jn):
+                jn += 1
+            base = _chain_cost(chk.c, sp, pts[ip - 1:jn + 2], [_type_at(chk, sp, pts, k) for k in range(ip, jn + 1)])
+            cands = []                                   # (cost, trial, kend)
+            spots = [None] + [(pts[v][0] + dx * r, pts[v][1] + dy * r) for r in radii for dx, dy in dirs]
+            for c in spots:
+                if c is None:                            # remove the vertex: one straight leg ip -> jn
+                    run = _spot_leg(chk, pts[ip], pts[jn], sp)
+                    if run is None:
+                        continue
+                    trial = pts[:ip + 1] + list(run) + pts[jn:]
+                    kend = ip + len(run)
+                else:
+                    if not chk.tower_ok(c[0], c[1], angle_tower=True):
+                        continue
+                    left = _spot_leg(chk, pts[ip], c, sp)
+                    right = _spot_leg(chk, c, pts[jn], sp) if left is not None else None
+                    if left is None or right is None:
+                        continue
+                    trial = pts[:ip + 1] + list(left) + [c] + list(right) + pts[jn:]
+                    kend = ip + len(left) + len(right) + 1
+                cost = _chain_cost(chk.c, sp, trial[ip - 1:kend + 3], [_type_at(chk, sp, trial, k) for k in range(ip, kend + 2)])
+                if cost < base - min_gain_rs:
+                    cands.append((cost, trial, kend))
+            done = False
+            for cost, trial, kend in sorted(cands, key=lambda z: z[0])[:6]:
+                if not _run_legal(chk, sp, trial, ip + 1, kend, fixed=set()):
+                    continue
+                # the winner's legs by the leg programme (uneven), kept when cheaper and legal
+                nv = next((k for k in range(ip + 1, kend + 1) if _is_vertex(trial, k)), None)
+                if nv is not None:
+                    left2 = _spot_leg(chk, trial[ip], trial[nv], sp, exact=True)
+                    right2 = _spot_leg(chk, trial[nv], trial[kend + 1], sp, exact=True)
+                    if left2 is not None and right2 is not None:
+                        trial2 = trial[:ip + 1] + list(left2) + [trial[nv]] + list(right2) + trial[kend + 1:]
+                        kend2 = ip + len(left2) + len(right2) + 1
+                        cost2 = _chain_cost(chk.c, sp, trial2[ip - 1:kend2 + 3], [_type_at(chk, sp, trial2, k) for k in range(ip, kend2 + 2)])
+                        if cost2 <= cost and _run_legal(chk, sp, trial2, ip + 1, kend2, fixed=set()):
+                            trial, kend, cost = trial2, kend2, cost2
+                log.info("vertex %d: %s, ₹%.2f Cr", v, "removed" if kend < jn - 1 + (kend - jn + 1) and len(trial) < n else "moved", (base - cost) / 1e7)
+                gain_pass += base - cost
+                moves += 1
+                pts = trial
+                v = max(2, ip)
+                done = True
+                break
+            if not done:
+                v += 1
+        saved += gain_pass
+        if gain_pass < min_gain_rs:
+            break
+    if moves:
+        log.info("vertex descent: %d moves, ₹%.2f Cr", moves, saved / 1e7)
     return pts, saved, moves
 
 def _snap_to_legal(chk: Checker, pts, sp: SpotParams):
