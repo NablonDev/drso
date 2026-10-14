@@ -933,8 +933,10 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
                     loose = [_sub(g, frame.res_m, g.length - frame.res_m) for g in bans if g.length > 2 * frame.res_m]
                     loose = [g for g in loose if g is not None and not g.is_empty]
                     if loose:
+                        # every cell the banned wire passes through (14 Oct 2026: centre-only rasterising missed
+                        # diagonal wires, and the search crossed up to 49 % from the null point)
                         mk = rfeatures.rasterize([(g, 1) for g in loose], out_shape=shape,
-                                                 transform=frame.transform, fill=0, all_touched=False,
+                                                 transform=frame.transform, fill=0, all_touched=True,
                                                  dtype="uint8").astype(bool)
                         add(mk, conductor_forbidden, r.id)
                     cond_geoms.append(VecRule(r.id, r.layer, [frame.geom_utm_to_frame(g) for g in bans], 0.0))
