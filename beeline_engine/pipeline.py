@@ -474,7 +474,14 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
             timings.setdefault("refine_s", []).append(round(time.time() - t_r, 1))
             return out_r
 
-        out = refine_pass(_srch(cv, var), out)
+        # a base route whose search line is clearly over the forest cap is neither refined nor spotted (14 Oct
+        # 2026: rev 39 spent 30 min refining and spotting an 18 ha line that the cap loop then replaced)
+        skip_base = False
+        if out.feasible and forest_cap > 0 and not var.get("relaxed"):
+            base_grid_ha = _line_forest_ha(cv, _outcome_line(out))
+            skip_base = base_grid_ha > forest_cap + 2.0 * float((cap_cfg.get("grid_margin_ha", 1.0) or 0.0))
+        if not skip_base:
+            out = refine_pass(_srch(cv, var), out)
         if out.feasible and vi > 0 and not apart and not var.get("relaxed"):
             # every earlier route's line, in route order (as the one-at-a-time loop saw them)
             prev_lines = [ln for ln in (wait_line(j).get("line") for j in range(vi)) if ln is not None]
@@ -494,27 +501,31 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
             vprog(vi, 1.0, f"Route {var['id']} not found")
             return {"var": var, "out": out, "cv": cv, "line": None}
         vprog(vi, 0.75, f"Spotting towers — route {var['id']}")
-        pts = [out.grid.site_xy(c, r) for c, r in out.sites]
-        pts = [(float(x), float(y)) for x, y in pts]
+
+        def spot_true(cvx, out_):
+            """Spot on the search compile (surcharges steer the moves), cost at the true prices."""
+            pts_ = [(float(x), float(y)) for x, y in (out_.grid.site_xy(c, r) for c, r in out_.sites)]
+            sr_ = spot(cvx, pts_, sp, dem=dem)
+            if cvx is not cv:
+                cost_, stats_ = route_cost(cv, sr_.towers, sr_.spans, sp)
+                if "cost_polish" in sr_.stats:
+                    stats_["cost_polish"] = sr_.stats["cost_polish"]
+                sr_ = SpottedRoute(sr_.towers, sr_.spans, cost_, stats_, sr_.method)
+            return sr_
+
         t = time.time()
-        cvs = _srch(cv, var)
-        sr = spot(cvs, pts, sp, dem=dem)
-        if cvs is not cv:
-            # spotted on the forest-surcharged compile (string pulling is cost-aware); costed at true prices
-            cost2, stats2 = route_cost(cv, sr.towers, sr.spans, sp)
-            if "cost_polish" in sr.stats:
-                stats2["cost_polish"] = sr.stats["cost_polish"]
-            sr = SpottedRoute(sr.towers, sr.spans, cost2, stats2, sr.method)
+        sr = None if skip_base else spot_true(_srch(cv, var), out)
         spot_s = time.time() - t
         forest_ev = None
         cap_passes: list = []
-        if forest_cap > 0 and not var.get("relaxed") and sr.stats.get("forest_ha", 0) > forest_cap:
+        if forest_cap > 0 and not var.get("relaxed") and (sr is None or sr.stats.get("forest_ha", 0) > forest_cap):
             # forest cap (Vivek, 10 Oct 2026): price forest up in the search until the route stays under
             # the cap; the towers are then spotted and costed on the true-price compile. 11 Oct: start
             # at the multiplier an earlier route met the cap with; spot a pass only when the search
             # corridor's forest is near the cap (the last multiplier always).
-            ha0 = sr.stats["forest_ha"]
+            ha0 = sr.stats["forest_ha"] if sr is not None else base_grid_ha
             best = (sr, out, solve_s, spot_s, None)
+            best_ha = lambda: best[0].stats.get("forest_ha", 0) if best[0] is not None else ha0
             met = False
             # every multiplier in order (11 Oct 2026: starting at the one an earlier route met the cap
             # with lost R4's ×10 route — the cap multiplier is not transferable between routes, and a
@@ -560,7 +571,7 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
                         if hi_m / lo_m < 1.15:
                             break
                     cvp, out2, rec = hi_res
-                    vprog(vi, 0.5, f"Route {var['id']}: forest {best[0].stats['forest_ha']:.0f} ha over the {forest_cap:g} ha cap — forest priced ×{hi_m:.2f}")
+                    vprog(vi, 0.5, f"Route {var['id']}: forest {best_ha():.0f} ha over the {forest_cap:g} ha cap — forest priced ×{hi_m:.2f}")
                     out2 = refine_pass(_srch(cvp, var), out2)
                     pts2 = [(float(x), float(y)) for x, y in (out2.grid.site_xy(c, r) for c, r in out2.sites)]
                     t3 = time.time()
@@ -571,8 +582,8 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
                     sr2 = SpottedRoute(sr2.towers, sr2.spans, cost2, stats2, sr2.method)
                     rec.update(spotted=True, spot_s=round(time.time() - t3, 1), ha=sr2.stats.get("forest_ha"))
                     spots += 1
-                    if sr2.stats.get("forest_ha", 0) < best[0].stats.get("forest_ha", 0) or \
-                            (sr2.stats.get("forest_ha", 0) <= forest_cap and best[0].stats.get("forest_ha", 0) <= forest_cap):
+                    if best[0] is None or sr2.stats.get("forest_ha", 0) < best_ha() or \
+                            (sr2.stats.get("forest_ha", 0) <= forest_cap and best_ha() <= forest_cap):
                         best = (sr2, out2, rec["solve_s"], time.time() - t3, hi_m)
                     if sr2.stats.get("forest_ha", 0) <= forest_cap:
                         met = True
@@ -581,7 +592,7 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
                 mults = [best[4] if best[4] is not None else hi_mult]
             else:
               for mult in mults:
-                  vprog(vi, 0.5, f"Route {var['id']}: forest {best[0].stats['forest_ha']:.0f} ha over the {forest_cap:g} ha cap — forest priced ×{mult:g}")
+                  vprog(vi, 0.5, f"Route {var['id']}: forest {best_ha():.0f} ha over the {forest_cap:g} ha cap — forest priced ×{mult:g}")
                   cvp = compiled_variant(bool(var.get("relaxed")), precedent=prec_used, forest_mult=mult)
                   t2 = time.time()
                   out2 = solve(_srch(cvp, var), p, cancel_check=check_cancel, progress=sub)
@@ -604,12 +615,17 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
                       stats2["cost_polish"] = sr2.stats["cost_polish"]
                   sr2 = SpottedRoute(sr2.towers, sr2.spans, cost2, stats2, sr2.method)
                   rec.update(spotted=True, spot_s=round(time.time() - t3, 1), ha=sr2.stats.get("forest_ha"))
-                  if sr2.stats.get("forest_ha", 0) < best[0].stats.get("forest_ha", 0):
+                  if best[0] is None or sr2.stats.get("forest_ha", 0) < best_ha():
                       best = (sr2, out2, t3 - t2, time.time() - t3, mult)
                   if sr2.stats.get("forest_ha", 0) <= forest_cap:
                       met = True
                       break
             sr, out, solve_s, spot_s, mult_used = best
+            if sr is None:                                   # no cap pass could be spotted: the base route after all
+                out = refine_pass(_srch(cv, var), out)
+                t = time.time()
+                sr = spot_true(_srch(cv, var), out)
+                spot_s = time.time() - t
             forest_ev = event("FOREST_CAP" if met else "FOREST_CAP_UNMET",
                               {"route": var["id"], "cap": forest_cap, "mult": mult_used if mult_used is not None else mults[-1],
                                "ha": sr.stats["forest_ha"], "ha0": ha0})
