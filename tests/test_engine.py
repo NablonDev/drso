@@ -1131,3 +1131,111 @@ def test_other_crossings_may_span_600m_and_turn_at_most_45():
     assert "side_window_m" not in x and x.get("point_preferred") is None
     for i in (s["a"], s["b"]):
         assert r["towers"][i]["deflection_deg"] <= 45 + 1e-6
+
+
+# ---- angle-point moves (Vivek, 14 Oct 2026: reduce angle towers under the rules) --------------------------
+
+def _empty_band_checker():
+    """A compile with one far-away building (a non-empty layer set) and spot params with the 765 kV prices."""
+    from beeline_engine.config import TOWER_TYPES
+    from beeline_engine.spotting import Checker, SpotParams
+    f = frame()
+    spec = LineSpec(765, "dc")
+    rules, costs = resolve_rules(spec), resolve_costs(spec)
+    far = frame_geom(f, box(100, 2000, 120, 2020))
+    comp = compile_rules(f, {"buildings": gdf([far], "building")}, rules, costs, 765, 33.5, 150, 400)
+    prices = {"A": 0.4765e7, "B1": 0.6886e7, "C1": 0.7803e7, "D45": 0.9754e7, "D60": 1.1085e7}
+    sp = SpotParams(design_span_m=400, span_max_m=400, min_span_m=100, max_dev_deg=60,
+                    type_bands={"A": 2, "B1": 15, "C1": 30, "D45": 45, "D60": 60},
+                    section_km=5, parallel_angle_deg=30, tower_cost_rs={t: prices.get(t, 1.1085e7) for t in TOWER_TYPES},
+                    ground_clearance_m=18.15, lowest_attachment_m=32.6, sag_at_design_m=14.278, go_radius_m=150)
+    return f, Checker(comp, sp), sp
+
+
+def _polyline_towers(chk, sp, vertices, heading_out_deg):
+    """Gantry + dead-end stand-ins, the vertices with spotted legs between them, and a straight tail."""
+    from beeline_engine.spotting import _spot_leg
+    a0 = vertices[0]
+    pts = [(a0[0] - 400, a0[1]), (a0[0] - 200, a0[1])]
+    for a, b in zip(vertices[:-1], vertices[1:]):
+        pts += [a] + list(_spot_leg(chk, a, b, sp))
+    end = vertices[-1]
+    th = math.radians(heading_out_deg)
+    pts += [end, (end[0] + 200 * math.cos(th), end[1] + 200 * math.sin(th)), (end[0] + 400 * math.cos(th), end[1] + 400 * math.sin(th))]
+    return pts
+
+
+def _vertices(P):
+    from beeline_engine.spotting import _deflection
+    return [(k, round(_deflection(P[k - 1], P[k], P[k + 1])[0], 1)) for k in range(1, len(P) - 1) if _deflection(P[k - 1], P[k], P[k + 1])[0] > 2]
+
+
+def test_merge_bends_joins_two_small_bends_into_one():
+    """Idea 2: two 8° same-direction bends 300 m apart (B1 + B1) become one bend of ≤ 16° at the tangent
+    intersection (one tower fewer, ₹0.6+ Cr saved) on an empty band."""
+    from beeline_engine.spotting import _merge_bends
+    f, chk, sp = _empty_band_checker()
+    c = f.length_m / 2
+    th = math.radians(8)
+    v1 = (c - 1000, -300.0)
+    v2 = (v1[0] + 300 * math.cos(th), v1[1] + 300 * math.sin(th))
+    th2 = math.radians(16)
+    end = (v2[0] + 1850 * math.cos(th2), v2[1] + 1850 * math.sin(th2))
+    pts = _polyline_towers(chk, sp, [(c - 2850, -300.0), v1, v2, end], 16)
+    assert len(_vertices(pts)) == 2
+    out, saved, moves = _merge_bends(chk, pts, sp)
+    vt = _vertices(out)
+    assert moves == 1 and len(vt) == 1 and 12 <= vt[0][1] <= 17 and saved > 0.5e7, (vt, saved)
+
+
+def test_polish_trims_a_bend_to_the_next_type_band():
+    """Idea 3: a 17° bend (C1) is moved inward along its bisector until it is ≤ 15° (B1), the neighbours
+    staying suspension towers."""
+    from beeline_engine.spotting import _cost_polish
+    f, chk, sp = _empty_band_checker()
+    c = f.length_m / 2
+    v = (c - 150, -300.0)
+    th = math.radians(17)
+    end = (v[0] + 1850 * math.cos(th), v[1] + 1850 * math.sin(th))
+    pts = _polyline_towers(chk, sp, [(c - 2000, -300.0), v, end], 17)
+    out, saved, moves = _cost_polish(chk, pts, sp)
+    vt = _vertices(out)
+    assert moves >= 1 and len(vt) == 1 and vt[0][1] <= 15.0, vt
+
+
+def test_vertex_descent_removes_a_needless_bend():
+    """Idea 4: a vertex pushed 60 m off a straight line (two small bends) is removed by the descent."""
+    from beeline_engine.spotting import _vertex_descent
+    f, chk, sp = _empty_band_checker()
+    c = f.length_m / 2
+    pts = _polyline_towers(chk, sp, [(c - 2000, -300.0), (c - 150, -240.0), (c + 1700, -300.0)], 0)
+    assert len(_vertices(pts)) >= 1
+    out, saved, moves = _vertex_descent(chk, pts, sp)
+    assert moves >= 1 and len(_vertices(out)) == 0, _vertices(out)
+
+
+def test_refinement_keeps_a_feasible_route_no_dearer():
+    """Targeted 25 m lattice: the refined search round the 50 m solution is feasible and no dearer at search
+    prices; the route is still a legal crossing of the existing line."""
+    from beeline_engine import solver as S_, pipeline as P_
+    calls = []
+    orig = S_.solve
+
+    def spy(compiled, p, cancel_check=None, progress=None, corridor=None):
+        out = orig(compiled, p, cancel_check=cancel_check, progress=progress, corridor=corridor)
+        calls.append((p.site_spacing_m, corridor is not None, out.feasible, out.cost_rs))
+        return out
+    S_.solve = spy
+    P_.solve = spy                                  # the pipeline imported the name
+    try:
+        f = frame()
+        c = f.length_m / 2
+        res = run_solve(solve_input({"power": _line_with_towers(f, c)}))
+    finally:
+        S_.solve = orig
+        P_.solve = orig
+    assert res["feasible"]
+    fine = [x for x in calls if x[1]]
+    coarse = [x for x in calls if not x[1]]
+    assert fine and coarse and fine[0][0] == 25.0
+    assert fine[0][2] and fine[0][3] <= coarse[0][3] + 1e-6
