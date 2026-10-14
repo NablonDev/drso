@@ -302,6 +302,8 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
                         extension_cost_hilly_rs=tower_cost["B1"] * ext_pct * ext_max_abc / 18.0,
                         hilly_span_max_m=hilly_m, plain_span_max_m=smax,
                         hilly_tower_extra_rs=max(0.0, tower_cost["B1"] - tower_cost["A"]),
+                        hilly_surcharge_rs_per_m=float(rules["design_span"].params.get("hilly_surcharge_cr_km", 0) or 0) * 1e7 / 1000.0,
+                        hilly_tower_surcharge_rs=float(rules["design_span"].params.get("hilly_tower_surcharge_cr", 0) or 0) * 1e7,
                         hilly_rise_m=hilly_rise, extension_pct=ext_pct * 100.0,
                         span_sum=tsd["span_sum"] if tsd else None,
                         single_span_fraction=float(tsd.get("single_span_fraction", 0.6)) if tsd else 0.6,
@@ -331,6 +333,8 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
                     hilly_section_km=float(rules["section_interval"].params["hilly_km"]),
                     hilly_rise_m=hilly_rise, tsd=tsd, approach_length_m=ap_len, approach_span_m=ap_span,
                     proximity_discount=prox_disc, proximity_tower_discount=prox_tdisc, extension_pct=ext_pct * 100.0,
+                    hilly_surcharge_rs_per_m=float(rules["design_span"].params.get("hilly_surcharge_cr_km", 0) or 0) * 1e7 / 1000.0,
+                    hilly_tower_surcharge_rs=float(rules["design_span"].params.get("hilly_tower_surcharge_cr", 0) or 0) * 1e7,
                     section_spans=int(rules["section_interval"].params.get("plain_spans") or 0) or None,
                     hilly_section_spans=int(rules["section_interval"].params.get("hilly_spans") or 0) or None)
 

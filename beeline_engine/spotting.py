@@ -70,6 +70,8 @@ class SpotParams:
     approach_span_m: float | None = None
     proximity_discount: float = 0.0         # search-only discount near existing lines (string pulling)
     proximity_tower_discount: float = 0.0   # the same on towers standing near them (Vivek, 13 Oct 2026)
+    hilly_surcharge_rs_per_m: float = 0.0   # search-only hill avoidance (Vivek, 14 Oct 2026), string pulling too
+    hilly_tower_surcharge_rs: float = 0.0
     extension_pct: float = 9.4              # body extension price, % of the tower per +18 m
     sag_ref_span_m: float | None = None     # span the sag figure belongs to (None = design span)
     section_spans: int | None = None       # TSD D: ≤ 15 spans between section points (plain)
@@ -465,6 +467,13 @@ def _chain_cost(comp: Compiled, sp: SpotParams, pts, inner_types) -> float:
             row = np.clip(((f.y_top - (fy + off)) / f.res_m).astype(int), 0, f.height - 1)
             dens += float(comp.strip_density[row, col].mean()) / 3.0
         span_c = L * (comp.conductor_rs_per_m + dens * width)
+        if (sp.hilly_surcharge_rs_per_m > 0 or sp.hilly_tower_surcharge_rs > 0) and getattr(comp, "ground_z", None) is not None \
+                and sp.hilly_rise_m is not None:
+            ca, ra = int(np.clip((x0 - f.x0) / f.res_m, 0, f.width - 1)), int(np.clip((f.y_top - y0) / f.res_m, 0, f.height - 1))
+            cb, rb = int(np.clip((x1 - f.x0) / f.res_m, 0, f.width - 1)), int(np.clip((f.y_top - y1) / f.res_m, 0, f.height - 1))
+            za, zb = comp.ground_z[ra, ca], comp.ground_z[rb, cb]
+            if np.isfinite(za) and np.isfinite(zb) and abs(float(zb - za)) > sp.hilly_rise_m:
+                span_c += L * sp.hilly_surcharge_rs_per_m + sp.hilly_tower_surcharge_rs
         if sp.proximity_discount > 0 and comp.near_existing is not None:
             col = np.clip(((fx - f.x0) / f.res_m).astype(int), 0, f.width - 1)
             row = np.clip(((f.y_top - fy) / f.res_m).astype(int), 0, f.height - 1)
