@@ -34,7 +34,7 @@ import { useUi } from "../store/ui";
 import { useSelectedRoute } from "../store/selection";
 import { useStartSolve } from "./Solve";
 
-type Toggles = { towers: boolean; beeline: boolean; lowconf: boolean; prev: boolean };
+type Toggles = { towers: boolean; beeline: boolean; lowconf: boolean; prev: boolean; hills: boolean };
 
 export default function Results() {
   const run = useRunCtx();
@@ -66,7 +66,7 @@ function Body({ s }: { s: Solve }) {
   const loadTowers = useTowers((x) => x.load);
   const focus = useUi((x) => x.focus);
   const setFocus = useUi((x) => x.setFocus);
-  const [t, setT] = useState<Toggles>({ towers: true, beeline: false, lowconf: false, prev: false });
+  const [t, setT] = useState<Toggles>({ towers: true, beeline: false, lowconf: false, prev: false, hills: false });
   // every run layer can be shown under the routes (6 Oct 2026); starts as on Review the layers
   const [on, setOn] = useState<Record<string, boolean>>(() => Object.fromEntries(LAYER_ORDER.map((k) => [k, DEFAULT_ON.has(k)])));
   const [widen, setWiden] = useState(false);
@@ -190,6 +190,21 @@ function Body({ s }: { s: Solve }) {
     if (map.getLayer("beeline-line")) map.setLayoutProperty("beeline-line", "visibility", t.beeline ? "visible" : "none");
     if (map.getLayer("prev-line")) map.setLayoutProperty("prev-line", "visibility", t.prev ? "visible" : "none");
   }, [map, t.beeline, t.prev, prevFC]);
+
+  // hill ground the search avoids (14 Oct 2026): DEM relief + mean slope, from the solve
+  const hillFC = (s.result as { hill_areas?: GeoJSON.FeatureCollection | null }).hill_areas ?? null;
+  useEffect(() => {
+    if (!map || !hillFC) return;
+    const src = map.getSource("hills") as GeoJSONSource | undefined;
+    if (src) src.setData(hillFC);
+    else map.addSource("hills", { type: "geojson", data: hillFC });
+    if (!map.getLayer("hills-fill")) {
+      const before = map.getLayer("routes-casing") ? "routes-casing" : undefined;
+      map.addLayer({ id: "hills-fill", type: "fill", source: "hills", layout: { visibility: "none" }, paint: { "fill-color": "#C08A4B", "fill-opacity": 0.35 } }, before);
+      map.addLayer({ id: "hills-line", type: "line", source: "hills", layout: { visibility: "none" }, paint: { "line-color": "#C08A4B", "line-width": 1.2 } }, before);
+    }
+    for (const id of ["hills-fill", "hills-line"]) map.setLayoutProperty(id, "visibility", t.hills ? "visible" : "none");
+  }, [map, hillFC, t.hills]);
 
   // A / B markers like the prototype: a ring at A, a square at B
   useEffect(() => {
@@ -341,6 +356,8 @@ function Body({ s }: { s: Solve }) {
             <button aria-pressed={t.towers} onClick={() => tog("towers")} disabled={!feasible}>Towers</button>
             <button aria-pressed={t.beeline} onClick={() => tog("beeline")}>Bee-line</button>
             <button aria-pressed={t.lowconf} onClick={() => tog("lowconf")}>Low-confidence</button>
+            <button aria-pressed={t.hills} onClick={() => tog("hills")} disabled={!hillFC}
+              title={hillFC ? "Hill ground the search avoids (relief + slope from the DEM)" : "This solve has no hill layer"}>Hills</button>
             <button aria-pressed={t.prev} onClick={() => tog("prev")} disabled={!cmp?.parent_routes?.length}
               title={cmp?.parent_routes?.length ? undefined : "No solved previous revision"}>
               Previous revision

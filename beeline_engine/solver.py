@@ -353,8 +353,6 @@ def _edge_geom(compiled: Compiled, grid: Grid, p: SolverParams, rasters: "_Raste
             invalid |= ~hil_any & (length > p.plain_span_max_m + 1e-3)
         # hilly ground: every tower is a tension tower (Vivek, 7 Oct 2026); one tower's extra per span
         E = E + hil_any.float() * p.hilly_tower_extra_rs
-        if p.hilly_surcharge_rs_per_m > 0 or p.hilly_tower_surcharge_rs > 0:
-            E = E + hil_any.float() * (length * p.hilly_surcharge_rs_per_m + p.hilly_tower_surcharge_rs)
     if rasters.z is not None and require_river and p.long_ext_steps:
         # long crossing span (TSD): both crossing towers raised to clear the ground at this span's
         # sag; the extension step sets the wind span the towers allow, so the span plus a minimum

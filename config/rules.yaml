@@ -680,10 +680,16 @@ groups:
           - {key: plain_m, label: "Plain terrain", type: num, unit: m, value: {765: 400, 400: 400, 220: 350, 132: 320}}
           - {key: hilly_m, label: "Hilly terrain", type: num, unit: m, value: {765: 400, 400: 400, 220: 350, 132: 320}}
           - {key: hilly_rise_m, label: "Hilly: ground rise between towers over", type: num, unit: m, value: 10}
-          # Vivek, 14 Oct 2026: avoid hills — towers there are hard to build. Search-only surcharges on hilly spans
-          # (not in the reported cost); the route goes round a hill wherever the detour costs less
-          - {key: hilly_surcharge_cr_km, label: "Search surcharge per km of line over hilly ground", type: num, unit: "₹ Cr/km", value: 1.0}
-          - {key: hilly_tower_surcharge_cr, label: "Search surcharge per tower on a hilly span", type: num, unit: "₹ Cr", value: 0.5}
+          # Vivek, 14 Oct 2026: avoid hills — towers there are hard to build. Hill ground from the DEM: relief
+          # (highest minus lowest ground within the radius) AND mean slope over the window; small patches dropped.
+          # Search-only surcharges (not in the reported cost): the route goes round a hill wherever the detour costs less
+          - {key: hill_relief_m, label: "Hill: local relief at least", type: num, unit: m, value: 25}
+          - {key: hill_relief_radius_m, label: "Hill: relief measured within", type: num, unit: m, value: 250}
+          - {key: hill_mean_slope_deg, label: "Hill: mean slope at least", type: num, unit: "°", value: 3}
+          - {key: hill_slope_window_m, label: "Hill: slope averaged over", type: num, unit: m, value: 270}
+          - {key: hill_min_area_ha, label: "Hill: smallest patch kept", type: num, unit: ha, value: 5}
+          - {key: hill_surcharge_cr_km, label: "Search surcharge per km of line over hill ground", type: num, unit: "₹ Cr/km", value: 2.0}
+          - {key: hill_tower_surcharge_cr, label: "Search surcharge per tower on hill ground", type: num, unit: "₹ Cr", value: 1.0}
           - {key: urban_m, label: "Urban / populated", type: num, unit: m, value: {765: 250, 400: 250, 220: 225, 132: 200}, best_guess: true}
 
       - id: section_interval

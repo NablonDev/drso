@@ -442,6 +442,24 @@ def _tower_site_rs(comp: Compiled, t: str, px: int, py: int) -> float:
             + tw["area_m2"] * float(comp.land_rate_m2[py, px]) * comp.costs["land"]["tower_base_pct"] / 100.0)
 
 
+
+def _hill_stats(comp: Compiled, towers) -> dict:
+    """Line length and towers on hill ground (compile.attach_hill_area; 14 Oct 2026)."""
+    m = getattr(comp, "hill_area", None)
+    if m is None:
+        return {"hill_km": None, "hill_towers": None}
+    f = comp.frame
+
+    def on(x, y):
+        return bool(m[int(np.clip((f.y_top - y) / f.res_m, 0, f.height - 1)), int(np.clip((x - f.x0) / f.res_m, 0, f.width - 1))])
+    L = 0.0
+    for a, b in zip(towers[:-1], towers[1:]):
+        d = math.hypot(b.x - a.x, b.y - a.y)
+        n = max(2, int(d // 10) + 1)
+        k = sum(on(a.x + (b.x - a.x) * i / (n - 1), a.y + (b.y - a.y) * i / (n - 1)) for i in range(n))
+        L += d * k / n
+    return {"hill_km": round(L / 1000, 3), "hill_towers": sum(1 for t in towers[1:-1] if on(t.x, t.y))}
+
 def _chain_cost(comp: Compiled, sp: SpotParams, pts, inner_types) -> float:
     """Approximate exact cost of a tower chain (frame coords): inner towers (all-in price by type,
     soil extra, base land) + spans (line ₹/m + RoW strip density incl. forest)."""
@@ -451,6 +469,8 @@ def _chain_cost(comp: Compiled, sp: SpotParams, pts, inner_types) -> float:
         px = int(np.clip((x - f.x0) / f.res_m, 0, f.width - 1))
         py = int(np.clip((f.y_top - y) / f.res_m, 0, f.height - 1))
         tc = sp.tower_cost_rs[t] + _tower_site_rs(comp, t, px, py)
+        if comp.hill_tower_rs and comp.hill_area is not None and comp.hill_area[py, px]:
+            tc += comp.hill_tower_rs                 # search-only hill surcharge (14 Oct 2026)
         if sp.proximity_tower_discount > 0 and comp.near_existing is not None and comp.near_existing[py, px]:
             tc *= 1.0 - sp.proximity_tower_discount
         c += tc
@@ -467,13 +487,6 @@ def _chain_cost(comp: Compiled, sp: SpotParams, pts, inner_types) -> float:
             row = np.clip(((f.y_top - (fy + off)) / f.res_m).astype(int), 0, f.height - 1)
             dens += float(comp.strip_density[row, col].mean()) / 3.0
         span_c = L * (comp.conductor_rs_per_m + dens * width)
-        if (sp.hilly_surcharge_rs_per_m > 0 or sp.hilly_tower_surcharge_rs > 0) and getattr(comp, "ground_z", None) is not None \
-                and sp.hilly_rise_m is not None:
-            ca, ra = int(np.clip((x0 - f.x0) / f.res_m, 0, f.width - 1)), int(np.clip((f.y_top - y0) / f.res_m, 0, f.height - 1))
-            cb, rb = int(np.clip((x1 - f.x0) / f.res_m, 0, f.width - 1)), int(np.clip((f.y_top - y1) / f.res_m, 0, f.height - 1))
-            za, zb = comp.ground_z[ra, ca], comp.ground_z[rb, cb]
-            if np.isfinite(za) and np.isfinite(zb) and abs(float(zb - za)) > sp.hilly_rise_m:
-                span_c += L * sp.hilly_surcharge_rs_per_m + sp.hilly_tower_surcharge_rs
         if sp.proximity_discount > 0 and comp.near_existing is not None:
             col = np.clip(((fx - f.x0) / f.res_m).astype(int), 0, f.width - 1)
             row = np.clip(((f.y_top - fy) / f.res_m).astype(int), 0, f.height - 1)
@@ -1713,6 +1726,7 @@ def route_cost(comp: Compiled, towers: list[Tower], spans: list[Span], sp: SpotP
         "tension_towers": len(real) - mix["A"],
         "tower_mix": mix,
         "forest_ha": round(areas["forest"], 2),
+        **_hill_stats(comp, towers),
         "agri_ha": round(areas["agriculture"] + areas["orchard"], 2),
         "corridor_ha": round(sum(areas.values()), 2),
         "areas_ha": {k: round(v, 2) for k, v in areas.items()},

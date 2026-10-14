@@ -165,6 +165,8 @@ class Compiled:
     # terrain on the rule raster grid (set by attach_terrain; None = no DEM)
     ground_z: np.ndarray | None = None       # m, NaN where the DEM has no value
     hilly: np.ndarray | None = None          # bool: slope >= hilly_slope_deg over ~100 m
+    hill_area: np.ndarray | None = None      # bool: hill ground (relief + mean slope, attach_hill_area)
+    hill_tower_rs: float = 0.0               # search-only ₹ per tower on hill ground (set on the surcharged copy)
     # solver edge-geometry cache, shared with the forest-priced copies of this compile (11 Oct 2026);
     # None = no caching (e.g. the tower-move checker)
     edge_cache: dict | None = None
@@ -188,6 +190,36 @@ def attach_terrain(comp: "Compiled", dem, hilly_slope_deg: float) -> None:
     slope = np.degrees(np.arctan(np.hypot(gx, gy)))
     comp.ground_z = z
     comp.hilly = (slope >= hilly_slope_deg) & np.isfinite(z)
+
+
+def attach_hill_area(comp: "Compiled", relief_m: float, radius_m: float, mean_slope_deg: float,
+                     slope_window_m: float, min_area_ha: float) -> None:
+    """Hill ground on the rule grid (Vivek, 14 Oct 2026): local relief (highest minus lowest ground within
+    radius_m) of at least relief_m AND mean slope over slope_window_m of at least mean_slope_deg; patches
+    under min_area_ha dropped (tree clumps, embankments and flyovers in the Copernicus surface model).
+    Needs attach_terrain first; sets comp.hill_area (bool) or None without a DEM."""
+    z = getattr(comp, "ground_z", None)
+    if z is None or not np.isfinite(z).any():
+        comp.hill_area = None
+        return
+    res = comp.frame.res_m
+    zf = np.where(np.isfinite(z), z, np.nanmean(z)).astype(np.float32)
+    r = max(1, int(round(radius_m / res)))
+    yy, xx = np.mgrid[-r:r + 1, -r:r + 1]
+    fp = np.hypot(yy, xx) <= r
+    relief = ndimage.maximum_filter(zf, footprint=fp, mode="nearest") - ndimage.minimum_filter(zf, footprint=fp, mode="nearest")
+    gy, gx = np.gradient(ndimage.uniform_filter(zf, size=3, mode="nearest"), res)
+    slope = np.degrees(np.arctan(np.hypot(gx, gy)))
+    w = max(1, int(round(slope_window_m / res)))
+    mslope = ndimage.uniform_filter(slope, size=w, mode="nearest")
+    m = (relief >= relief_m) & (mslope >= mean_slope_deg) & np.isfinite(z)
+    lab, n = ndimage.label(m)
+    if n:
+        sizes = ndimage.sum(m, lab, index=np.arange(1, n + 1)) * res * res / 1e4
+        keep = np.zeros(n + 1, bool)
+        keep[1:] = sizes >= min_area_ha
+        m = keep[lab]
+    comp.hill_area = m
 
 
 # ----------------------------------------------------------------------------------------

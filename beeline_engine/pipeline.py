@@ -18,7 +18,7 @@ from shapely.geometry import LineString, Point, box
 from shapely.ops import unary_union
 
 from . import dem as demmod
-from .compile import COST_CLASS_CODES, merge_approach, attach_terrain, compile_rules
+from .compile import COST_CLASS_CODES, merge_approach, attach_terrain, attach_hill_area, compile_rules
 from .config import TOWER_TYPES, LineSpec, load_engine, load_layers, resolve_costs, resolve_rules
 from .events import event
 from .frame import Frame
@@ -256,9 +256,17 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
     prox_tdisc = float(_pr.params.get("tower_discount_pct", 0) or 0) / 100.0 if _pr is not None and _pr.enabled else 0.0
     # terrain in the search: the DEM on the rule grid; costs from the same tables the spotting uses
     terrain = dem is not None and dem.ok
+    # hill ground (Vivek, 14 Oct 2026): local relief + mean slope from the DEM, avoided through a search surcharge
+    _ds = rules["design_span"].params
+    hill_cfg = dict(relief_m=float(_ds.get("hill_relief_m", 25)), radius_m=float(_ds.get("hill_relief_radius_m", 250)),
+                    mean_slope_deg=float(_ds.get("hill_mean_slope_deg", 3)), slope_window_m=float(_ds.get("hill_slope_window_m", 270)),
+                    min_area_ha=float(_ds.get("hill_min_area_ha", 5)))
+    hill_rs_m = float(_ds.get("hill_surcharge_cr_km", 0) or 0) * RS_PER_CR_ / 1000.0
+    hill_rs_tower = float(_ds.get("hill_tower_surcharge_cr", 0) or 0) * RS_PER_CR_
     if terrain:
         t = time.time()
         attach_terrain(comp, dem, float(eng["spotting"].get("hilly_slope_deg", 10)))
+        attach_hill_area(comp, **hill_cfg)
         timings["terrain_s"] = round(time.time() - t, 2)
     hilly_m = float(rules["design_span"].params["hilly_m"])
     _fr = rules.get("forest")
@@ -302,8 +310,6 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
                         extension_cost_hilly_rs=tower_cost["B1"] * ext_pct * ext_max_abc / 18.0,
                         hilly_span_max_m=hilly_m, plain_span_max_m=smax,
                         hilly_tower_extra_rs=max(0.0, tower_cost["B1"] - tower_cost["A"]),
-                        hilly_surcharge_rs_per_m=float(rules["design_span"].params.get("hilly_surcharge_cr_km", 0) or 0) * 1e7 / 1000.0,
-                        hilly_tower_surcharge_rs=float(rules["design_span"].params.get("hilly_tower_surcharge_cr", 0) or 0) * 1e7,
                         hilly_rise_m=hilly_rise, extension_pct=ext_pct * 100.0,
                         span_sum=tsd["span_sum"] if tsd else None,
                         single_span_fraction=float(tsd.get("single_span_fraction", 0.6)) if tsd else 0.6,
@@ -333,8 +339,6 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
                     hilly_section_km=float(rules["section_interval"].params["hilly_km"]),
                     hilly_rise_m=hilly_rise, tsd=tsd, approach_length_m=ap_len, approach_span_m=ap_span,
                     proximity_discount=prox_disc, proximity_tower_discount=prox_tdisc, extension_pct=ext_pct * 100.0,
-                    hilly_surcharge_rs_per_m=float(rules["design_span"].params.get("hilly_surcharge_cr_km", 0) or 0) * 1e7 / 1000.0,
-                    hilly_tower_surcharge_rs=float(rules["design_span"].params.get("hilly_tower_surcharge_cr", 0) or 0) * 1e7,
                     section_spans=int(rules["section_interval"].params.get("plain_spans") or 0) or None,
                     hilly_section_spans=int(rules["section_interval"].params.get("hilly_spans") or 0) or None)
 
@@ -386,6 +390,7 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
                     c.edge_cache = {}
                     if terrain:
                         attach_terrain(c, dem, float(eng["spotting"].get("hilly_slope_deg", 10)))
+                        attach_hill_area(c, **hill_cfg)
                 relaxed_box[key] = c
             return relaxed_box[key]
     # forest surcharge (Vivek, 14 Oct 2026): the search sees reserve forest at + search_surcharge_cr_ha per ha of
@@ -396,11 +401,17 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
     sur_box: dict = {}
 
     def _srch(c, var_):
-        if sur_rs_m2 <= 0 or var_.get("relaxed"):
+        if var_.get("relaxed"):
+            return c
+        want_hill = (hill_rs_m > 0 or hill_rs_tower > 0) and getattr(c, "hill_area", None) is not None
+        if sur_rs_m2 <= 0 and not want_hill:
             return c
         with relaxed_lock:
             if id(c) not in sur_box:
-                sur_box[id(c)] = _forest_surcharged(c, sur_rs_m2)
+                cs = _forest_surcharged(c, sur_rs_m2) if sur_rs_m2 > 0 else c
+                if want_hill:
+                    cs = _hill_surcharged(cs, hill_rs_m, hill_rs_tower)
+                sur_box[id(c)] = cs
             return sur_box[id(c)]
     cap_cfg = eng.get("forest_cap") or {}
     cap_mults = [float(m) for m in (cap_cfg.get("multipliers") or (10, 30))]
@@ -588,7 +599,7 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
     timings["total_s"] = round(time.time() - t_start, 2)
     _drop_edge_caches([comp] + list(relaxed_box.values()))
     return {"feasible": True, "routes": routes, "events_global": global_events, "timings": timings,
-            "frame": _frame_info(frame), "rules_fired": comp.rules_fired,
+            "frame": _frame_info(frame), "rules_fired": comp.rules_fired, "hill_areas": _hill_geojson(comp),
             "line": {"kv": inp.kv, "circuit": inp.circuit, "half_width_m": hw, "design_span_m": design,
                      "span_min_m": smin, "span_max_m": smax}}
 
@@ -708,6 +719,41 @@ def _forest_surcharged(base, rs_per_m2: float):
     sd = base.strip_density.copy()
     sd[fm] += np.float32(rs_per_m2)
     c.strip_density = sd
+    return c
+
+
+def _hill_geojson(comp):
+    """Hill ground as lon/lat polygons for the map (14 Oct 2026); None without a DEM."""
+    m = getattr(comp, "hill_area", None)
+    if m is None or not m.any():
+        return None
+    from rasterio import features as rfeat
+    from affine import Affine
+    from shapely.geometry import shape, mapping
+    from shapely.ops import transform as stransform
+    f = comp.frame
+    tr = Affine(f.res_m, 0, f.x0, 0, -f.res_m, f.y_top)
+    feats = []
+    for g, v in rfeat.shapes(m.astype(np.uint8), mask=m, transform=tr):
+        poly = shape(g).simplify(f.res_m, preserve_topology=True)
+        ll = stransform(lambda x, y, z=None: f.frame_to_lonlat(np.asarray(x), np.asarray(y)), poly)
+        feats.append({"type": "Feature", "properties": {"ha": round(poly.area / 1e4, 1)}, "geometry": mapping(ll)})
+    return {"type": "FeatureCollection", "features": feats}
+
+
+def _hill_surcharged(base, rs_per_m: float, rs_tower: float):
+    """Shallow copy with the hill surcharge (Vivek, 14 Oct 2026): + rs_per_m per metre of line over hill
+    ground (spread over the RoW width in the strip density) and + rs_tower per tower standing on it
+    (site cost for the search, hill_tower_rs for the spotting). Search only: routes are costed on the base."""
+    c = copy.copy(base)
+    hm = base.hill_area
+    sd = base.strip_density.copy()
+    sd[hm] += np.float32(rs_per_m / (2.0 * base.half_width_m))
+    c.strip_density = sd
+    sc = base.site_cost.copy()
+    sc[hm] += np.float32(rs_tower)
+    c.site_cost = sc
+    c.hill_tower_rs = float(rs_tower)
     return c
 
 
