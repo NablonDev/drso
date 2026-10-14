@@ -63,6 +63,7 @@ class CrossingRaster:
     null_allowed: float = 0.2
     side_m: tuple[float, float] | None = None        # each crossing tower this far from the crossed wire (min, max)
     side_relax_rs_per_m: float = 0.0                 # beyond the max: allowed at this search cost per metre (14 Oct 2026)
+    band_half_m: float = 0.0                         # half-width of the wire's hit band (angle_nearest within_m)
     max_dev_deg: float | None = None                 # deviation cap at the two crossing towers
     penalty_rs: float = 0.0                          # search cost of a non-preferred crossing
 
@@ -1040,6 +1041,7 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
             for x in built:
                 x.pref_window = pref_win
                 x.side_m = side_m
+                x.band_half_m = frame.res_m * 1.5
                 x.max_dev_deg = float(mdev) if mdev is not None else None
                 if r.id in ("power_line", "power_line_lt"):
                     x.pref_mask = pref_mask

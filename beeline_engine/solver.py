@@ -400,8 +400,11 @@ def _edge_geom(compiled: Compiled, grid: Grid, p: SolverParams, rasters: "_Raste
             # tower a to the first wire it crosses, tower b to the last (one span may cross two lines side by side)
             last = (n_samples - 1) - torch.argmax(hit.flip(-1).to(torch.int8), dim=-1)
             step = length / float(n_samples - 1)
-            d1 = first.squeeze(-1).float() * step
-            d2 = length - last.float() * step
+            # perpendicular distance to the wire itself (Vivek, 14 Oct 2026): along-span distance to the band edge
+            # x sin(crossing angle) + the band half-width; the spotting measures it exactly
+            sin_c = torch.sin(torch.deg2rad(acute)).clamp(min=0.05)
+            d1 = first.squeeze(-1).float() * step * sin_c + float(cr.band_half_m)
+            d2 = (length - last.float() * step) * sin_c + float(cr.band_half_m)
             lo, hi = cr.side_m
             sl = p.crossing_span_slack_m
             # the minimum keeps the lattice slack: with it removed the search closed the Shivlaka end (rev 30);

@@ -247,10 +247,25 @@ class Checker:
             acute = min(d, 180.0 - d)
             # the crossed feature sits at the middle of its hit samples; distances from each tower to it
             mid = (first + last) / 2.0 * step
-            sa, sb = first * step, L - last * step          # to the first / last wire crossed on this span
+            # perpendicular distance from each crossing tower to the wire (Vivek, 14 Oct 2026: to the wire itself,
+            # not to the edge of its raster band): the wire is the middle of the first / last run of hit samples
+            # (one span may cross two lines side by side); along-span distance x sin(crossing angle)
+            idx = np.flatnonzero(hit)
+            brk = np.flatnonzero(np.diff(idx) > 2)
+            r0_end = idx[brk[0]] if len(brk) else idx[-1]
+            rl_start = idx[brk[-1] + 1] if len(brk) else idx[0]
+            along_a = (first + r0_end) / 2.0 * step
+            along_b = L - (rl_start + last) / 2.0 * step
+            sin_a = max(math.sin(math.radians(acute)), 0.05)
+            sa, sb = along_a * sin_a, along_b * sin_a
+            if cr.rule_id in ("power_line", "power_line_lt"):
+                ex = _wire_sides(self, cr.rule_id, p, q)          # exact, from the wire geometry
+                if ex is not None:
+                    sa, sb, along_a, along_b = ex
             item = {"rule": cr.rule_id, "name": cr.name, "angle_deg": round(acute, 1), "span_m": round(L, 1),
                     "min_type": cr.min_type, "cost_rs": cr.cost_rs, "major": False,
-                    "side_a_m": round(sa, 1), "side_b_m": round(sb, 1)}
+                    "side_a_m": round(sa, 1), "side_b_m": round(sb, 1),
+                    "along_a_m": round(along_a, 1), "along_b_m": round(along_b, 1)}
             if getattr(cr, "extension_m", 0):
                 item["extension_m"] = cr.extension_m
             if getattr(cr, "long_span", False):
@@ -995,14 +1010,18 @@ def _crossing_side_fix(chk: Checker, pts, sp: SpotParams):
         # placed again when a tower is outside its window, or stands in another buffer next to the crossing
         # (14 Oct 2026: e.g. a second line beside the crossed one — the span then relaxes as far as needed)
         towers_bad = not (chk.tower_ok(p[0], p[1], True) and chk.tower_ok(q[0], q[1], True))
-        if not items or (all(it.get("violation") != "side" for it in items) and not towers_bad):
+        # 14 Oct 2026: a relaxed crossing (towers beyond the maximum) is placed again too, accepting only less excess
+        relaxed_now = max((it.get("side_relaxed_m") or 0.0 for it in items), default=0.0)
+        if not items or (all(it.get("violation") != "side" for it in items) and not towers_bad and relaxed_now <= 0.5):
             i += 1
             continue
+        only_better = relaxed_now > 0.5 and all(it.get("violation") != "side" for it in items) and not towers_bad
         it = items[0]
         lo, hi = it["side_window_m"]
         ux, uy = (q[0] - p[0]) / L, (q[1] - p[1]) / L
-        X = (p[0] + ux * it["side_a_m"], p[1] + uy * it["side_a_m"])       # the (first) crossed wire on the alignment
-        gap = max(0.0, L - it["side_a_m"] - it["side_b_m"])                  # to the last wire, when one span crosses two
+        X = (p[0] + ux * it["along_a_m"], p[1] + uy * it["along_a_m"])     # the (first) crossed wire on the alignment
+        gap = max(0.0, L - it["along_a_m"] - it["along_b_m"])                # to the last wire, when one span crosses two
+        s_ang = max(math.sin(math.radians(it["angle_deg"])), 0.05)          # window distances are perpendicular to the wire
         # the straight run this span belongs to: from the previous turn (or dead-end) to the next
         run_start = i
         while run_start > 1 and _deflection(pts[run_start - 1], pts[run_start], pts[run_start + 1])[0] < 1.0:
@@ -1017,11 +1036,13 @@ def _crossing_side_fix(chk: Checker, pts, sp: SpotParams):
         steps = [lo + 2 + 4 * k for k in range(int((hi - lo - 4) // 4) + 1)]
         combos = sorted(((da, db) for da in steps for db in steps), key=lambda c_: abs(c_[0] - mid) + abs(c_[1] - mid))
         far = [hi + 4 * k for k in range(1, int(max(0.0, sp.span_max_m - lo - hi - gap) // 4) + 1)]
-        ext = [(da, db) for da in steps + far for db in steps + far if (da > hi or db > hi) and da + db + gap <= sp.span_max_m]
+        ext = [(da, db) for da in steps + far for db in steps + far if (da > hi or db > hi) and (da + db) / s_ang + gap <= sp.span_max_m]
         combos += sorted(ext, key=lambda c_: (max(0, c_[0] - hi) + max(0, c_[1] - hi), abs(c_[0] - c_[1])))
+        if only_better:
+            combos = [c_ for c_ in combos if max(0, c_[0] - hi) + max(0, c_[1] - hi) < relaxed_now - 0.5]
         for da, db in combos:
-            p2 = (X[0] - ux * da, X[1] - uy * da)
-            q2 = (X[0] + ux * (gap + db), X[1] + uy * (gap + db))
+            p2 = (X[0] - ux * da / s_ang, X[1] - uy * da / s_ang)
+            q2 = (X[0] + ux * (gap + db / s_ang), X[1] + uy * (gap + db / s_ang))
             if not (chk.tower_ok(p2[0], p2[1], True) and chk.tower_ok(q2[0], q2[1], True)):
                 log.debug("side fix %d: towers at %g/%g m not legal", i, da, db)
                 continue
@@ -1062,6 +1083,38 @@ def _crossing_side_fix(chk: Checker, pts, sp: SpotParams):
 
 
 # ---- fine local re-optimisation round power-line crossings (Vivek, 14 Oct 2026) -------------------
+
+def _wire_sides(chk, rule_id, p, q):
+    """Exact perpendicular distances (sa, sb) from towers p and q to the first / last existing wire of rule_id
+    their span crosses, and the along-span distances to those crossing points (14 Oct 2026). None if the
+    geometry finds no crossing (the raster then decides)."""
+    from shapely.geometry import LineString as _LS, Point as _Pt
+    tree = getattr(chk, "_wire_tree", None)
+    if tree is None:
+        from shapely import STRtree
+        ws = _wires(chk)
+        chk._wire_list = ws
+        chk._wire_tree = tree = STRtree([ln for _, ln, _ in ws]) if ws else False
+    if tree is False:
+        return None
+    seg = _LS([p, q])
+    hits = []
+    for j in tree.query(seg):
+        rid, ln, _ = chk._wire_list[j]
+        if rid != rule_id:
+            continue
+        x = seg.intersection(ln)
+        if x.is_empty:
+            continue
+        for g in getattr(x, "geoms", [x]):
+            if g.geom_type == "Point":
+                hits.append((seg.project(g), ln))
+    if not hits:
+        return None
+    hits.sort(key=lambda h: h[0])
+    (ta, la), (tb, lb) = hits[0], hits[-1]
+    return la.distance(_Pt(p)), lb.distance(_Pt(q)), ta, seg.length - tb
+
 def _wires(chk: Checker):
     """[(rule_id, wire LineString, sorted tower positions along it)] of the existing power lines (frame)."""
     if getattr(chk, "_wire_cache", None) is not None:
@@ -1186,13 +1239,14 @@ def _refine_crossings(chk: Checker, pts, sp: SpotParams):
             for ang in range(int(cr.window[0]) if cr.window else 70, 91, 4):
                 for sgn in ((1, -1) if ang < 90 else (1,)):
                     th = math.radians(ang) * sgn
+                    s_th = max(math.sin(math.radians(ang)), 0.05)      # da / db are perpendicular to the wire (14 Oct 2026)
                     ux, uy = wx * math.cos(th) - wy * math.sin(th), wx * math.sin(th) + wy * math.cos(th)
                     if ux * AB[0] + uy * AB[1] < 0:
                         ux, uy = -ux, -uy
                     # legal crossing-tower spots on each side, with their legs out to A / B (cached per spot)
                     P_ok = []
                     for da in sides + far:
-                        p = (X.x - ux * da, X.y - uy * da)
+                        p = (X.x - ux * da / s_th, X.y - uy * da / s_th)
                         if chk.tower_ok(p[0], p[1], True):
                             lg = leg(legs_l, A, p, (round(p[0], 1), round(p[1], 1)), True)
                             if lg is not None:
@@ -1201,14 +1255,14 @@ def _refine_crossings(chk: Checker, pts, sp: SpotParams):
                         continue
                     Q_ok = []
                     for db in sides + far:
-                        q = (X.x + ux * db, X.y + uy * db)
+                        q = (X.x + ux * db / s_th, X.y + uy * db / s_th)
                         if chk.tower_ok(q[0], q[1], True):
                             lg = leg(legs_r, q, B, (round(q[0], 1), round(q[1], 1)), False)
                             if lg is not None:
                                 Q_ok.append((db, q, lg))
                     for da, p, (left, lcost) in P_ok:
                         for db, q, (right, rcost) in Q_ok:
-                            if da + db > sp.span_max_m:
+                            if (da + db) / s_th > sp.span_max_m:
                                 continue
                             chain = [A] + list(left) + [p, q] + list(right) + [B]
                             if any(math.hypot(chain[m + 1][0] - chain[m][0], chain[m + 1][1] - chain[m][1]) < sp.min_span_m - 1e-6
