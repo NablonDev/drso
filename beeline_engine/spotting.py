@@ -58,6 +58,8 @@ class SpotParams:
     nudge_radius_m: float = 30.0
     raster_prefilter: bool = True         # skip the vector tower rules in clearly free cells (11 Oct 2026)
     gantry_min_span_m: float = 0.0        # gantry to first / last tower, at least (Vivek, 13 Oct 2026)
+    refine_crossings: bool = True         # fine local re-optimisation round power-line crossings (14 Oct 2026)
+    refine_step_m: float = 10.0
     # hilly terrain (rules design_span.hilly_m, section_interval.hilly_km; engine hilly_slope_deg)
     hilly_design_span_m: float | None = None
     hilly_section_km: float | None = None
@@ -596,6 +598,8 @@ def build_route(chk: Checker, pts: list[tuple[float, float]], angle_set: set[int
     added = set()
     pts = _snap_to_legal(chk, pts, sp)
     pts = _crossing_span_fix(chk, pts, sp)
+    if sp.refine_crossings and angle_set is None:      # the final, string-pulled alignment
+        pts = _refine_crossings(chk, pts, sp)
     if sp.tsd:
         pts = _wind_span_fix(chk, pts, sp)
         pts = _angle_span_fix(chk, pts, sp)
@@ -994,6 +998,197 @@ def _crossing_side_fix(chk: Checker, pts, sp: SpotParams):
                 break
         if not done:
             log.info("crossing span %d-%d: no placement within %g-%g m of the crossed wire", i, i + 1, lo, hi)
+        i += 1
+    return pts
+
+
+# ---- fine local re-optimisation round power-line crossings (Vivek, 14 Oct 2026) -------------------
+def _wires(chk: Checker):
+    """[(rule_id, wire LineString, sorted tower positions along it)] of the existing power lines (frame)."""
+    if getattr(chk, "_wire_cache", None) is not None:
+        return chk._wire_cache
+    from shapely.geometry import LineString as _LS
+    from shapely import STRtree
+    lines, towers, seen = [], {}, set()
+    for r in chk.tower_rules:                 # the approach and the normal compile carry the same features
+        if r.rule_id not in ("power_line", "power_line_lt"):
+            continue
+        for g in r.geoms:
+            if g.geom_type == "Point":
+                key = (r.rule_id, round(g.x, 1), round(g.y, 1))
+                if key not in seen:
+                    seen.add(key)
+                    towers.setdefault(r.rule_id, []).append(g)
+            else:
+                for x in getattr(g, "geoms", [g]):
+                    key = (r.rule_id, x.wkb)
+                    if x.geom_type == "LineString" and x.length > 0 and key not in seen:
+                        seen.add(key)
+                        lines.append((r.rule_id, x))
+    out = []
+    for rid, ln in lines:
+        tw = towers.get(rid, [])
+        tree = STRtree(tw) if tw else None
+        pos = sorted(ln.project(tw[j]) for j in tree.query(ln.buffer(15.0)) if ln.distance(tw[j]) <= 15.0) if tree is not None else []
+        out.append((rid, ln, pos))
+    chk._wire_cache = out
+    return out
+
+
+def _refine_crossings(chk: Checker, pts, sp: SpotParams):
+    """Each power-line crossing re-optimised on a fine grid: the crossing point slides along the existing wire
+    within the allowed band (refine_step_m), the line's angle to it varies over the allowed window, the two
+    crossing towers stand in (or, at a price, beyond) their distance window, and the spans out to the towers
+    two before and three after are spotted again. Every candidate passes the exact checks; the cheapest
+    (towers, line, RoW, plus the crossing preferences priced as in the search) replaces the coarse layout."""
+    from shapely.geometry import LineString as _LS, Point as _Pt
+    from .config import tower_type_for
+    pts = list(pts)
+    crs = {cr.rule_id: cr for cr in chk.c.crossings if getattr(cr, "side_m", None) is not None}
+    if not crs:
+        return pts
+    wires = _wires(chk)
+    i = 3
+    while i < len(pts) - 4:
+        p0, q0 = pts[i], pts[i + 1]
+        seg = _LS([p0, q0])
+        hit = [(rid, ln, pos) for rid, ln, pos in wires if rid in crs and ln.intersects(seg)]
+        if len(hit) != 1:
+            i += 1
+            continue
+        rid, ln, pos = hit[0]
+        cr = crs[rid]
+        lo, hi = cr.side_m
+        X0 = ln.intersection(seg)
+        X0 = X0 if X0.geom_type == "Point" else X0.centroid
+        s0 = ln.project(X0)
+        a_ = max([v for v in pos if v <= s0], default=None)
+        b_ = min([v for v in pos if v >= s0], default=None)
+        if a_ is not None and b_ is not None and b_ > a_:
+            span = b_ - a_
+            mid = (a_ + b_) / 2
+            band = (mid - cr.null_allowed * span, mid + cr.null_allowed * span)
+        else:
+            span, mid, band = None, s0, (s0 - 60.0, s0 + 60.0)
+        A, B = pts[i - 2], pts[i + 3]
+        AB = (B[0] - A[0], B[1] - A[1])
+        step = sp.refine_step_m
+        n_s = int((band[1] - band[0]) // step) + 1
+        sides = [lo + 2 + 6 * k for k in range(int((hi - lo - 4) // 6) + 1)]
+        far = [hi + 10 * k for k in range(1, 7)] if getattr(cr, "side_relax_rs_per_m", 0) > 0 else []
+
+        def cost_of(chain, sx, ang, da, db):
+            inner = [tower_type_for(_deflection(chain[k - 1], chain[k], chain[k + 1])[0], sp.type_bands) or "D60"
+                     for k in range(1, len(chain) - 1)]
+            c = _chain_cost(chk.c, sp, chain, inner)
+            if span:
+                c += min(1.0, abs(sx - mid) / span / max(cr.null_allowed, 1e-6)) * cr.penalty_rs
+            if cr.pref_window is not None and ang < cr.pref_window[0] - 1e-3:
+                c += cr.penalty_rs
+            c += (max(0.0, da - hi) + max(0.0, db - hi)) * getattr(cr, "side_relax_rs_per_m", 0.0)
+            return c
+
+        best = None
+        legs_l: dict = {}
+        legs_r: dict = {}
+        j0 = i - 2
+
+        def leg(cache, a, b, key, from_a):
+            """(inner towers, cost of the leg's spans and inner towers) — cached per crossing-tower spot."""
+            if key not in cache:
+                inner = _spot_leg(chk, a, b, sp)
+                if inner is None:
+                    cache[key] = None
+                else:
+                    ch = [a] + list(inner) + [b]
+                    ty = [tower_type_for(_deflection(ch[k - 1], ch[k], ch[k + 1])[0], sp.type_bands) or "D60"
+                          for k in range(1, len(ch) - 1)]
+                    cache[key] = (inner, _chain_cost(chk.c, sp, ch, ty))
+            return cache[key]
+
+        f_ = chk.c.frame
+
+        def tower_rs(pt, prev, nxt):
+            t = tower_type_for(_deflection(prev, pt, nxt)[0], sp.type_bands) or "D60"
+            px = int(np.clip((pt[0] - f_.x0) / f_.res_m, 0, f_.width - 1))
+            py = int(np.clip((f_.y_top - pt[1]) / f_.res_m, 0, f_.height - 1))
+            return sp.tower_cost_rs[t] + _tower_site_rs(chk.c, t, px, py)
+
+        for k in range(n_s):
+            sx = band[0] + k * step
+            if sx < 0 or sx > ln.length:
+                continue
+            X = ln.interpolate(sx)
+            t1 = ln.interpolate(min(ln.length, sx + 1.0))
+            t0 = ln.interpolate(max(0.0, sx - 1.0))
+            wx, wy = t1.x - t0.x, t1.y - t0.y
+            wn = math.hypot(wx, wy) or 1.0
+            wx, wy = wx / wn, wy / wn
+            for ang in range(int(cr.window[0]) if cr.window else 70, 91, 4):
+                for sgn in ((1, -1) if ang < 90 else (1,)):
+                    th = math.radians(ang) * sgn
+                    ux, uy = wx * math.cos(th) - wy * math.sin(th), wx * math.sin(th) + wy * math.cos(th)
+                    if ux * AB[0] + uy * AB[1] < 0:
+                        ux, uy = -ux, -uy
+                    # legal crossing-tower spots on each side, with their legs out to A / B (cached per spot)
+                    P_ok = []
+                    for da in sides + far:
+                        p = (X.x - ux * da, X.y - uy * da)
+                        if chk.tower_ok(p[0], p[1], True):
+                            lg = leg(legs_l, A, p, (round(p[0], 1), round(p[1], 1)), True)
+                            if lg is not None:
+                                P_ok.append((da, p, lg))
+                    if not P_ok:
+                        continue
+                    Q_ok = []
+                    for db in sides + far:
+                        q = (X.x + ux * db, X.y + uy * db)
+                        if chk.tower_ok(q[0], q[1], True):
+                            lg = leg(legs_r, q, B, (round(q[0], 1), round(q[1], 1)), False)
+                            if lg is not None:
+                                Q_ok.append((db, q, lg))
+                    for da, p, (left, lcost) in P_ok:
+                        for db, q, (right, rcost) in Q_ok:
+                            if da + db > sp.span_max_m:
+                                continue
+                            chain = [A] + list(left) + [p, q] + list(right) + [B]
+                            if any(math.hypot(chain[m + 1][0] - chain[m][0], chain[m + 1][1] - chain[m][1]) < sp.min_span_m - 1e-6
+                                   for m in range(len(chain) - 1)):
+                                continue
+                            full = pts[:i - 2] + chain + pts[i + 4:]
+                            if any(_deflection(full[m - 1], full[m], full[m + 1])[0] > sp.max_dev_deg + 1e-6
+                                   for m in range(max(1, j0), min(len(full) - 1, j0 + len(chain)))):
+                                continue
+                            # legs cached; the crossing span and the two crossing towers per pair
+                            c = (lcost + rcost + _chain_cost(chk.c, sp, [p, q], [])
+                                 + tower_rs(p, chain[len(left)], q) + tower_rs(q, p, chain[len(left) + 3]))
+                            if span:
+                                c += min(1.0, abs(sx - mid) / span / max(cr.null_allowed, 1e-6)) * cr.penalty_rs
+                            if cr.pref_window is not None and ang < cr.pref_window[0] - 1e-3:
+                                c += cr.penalty_rs
+                            c += (max(0.0, da - hi) + max(0.0, db - hi)) * getattr(cr, "side_relax_rs_per_m", 0.0)
+                            if best is not None and c >= best[0]:
+                                continue
+                            # the exact checks last, only for a candidate that would win
+                            if not (chk.conductor_ok(p, q) and chk.span_crossings(p, q)[0]):
+                                continue
+                            if any(_deflection(full[m - 1], full[m], full[m + 1])[0] > _dev_cap(chk, sp, full[m - 1], full[m], full[m + 1]) + 1e-6
+                                   for m in range(max(1, j0), min(len(full) - 1, j0 + len(chain)))):
+                                continue
+                            best = (c, full, j0 + 1 + len(left))
+        if best is not None:
+            cur = pts[i - 2:i + 4]
+            cur_ok = all(chk.tower_ok(v[0], v[1], True) for v in cur[1:-1]) and all(
+                chk.conductor_ok(cur[m], cur[m + 1]) and chk.span_crossings(cur[m], cur[m + 1])[0] for m in range(len(cur) - 1))
+            it0 = [x for x in chk.span_crossings(p0, q0)[1] if x.get("rule") == rid]
+            cur_cost = cost_of(cur, s0, it0[0]["angle_deg"], it0[0]["side_a_m"], it0[0]["side_b_m"]) if it0 else float("inf")
+            log.debug("refine %d-%d: coarse %.0f (legal %s), best %.0f", i, i + 1, cur_cost, cur_ok, best[0])
+            if not cur_ok or best[0] < cur_cost - 1.0:
+                pts = best[1]
+                i = best[2] + 2
+                continue
+        else:
+            log.info("crossing %d-%d (%s): no legal layout within the refinement reach", i, i + 1, rid)
         i += 1
     return pts
 

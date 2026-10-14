@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 import threading
 import time
 from dataclasses import dataclass
@@ -401,7 +402,9 @@ def _edge_geom(compiled: Compiled, grid: Grid, p: SolverParams, rasters: "_Raste
             d2 = length - last.float() * step
             lo, hi = cr.side_m
             sl = p.crossing_span_slack_m
-            bad |= (d1 < lo) | (d2 < lo)                 # the minimum without lattice slack (14 Oct 2026)
+            # the minimum keeps the lattice slack: with it removed the search closed the Shivlaka end (rev 30);
+            # the fine re-optimisation round each crossing (spotting) places the towers exactly (14 Oct 2026)
+            bad |= (d1 < lo - sl) | (d2 < lo - sl)
             if cr.side_relax_rs_per_m > 0:
                 # beyond the maximum only as far as needed (Vivek, 14 Oct 2026): priced per metre of excess
                 excess = (d1 - hi - sl).clamp(min=0.0) + (d2 - hi - sl).clamp(min=0.0)

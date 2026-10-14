@@ -525,6 +525,9 @@ groups:
           # forest ×3 / ×10 / ×30 until the route is under the cap; the reported cost uses the true prices.
           # 0 = no cap. The relaxed route is exempt.
           - {key: max_area_ha, label: "Max reserve forest per route (strict routes)", type: num, unit: ha, value: 5}
+          # Vivek, 14 Oct 2026: one search with forest made dearer instead of the ×3/×10/×30/×100 re-runs; the
+          # loop only runs if the route is still over the cap. ₹1 Cr/ha ≈ what the ×30 pass used to add.
+          - {key: search_surcharge_cr_ha, label: "Search surcharge on reserve forest (not in the reported cost)", type: num, unit: "₹ Cr/ha", value: 1.0}
 
       - id: agriculture
         name: "Agricultural land"

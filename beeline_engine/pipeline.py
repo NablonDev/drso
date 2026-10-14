@@ -384,6 +384,20 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
                         attach_terrain(c, dem, float(eng["spotting"].get("hilly_slope_deg", 10)))
                 relaxed_box[key] = c
             return relaxed_box[key]
+    # forest surcharge (Vivek, 14 Oct 2026): the search sees reserve forest at + search_surcharge_cr_ha per ha of
+    # RoW on top of its true price, so one pass keeps the route out of forest unless avoiding it costs more;
+    # the ×-multiplier cap loop below stays as the fallback when the result is still over the cap
+    _fr2 = rules.get("forest")
+    sur_rs_m2 = float((_fr2.params.get("search_surcharge_cr_ha") if _fr2 is not None and _fr2.enabled else 0) or 0) * RS_PER_CR_ / 1e4
+    sur_box: dict = {}
+
+    def _srch(c, var_):
+        if sur_rs_m2 <= 0 or var_.get("relaxed"):
+            return c
+        with relaxed_lock:
+            if id(c) not in sur_box:
+                sur_box[id(c)] = _forest_surcharged(c, sur_rs_m2)
+            return sur_box[id(c)]
     cap_cfg = eng.get("forest_cap") or {}
     cap_mults = [float(m) for m in (cap_cfg.get("multipliers") or (10, 30))]
     cap_margin = float(cap_cfg.get("grid_check_margin", 0) or 0)      # 0 = spot every pass
@@ -420,7 +434,7 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
             # second least cost: least cost kept out of route `apart_from`'s corridor
             p.extra_strip_rs_per_m = _penalty_raster(cv, [apart_line], eng["diversity"])
             diversity_ev = event("APART_FROM", {"route": var["id"], "other": apart})
-        out = solve(cv, p, cancel_check=check_cancel, progress=sub)
+        out = solve(_srch(cv, var), p, cancel_check=check_cancel, progress=sub)
         precedent_ev = None
         prec_used = False
         if not out.feasible and precedent_on:
@@ -428,7 +442,7 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
             vprog(vi, 0.35, f"Route {var['id']}: easing areas existing towers already stand in")
             cvp = compiled_variant(bool(var.get("relaxed")), precedent=True)
             if cvp.precedent_items:
-                out_p = solve(cvp, p, cancel_check=check_cancel, progress=sub)
+                out_p = solve(_srch(cvp, var), p, cancel_check=check_cancel, progress=sub)
                 if out_p.feasible:
                     out, cv = out_p, cvp
                     prec_used = True
@@ -442,7 +456,7 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
                 if overlap > 1 - eng["diversity"]["min_distinct_fraction"]:
                     pen = _penalty_raster(cv, prev_lines, eng["diversity"])
                     p.extra_strip_rs_per_m = pen
-                    out2 = solve(cv, p, cancel_check=check_cancel, progress=sub)
+                    out2 = solve(_srch(cv, var), p, cancel_check=check_cancel, progress=sub)
                     if out2.feasible:
                         out = out2
                         diversity_ev = event("DIVERSITY", {"route": var["id"], "overlap_pct": overlap * 100,
@@ -455,7 +469,12 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
         pts = [out.grid.site_xy(c, r) for c, r in out.sites]
         pts = [(float(x), float(y)) for x, y in pts]
         t = time.time()
-        sr = spot(cv, pts, sp, dem=dem)
+        cvs = _srch(cv, var)
+        sr = spot(cvs, pts, sp, dem=dem)
+        if cvs is not cv:
+            # spotted on the forest-surcharged compile (string pulling is cost-aware); costed at true prices
+            cost2, stats2 = route_cost(cv, sr.towers, sr.spans, sp)
+            sr = SpottedRoute(sr.towers, sr.spans, cost2, stats2, sr.method)
         spot_s = time.time() - t
         forest_ev = None
         cap_passes: list = []
@@ -672,6 +691,20 @@ def _drop_edge_caches(comps) -> None:
         cache = getattr(c, "edge_cache", None)
         if cache:
             cache.clear()
+
+
+RS_PER_CR_ = 1e7
+
+
+def _forest_surcharged(base, rs_per_m2: float):
+    """Shallow copy of a compile with rs_per_m2 added to the strip cost of every reserve-forest cell (search
+    and spotting only; the route is costed on the base). Shares the edge-geometry cache (14 Oct 2026)."""
+    c = copy.copy(base)
+    fm = base.cost_class == COST_CLASS_CODES["forest"]
+    sd = base.strip_density.copy()
+    sd[fm] += np.float32(rs_per_m2)
+    c.strip_density = sd
+    return c
 
 
 def _forest_priced(base, mult: float):
