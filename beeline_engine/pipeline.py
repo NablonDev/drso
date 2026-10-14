@@ -1125,6 +1125,7 @@ def _route_events(sr, frame, comp, findex, rules, sp, layer_names, inp, dem, blo
                     "crossing_deviation": f"turns {v.split(':')[-1].replace('deg', '°')} as a crossing tower; the rule allows 45°",
                     "crossing_side": "crossing span: a crossing tower is outside its distance window from the crossed wire",
                     "crossing_angle": "crossing span: outside the allowed crossing angle",
+                    "crossing_null_point": "crossing span: crosses the existing line more than 20 % of its span from the null point",
                     "gantry_span": f"gantry span of {v.split(':')[-1]}, under the {sp.gantry_min_span_m:g} m minimum",
                     "crossing_span": "crossing span: longer than the rule allows"}.get(
                 v.split(":")[0], v.replace("_", " "))

@@ -232,7 +232,19 @@ class Checker:
         return arr[row, col], L / (n - 1)
 
     def span_crossings(self, p, q) -> tuple[bool, list[dict]]:
-        """(valid, crossings) for one span, by the same rules the solver applied."""
+        """(valid, crossings) for one span, by the same rules the solver applied (memoised per span;
+        callers get copies of the items)."""
+        key = (round(p[0], 3), round(p[1], 3), round(q[0], 3), round(q[1], 3))
+        cache = self.__dict__.setdefault("_sc_cache", {})
+        hit = cache.get(key)
+        if hit is None:
+            hit = self._span_crossings(p, q)
+            if len(cache) > 400000:
+                cache.clear()
+            cache[key] = hit
+        return hit[0], [dict(x) for x in hit[1]]
+
+    def _span_crossings(self, p, q) -> tuple[bool, list[dict]]:
         L = math.hypot(q[0] - p[0], q[1] - p[1])
         head = math.degrees(math.atan2(q[1] - p[1], q[0] - p[0]))
         out, ok = [], True
@@ -259,10 +271,11 @@ class Checker:
             along_b = L - (rl_start + last) / 2.0 * step
             sin_a = max(math.sin(math.radians(acute)), 0.05)
             sa, sb = along_a * sin_a, along_b * sin_a
+            null_exact = None
             if cr.rule_id in ("power_line", "power_line_lt"):
                 ex = _wire_sides(self, cr.rule_id, p, q)          # exact, from the wire geometry
                 if ex is not None:
-                    sa, sb, along_a, along_b = ex
+                    sa, sb, along_a, along_b, null_exact = ex
             item = {"rule": cr.rule_id, "name": cr.name, "angle_deg": round(acute, 1), "span_m": round(L, 1),
                     "min_type": cr.min_type, "cost_rs": cr.cost_rs, "major": False,
                     "side_a_m": round(sa, 1), "side_b_m": round(sb, 1),
@@ -282,10 +295,18 @@ class Checker:
                 item["point_preferred"] = bool(mk[(first + last) // 2])
             no = getattr(cr, "null_offset_wide", None)
             if no is not None:
-                ov, _ = self._sample(no, p, q)
-                v = ov[(first + last) // 2]
-                if np.isfinite(v):
-                    item["null_offset_pct"] = round(float(v) * 100, 1)       # distance from the null point, % of their span
+                if null_exact is not None:
+                    # exact from the wire and its towers (14 Oct 2026: the raster copy read 26 % for an 8.7 % crossing)
+                    item["null_offset_pct"] = round(null_exact * 100, 1)
+                    item["point_preferred"] = null_exact <= float(getattr(cr, "null_pref", 0.05)) + 1e-9
+                    if null_exact > float(getattr(cr, "null_allowed", 0.2)) + 0.005:
+                        ok = False
+                        item["violation"] = "null_point"
+                else:
+                    ov, _ = self._sample(no, p, q)
+                    v = ov[(first + last) // 2]
+                    if np.isfinite(v):
+                        item["null_offset_pct"] = round(float(v) * 100, 1)   # distance from the null point, % of their span
             if cr.window is not None and acute < cr.window[0] - 1e-3:
                 ok = False
                 item["violation"] = "angle"
@@ -641,14 +662,20 @@ def build_route(chk: Checker, pts: list[tuple[float, float]], angle_set: set[int
     if sp.tsd:
         pts = _wind_span_fix(chk, pts, sp)
         pts = _angle_span_fix(chk, pts, sp)
+    if sp.refine_crossings:
+        pts = _split_relaxed_crossings(chk, pts, sp)
     if dem is not None and dem.ok:
         pts = _split_hilly(chk, pts, sp)
         pts, added = _respot_for_clearance(chk, pts, sp)
+    added_pts = {pts[k] for k in added}
     pts = _crossing_turn_split(chk, pts, sp)
     polish = None
     if sp.cost_polish:
+        pts, s_saved, s_moves = _straighten_runs(chk, pts, sp)
         pts, saved, moves = _cost_polish(chk, pts, sp)
-        polish = {"moves": moves, "saved_cr": round(saved / 1e7, 3)}
+        polish = {"moves": moves, "saved_cr": round(saved / 1e7, 3),
+                  "straighten_moves": s_moves, "straighten_saved_cr": round(s_saved / 1e7, 3)}
+    added = {k for k, pt in enumerate(pts) if pt in added_pts}
     towers: list[Tower] = []
     n = len(pts)
     for i, (x, y) in enumerate(pts):
@@ -991,6 +1018,161 @@ def _cost_polish(chk: Checker, pts, sp: SpotParams, passes: int = 3, min_gain_rs
         log.info("cost polish: %d moves, ₹%.2f Cr saved (search prices)", moves, saved / 1e7)
     return pts, saved, moves
 
+
+def _relax_cost(chk: Checker, pts, a: int, b: int) -> float:
+    """Search price of the crossing-tower relaxation (beyond the window maximum) on spans a..b-1."""
+    rates = {cr.rule_id: float(getattr(cr, "side_relax_rs_per_m", 0.0) or 0.0) for cr in chk.c.crossings}
+    tot = 0.0
+    for k in range(max(0, a), min(len(pts) - 1, b)):
+        for it in chk.span_crossings(pts[k], pts[k + 1])[1]:
+            tot += float(it.get("side_relaxed_m") or 0.0) * rates.get(it["rule"], 0.0)
+    return tot
+
+
+def _run_legal(chk: Checker, sp: SpotParams, trial, a: int, b: int, fixed: set) -> bool:
+    """Every exact check for towers a..b of `trial` (those not in `fixed` are new or moved) and the spans and
+    turns they touch: tower buffers, span limits, conductor buffers, crossings, turn limits and crossing caps,
+    TSD wind span and ground clearance with the largest A extension."""
+    n = len(trial)
+    if a < 2 or b > n - 3:
+        return False
+    for k in range(a, b + 1):
+        if k not in fixed and not chk.tower_ok(trial[k][0], trial[k][1], angle_tower=True):
+            return False
+    e = _max_ext(sp, "A")
+    for k in range(a - 1, b + 1):
+        p, q = trial[k], trial[k + 1]
+        L = math.hypot(q[0] - p[0], q[1] - p[1])
+        if L < sp.min_span_m - 1e-6 or L > sp.span_max_m + 1e-3:
+            return False
+        if not chk.conductor_ok(p, q) or not chk.span_crossings(p, q)[0]:
+            return False
+        if chk.dem is not None and getattr(chk.dem, "ok", False):
+            c, _ = _span_clearance(chk, p, q, sp, e, e)
+            if c is not None and c < sp.ground_clearance_m - 1e-6:
+                return False
+    wind = float((sp.tsd.get("wind_span_m") or {}).get("base", 400)) if sp.tsd else None
+    for k in range(a - 1, b + 2):
+        if not 0 < k < n - 1:
+            continue
+        if _deflection(trial[k - 1], trial[k], trial[k + 1])[0] > sp.max_dev_deg + 1e-6:
+            return False
+        if not _crossing_dev_ok(chk, trial, k, trial[k]):
+            return False
+        if wind is not None:
+            L1 = math.hypot(trial[k][0] - trial[k - 1][0], trial[k][1] - trial[k - 1][1])
+            L2 = math.hypot(trial[k + 1][0] - trial[k][0], trial[k + 1][1] - trial[k][1])
+            if (L1 + L2) / 2.0 > wind + 1e-3:
+                return False
+    return True
+
+
+def _split_relaxed_crossings(chk: Checker, pts, sp: SpotParams, min_excess_m: float = 12.5):
+    """A crossing tower beyond the window maximum (relaxed) gets a new tower inside the window on the same
+    span line, when that is cheaper than the relaxation (14 Oct 2026: one tower stood 303 m from a 220 kV
+    wire between two lines, where a second tower between them was the cheap fix). The old tower stays as
+    the next tower along."""
+    pts = list(pts)
+    i = 1
+    while i < len(pts) - 2:
+        p, q = pts[i], pts[i + 1]
+        items = [it for it in chk.span_crossings(p, q)[1] if it.get("side_window_m") and (it.get("side_relaxed_m") or 0) > min_excess_m]
+        if not items:
+            i += 1
+            continue
+        it = items[0]
+        lo, hi = it["side_window_m"]
+        L = math.hypot(q[0] - p[0], q[1] - p[1])
+        ux, uy = (q[0] - p[0]) / L, (q[1] - p[1]) / L
+        s_ang = max(math.sin(math.radians(it["angle_deg"])), 0.05)
+        best = None
+        for side, d_perp in (("b", it["side_b_m"]), ("a", it["side_a_m"])):
+            if d_perp <= hi + min_excess_m:
+                continue
+            for d in [hi - 4 * k for k in range(int((hi - lo) // 4) + 1)]:
+                if side == "b":
+                    x = it["along_b_m"] - d / s_ang       # back from q towards the wire
+                    new = (q[0] - ux * x, q[1] - uy * x)
+                    trial = pts[:i + 1] + [new] + pts[i + 1:]
+                    k_new = i + 1
+                else:
+                    x = it["along_a_m"] - d / s_ang
+                    new = (p[0] + ux * x, p[1] + uy * x)
+                    trial = pts[:i + 1] + [new] + pts[i + 1:]
+                    k_new = i + 1
+                if x < sp.min_span_m - 1e-6:
+                    continue
+                if not _run_legal(chk, sp, trial, k_new, k_new, fixed=set()):
+                    continue
+                before = _chain_cost(chk.c, sp, pts[i - 1:i + 3], [_type_at(chk, sp, pts, k) for k in range(i, i + 2)]) \
+                    + _relax_cost(chk, pts, i - 1, i + 2)
+                after = _chain_cost(chk.c, sp, trial[i - 1:i + 4], [_type_at(chk, sp, trial, k) for k in range(i, i + 3)]) \
+                    + _relax_cost(chk, trial, i - 1, i + 3)
+                if after < before and (best is None or after - before < best[0]):
+                    best = (after - before, trial)
+                break                                     # the first legal spot from the maximum inwards
+        if best is not None:
+            log.info("relaxed crossing %d-%d: a tower added inside the window (₹%.2f Cr)", i, i + 1, best[0] / 1e7)
+            pts = best[1]
+        i += 1
+    return pts
+
+
+def _straighten_runs(chk: Checker, pts, sp: SpotParams, max_run: int = 5, reach_m: float = 40.0, min_gain_rs: float = 1e5):
+    """Multi-tower move (Vivek, 14 Oct 2026): a run of towers between anchors i and j (2..max_run spans) is
+    replaced by a straight run from i to j, j moved up to reach_m, with the same or one fewer spans spaced
+    evenly — the cheapest by exact cost that passes every check. Merges two nearby bends into one, removes a
+    tower a bend forced, straightens a bow round an obstacle. Power-line crossing towers are not moved."""
+    pts = list(pts)
+    offs = [0.0, -10.0, 10.0, -20.0, 20.0, -35.0, 35.0]
+    moves, saved = 0, 0.0
+    i = 2
+    while i < len(pts) - 4:
+        n = len(pts)
+        done = False
+        for m in range(max_run, 1, -1):
+            j = i + m
+            if j > n - 3:
+                continue
+            inner = range(i + 1, j)
+            if all(_deflection(pts[k - 1], pts[k], pts[k + 1])[0] <= 2.0 for k in inner):
+                continue                                  # already straight
+            if any(_is_crossing_tower(chk, pts, k) for k in list(inner) + [j]):
+                continue
+            base = _chain_cost(chk.c, sp, pts[i - 1:j + 2], [_type_at(chk, sp, pts, k) for k in range(i, j + 1)])
+            hx, hy = pts[j][0] - pts[i][0], pts[j][1] - pts[i][1]
+            hn = math.hypot(hx, hy) or 1.0
+            ux, uy = hx / hn, hy / hn
+            cands = []
+            for da in offs:
+                for dc in offs:
+                    if math.hypot(da, dc) > reach_m + 1e-6:
+                        continue
+                    jq = (pts[j][0] + ux * da - uy * dc, pts[j][1] + uy * da + ux * dc)
+                    Lr = math.hypot(jq[0] - pts[i][0], jq[1] - pts[i][1])
+                    for nsp in (m, m - 1):
+                        if nsp < 1 or Lr / nsp > sp.span_max_m or Lr / nsp < sp.min_span_m:
+                            continue
+                        run = [(pts[i][0] + (jq[0] - pts[i][0]) * t / nsp, pts[i][1] + (jq[1] - pts[i][1]) * t / nsp) for t in range(1, nsp)]
+                        trial = pts[:i + 1] + run + [jq] + pts[j + 1:]
+                        jn = i + nsp
+                        cost = _chain_cost(chk.c, sp, trial[i - 1:jn + 2], [_type_at(chk, sp, trial, k) for k in range(i, jn + 1)])
+                        if cost < base - min_gain_rs:
+                            cands.append((cost, trial, jn, da == 0 and dc == 0))
+            for cost, trial, jn, j_kept in sorted(cands, key=lambda z: z[0]):
+                if _run_legal(chk, sp, trial, i + 1, jn, fixed={jn} if j_kept else set()):
+                    log.info("straighten %d..%d: %d -> %d spans, ₹%.2f Cr", i, j, j - i, jn - i, (base - cost) / 1e7)
+                    saved += base - cost
+                    moves += 1
+                    pts = trial
+                    done = True
+                    break
+            if done:
+                break
+        if not done:
+            i += 1
+    return pts, saved, moves
+
 def _snap_to_legal(chk: Checker, pts, sp: SpotParams):
     """The search accepts a lattice site when a legal cell lies within nudge_radius_m of it (10 Oct
     2026); a grid tower that fails the exact check is moved to the nearest point within that radius
@@ -1232,7 +1414,20 @@ def _wire_sides(chk, rule_id, p, q):
         return None
     hits.sort(key=lambda h: h[0])
     (ta, la), (tb, lb) = hits[0], hits[-1]
-    return la.distance(_Pt(p)), lb.distance(_Pt(q)), ta, seg.length - tb
+    # exact distance of each crossing from the null point of the crossed span, as a share of that span
+    # (0 = mid-span, 0.5 = at an existing tower); the largest over the wires this span crosses (14 Oct 2026)
+    pos_of = {id(ln): pos for _, ln, pos in chk._wire_list}
+    null = None
+    for t_, ln in hits:
+        pos = pos_of.get(id(ln)) or []
+        sx = ln.project(seg.interpolate(t_))
+        lo = max((v for v in pos if v <= sx), default=None)
+        hi = min((v for v in pos if v >= sx), default=None)
+        if lo is None or hi is None or hi - lo < 1.0:
+            continue
+        off = abs(sx - (lo + hi) / 2.0) / (hi - lo)
+        null = off if null is None else max(null, off)
+    return la.distance(_Pt(p)), lb.distance(_Pt(q)), ta, seg.length - tb, null
 
 def _wires(chk: Checker):
     """[(rule_id, wire LineString, sorted tower positions along it)] of the existing power lines (frame)."""

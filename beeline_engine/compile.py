@@ -61,6 +61,7 @@ class CrossingRaster:
     null_offset: np.ndarray | None = None
     null_offset_wide: np.ndarray | None = None
     null_allowed: float = 0.2
+    null_pref: float = 0.05
     side_m: tuple[float, float] | None = None        # each crossing tower this far from the crossed wire (min, max)
     side_relax_rs_per_m: float = 0.0                 # beyond the max: allowed at this search cost per metre (14 Oct 2026)
     band_half_m: float = 0.0                         # half-width of the wire's hit band (angle_nearest within_m)
@@ -1049,6 +1050,7 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
                     x.null_offset = null_off
                     x.null_offset_wide = null_wide
                     x.null_allowed = float(p.get("crossing_point_allowed_pct", 20) or 20) / 100.0
+                    x.null_pref = float(p.get("crossing_point_pref_pct", 5) or 5) / 100.0
                     x.max_span_m = None if side_m is not None else x.max_span_m   # the side window bounds the span
                 if x.max_span_m is not None and x.max_span_m > design_span_m + 1e-6:
                     x.long_span = True                                            # spans up to 600 m over a crossing

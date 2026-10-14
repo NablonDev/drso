@@ -604,14 +604,14 @@ def test_bridges_are_crossed_with_d_towers_and_flyover_extension():
 
 
 def test_buildings_keep_every_tower_100m_away():
-    """Rule_Table 17-18: the 100 m tower buffer from buildings applies to every tower, suspension
-    included."""
+    """Rule_Table 17-18: the tower buffer from single buildings applies to every tower, suspension
+    included — the corridor half-width, 33.5 m at 765 kV, since 13 Oct 2026 (was 100 m)."""
     f = frame()
     houses = [frame_geom(f, box(x - 6, -6, x + 6, 6)) for x in (f.length_m * 0.3, f.length_m * 0.6)]
     r = run_solve(solve_input({"buildings": gdf(houses, "building")}))["routes"][0]
     hb = [box(x - 6, -6, x + 6, 6) for x in (f.length_m * 0.3, f.length_m * 0.6)]
     for p in towers_frame(f, r)[1:-1]:
-        assert min(Point(p).distance(h) for h in hb) >= 100.0 - 0.5
+        assert min(Point(p).distance(h) for h in hb) >= 33.5 - 0.5
 
 
 def test_dead_end_towers_turn_at_most_45_degrees():
