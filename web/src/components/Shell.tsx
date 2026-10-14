@@ -248,8 +248,19 @@ export default function Shell() {
     <div className="app">
       <header className="topbar">
         <Link to="/" className="brand" style={{ textDecoration: "none" }}>
-          <b>Beeline</b>
-          <span>transmission route planner</span>
+          <span className="brand-logo">
+            <img
+              src="/brand/adani-logo.png"
+              alt="Adani"
+              onError={(e) => {
+                (e.currentTarget.parentElement as HTMLElement).hidden = true;
+              }}
+            />
+          </span>
+          <span className="brand-name">
+            <b>Beeline</b>
+            <span>transmission route planner</span>
+          </span>
         </Link>
         {run ? (
           <div className="runchip" data-testid="runchip">

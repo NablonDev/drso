@@ -1,8 +1,8 @@
 :root{
-  --ground:#EFF2EE; --surface:#FFFFFF; --surface-2:#F7F9F6;
-  --ink:#14202A; --ink-2:#3C4C52; --muted:#67776F; --faint:#8C9A93;
-  --rule:#D5DCD6; --rule-2:#E4EAE4;
-  --accent:#1F5673; --accent-ink:#163F54; --accent-soft:#E2ECF2; --accent-line:#A9C6D6;
+  --ground:#F4F4F5; --surface:#FFFFFF; --surface-2:#F9F9FA;
+  --ink:#000000; --ink-2:#333336; --muted:#5E5F63; --faint:#86878B;
+  --rule:#D2D3D5; --rule-2:#E6E7E8;
+  --accent:#8E278F; --on-accent:#FFFFFF; --accent-ink:#6B1D6C; --accent-soft:#F5EAF5; --accent-line:#D7B3D7;
   --nogo:#A33A31; --nogo-soft:#F7E6E3;
   --cross:#9E6811; --cross-soft:#FAF0DC;
   --go:#3B7350; --go-soft:#E5F0E7;
@@ -13,16 +13,17 @@
   --im-1:#C7CFA8; --im-2:#B9C79A; --im-3:#D6D2A8; --im-4:#AEBF93; --im-5:#C2B48A; --im-6:#D2CE9E;
   --im-road:#C9C3B4; --im-line:#F2EEE2; --im-roof:#B9A796; --im-shadow:#6B6155;
   --im-tree:#6E8A5E; --im-water:#9FBACD; --im-bund:#A8A98C;
-  --shadow:0 1px 2px rgba(20,32,42,.06),0 6px 18px rgba(20,32,42,.06);
+  --shadow:0 1px 2px rgba(0,0,0,.06),0 6px 18px rgba(0,0,0,.06);
   --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
-  --sans:"IBM Plex Sans",system-ui,-apple-system,Segoe UI,sans-serif;
-  --cond:"IBM Plex Sans Condensed","IBM Plex Sans",system-ui,sans-serif;
+  /* Open-source stand-in for the Adani typeface until CBC supplies web fonts */
+  --sans:"M PLUS Rounded 1c",system-ui,-apple-system,Segoe UI,sans-serif;
+  --cond:"M PLUS Rounded 1c",system-ui,sans-serif;
 }
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
-  --ground:#11171A; --surface:#182126; --surface-2:#1E282D;
-  --ink:#E7EDE8; --ink-2:#C0CCC5; --muted:#93A39B; --faint:#6F7F78;
-  --rule:#2B383E; --rule-2:#232F35;
-  --accent:#6FA8C4; --accent-ink:#9CC6DB; --accent-soft:#1B2C36; --accent-line:#2F4B5C;
+  --ground:#121113; --surface:#1C1A1D; --surface-2:#242126;
+  --ink:#FFFFFF; --ink-2:#D4D3D6; --muted:#A3A1A6; --faint:#76747A;
+  --rule:#38343A; --rule-2:#2A272C;
+  --accent:#CF8ED0; --on-accent:#1C1A1D; --accent-ink:#E2B6E3; --accent-soft:#2E1F2F; --accent-line:#5A3A5B;
   --nogo:#E28B80; --nogo-soft:#33211F;
   --cross:#D9A64A; --cross-soft:#332A19;
   --go:#7FBA92; --go-soft:#1C2C22;
@@ -36,10 +37,10 @@
   --shadow:0 1px 2px rgba(0,0,0,.4),0 6px 18px rgba(0,0,0,.28);
 }}
 :root[data-theme="dark"]{
-  --ground:#11171A; --surface:#182126; --surface-2:#1E282D;
-  --ink:#E7EDE8; --ink-2:#C0CCC5; --muted:#93A39B; --faint:#6F7F78;
-  --rule:#2B383E; --rule-2:#232F35;
-  --accent:#6FA8C4; --accent-ink:#9CC6DB; --accent-soft:#1B2C36; --accent-line:#2F4B5C;
+  --ground:#121113; --surface:#1C1A1D; --surface-2:#242126;
+  --ink:#FFFFFF; --ink-2:#D4D3D6; --muted:#A3A1A6; --faint:#76747A;
+  --rule:#38343A; --rule-2:#2A272C;
+  --accent:#CF8ED0; --on-accent:#1C1A1D; --accent-ink:#E2B6E3; --accent-soft:#2E1F2F; --accent-line:#5A3A5B;
   --nogo:#E28B80; --nogo-soft:#33211F;
   --cross:#D9A64A; --cross-soft:#332A19;
   --go:#7FBA92; --go-soft:#1C2C22;
@@ -55,7 +56,7 @@
 
 *{box-sizing:border-box}
 body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--sans);font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased}
-h1,h2,h3,h4{margin:0;text-wrap:balance;font-family:var(--cond);font-weight:600;letter-spacing:.005em}
+h1,h2,h3,h4{margin:0;text-wrap:balance;font-family:var(--cond);font-weight:700;letter-spacing:.005em}
 p{margin:0}
 button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:3px}
@@ -66,8 +67,13 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
 .app{display:grid;grid-template-columns:212px 1fr;min-height:100%}
 .topbar{position:sticky;top:env(safe-area-inset-top,0px);z-index:40;grid-column:1/-1;
   display:flex;align-items:center;gap:14px;padding:10px 16px;background:var(--surface);border-bottom:1px solid var(--rule)}
-.brand{display:flex;align-items:baseline;gap:8px}
-.brand b{font-family:var(--cond);font-size:17px;letter-spacing:-.01em}
+.brand{display:flex;align-items:center;gap:12px}
+/* Adani logo: official artwork only. Safe space = height of the 'a' on all sides (guide §1);
+   on dark themes it sits on a white patch (guide §1, "logo background"). */
+.brand-logo{display:flex;align-items:center;padding:11px;margin:-10px 0;background:#FFFFFF}
+.brand-logo img{display:block;height:18px;width:auto}
+.brand-name{display:flex;align-items:baseline;gap:8px;padding-left:12px;border-left:1px solid var(--rule)}
+.brand b{font-family:var(--cond);font-size:17px;letter-spacing:-.01em;color:var(--accent)}
 .brand span{font-size:11px;color:var(--faint)}
 .runchip{display:flex;align-items:center;gap:8px;padding:4px 10px;border:1px solid var(--rule);border-radius:999px;font-size:12px;color:var(--ink-2)}
 .runchip b{font-family:var(--mono);font-weight:500;font-size:11.5px}
@@ -84,7 +90,7 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
   font-family:var(--mono);font-size:10px;color:var(--faint);background:var(--surface)}
 .step.done .n{background:var(--go-soft);border-color:var(--go);color:var(--go)}
 .step[aria-current="true"]{background:var(--accent-soft);color:var(--accent-ink);font-weight:500}
-.step[aria-current="true"] .n{background:var(--accent);border-color:var(--accent);color:#fff}
+.step[aria-current="true"] .n{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
 .step .flag{margin-left:auto;font-family:var(--mono);font-size:10px;padding:1px 5px;border-radius:4px}
 .flag.warn{background:var(--cross-soft);color:var(--cross)}
 .flag.chg{background:var(--changed-soft);color:var(--changed)}
@@ -106,7 +112,7 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
 .stack{display:flex;flex-direction:column;gap:14px}
 .row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 
-.btn{padding:9px 16px;border-radius:7px;background:var(--accent);color:#fff;font-weight:500;font-size:13.5px}
+.btn{padding:9px 16px;border-radius:7px;background:var(--accent);color:var(--on-accent);font-weight:500;font-size:13.5px}
 .btn:hover{background:var(--accent-ink)}
 .btn.ghost{background:transparent;color:var(--ink-2);border:1px solid var(--rule)}
 .btn.ghost:hover{background:var(--surface-2)}
@@ -339,7 +345,7 @@ dialog::backdrop{background:rgba(20,32,42,.4)}
 .only{font-size:10px;letter-spacing:.04em;text-transform:uppercase;font-weight:600;color:var(--faint);
   border:1px solid var(--rule);border-radius:5px;padding:2px 6px;flex:none;background:var(--surface)}
 .only:hover{color:var(--accent-ink);border-color:var(--accent-line)}
-.only.onx{background:var(--accent);border-color:var(--accent);color:#fff}
+.only.onx{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
 .clsrow{display:flex;align-items:center;gap:8px;padding:3px 0;cursor:pointer;font-size:12px}
 .clsrow input{width:auto;flex:none;accent-color:var(--accent);margin:0}
 .clsrow span{flex:1;min-width:0}
