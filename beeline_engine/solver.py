@@ -739,7 +739,8 @@ def solve(compiled: Compiled, p: SolverParams, cancel_check=None, progress=None,
     head_t = torch.as_tensor(grid.heading_deg, device=dev, dtype=torch.float32)
 
     budget = 1.25e8 if rasters.z is not None else 2.5e8               # terrain doubles the gathered samples
-    chunk = max(1, min(32, int(budget // max(1, R * K * n_samples))))
+    R_eff = R if win is None else int((win[:, 1] - win[:, 0]).max())    # the refinement pass gathers its row window only
+    chunk = max(1, min(64, int(budget // max(1, R_eff * K * n_samples))))
     # edge-geometry cache (11 Oct 2026): (A, B) per column block, shared by every solve on this compile;
     # two float32 (nc, R, K) tensors on the GPU — skipped when that would exceed the configured limit
     cache = getattr(compiled, "edge_cache", None)
