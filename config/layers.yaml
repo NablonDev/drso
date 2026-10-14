@@ -268,10 +268,22 @@ layers:
     name: "Railway and metro"
     kind: line
     producer: reference
-    desc: "Cached — OSM, manually checked"
+    desc: "Indian Railways track centrelines (ir_raw.gpkg, 14 Oct 2026); earlier runs keep the OSM extract they used"
     minutes_per_km2: 0.002
     default_confidence: 0.96
     classes: [railway, metro]
+
+  # Indian Railways platforms (Vivek, 14 Oct 2026) + the crossing-exclusion zone of each (platform + 1,500 m
+  # beyond both ends along its long side)
+  - key: rail_platforms
+    name: "Railway platforms"
+    kind: polygon
+    producer: reference
+    desc: "Indian Railways platform polygons (ir_raw.gpkg); crossing zone = platform + 1,500 m each end"
+    optional: true          # runs extracted before 14 Oct 2026 solve without it
+    minutes_per_km2: 0.002
+    default_confidence: 0.95
+    classes: [platform, platform_crossing_zone]
 
   # Forest package (transfers/Forests/gj_forest_delivery.gpkg, Gujarat statewide): five layers, no
   # generic forest / protected layer (Vivek, 6 Oct 2026). OSM PA gap-fills left out; the notified-

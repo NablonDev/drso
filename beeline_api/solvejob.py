@@ -87,7 +87,7 @@ def run_solve_job(job: dict, rep: Reporter):
     rls = layers.run_layers(run["id"])
     reg = {l["key"]: l for l in load_layers()["layers"]}
     stale = [r["layer_key"] for r in rls if r["stale"]]
-    missing = [k for k in reg if k not in {r["layer_key"] for r in rls}]
+    missing = [k for k in reg if k not in {r["layer_key"] for r in rls} and not reg[k].get("optional")]
     if stale or missing:
         raise ValueError(f"layers not extracted for this revision: {', '.join(stale + missing)}")
     rep(0.01, "Loading layers", force=True)

@@ -561,7 +561,8 @@ CHW_TIED = {("lake", "tower_setback_m"), ("lake", "conductor_buffer_m"), ("crz",
             ("crz", "conductor_buffer_m"), ("defence", "tower_setback_m"), ("defence", "conductor_buffer_m"),
             ("power_line", "parallel_setback_m"), ("power_line_lt", "parallel_setback_m"),
             ("railway", "parallel_setback_m"), ("state_highway", "parallel_setback_m"),
-            ("substations", "conductor_buffer_m"), ("buildings", "tower_setback_m")}
+            ("substations", "conductor_buffer_m"), ("buildings", "tower_setback_m"),
+            ("railway_platforms", "conductor_buffer_m")}
 
 
 def merge_approach(norm: "Compiled", app: "Compiled", zone) -> "Compiled":

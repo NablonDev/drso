@@ -318,7 +318,7 @@ def get_run(run_id: str):
     j["last_extract"] = _job_json(jobs.latest_for(run_id, "extract"))
     rl = layers.run_layers(run_id)
     j["layers_ready"] = len(rl) > 0 and not any(x["stale"] for x in rl) and \
-        len({x["layer_key"] for x in rl}) >= len(load_layers()["layers"])
+        {l["key"] for l in load_layers()["layers"] if not l.get("optional")} <= {x["layer_key"] for x in rl}
     j["layers_failed"] = [x["layer_key"] for x in rl if x["status"] == "failed"]
     j["layers_stale"] = [x["layer_key"] for x in rl if x["stale"]]
     j["parent"] = _run_json(_run(r["parent_id"])) if r["parent_id"] else None
@@ -803,7 +803,9 @@ class SolveReq(BaseModel):
 def start_solve(run_id: str, req: SolveReq | None = None):
     r = _run(run_id)
     rl = layers.run_layers(run_id)
-    reg = [l["key"] for l in load_layers()["layers"]]
+    # a layer added to the registry after a run was extracted (optional: true) does not block its solve —
+    # the engine treats it as empty (14 Oct 2026: railway platforms)
+    reg = [l["key"] for l in load_layers()["layers"] if not l.get("optional")]
     have = {x["layer_key"]: x for x in rl}
     missing = [k for k in reg if k not in have]
     stale = [k for k, x in have.items() if x["stale"]]

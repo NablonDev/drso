@@ -310,16 +310,38 @@ groups:
     title: "Crossings"
     desc: "Crossable, with the angle, span and tower type all set here."
     rules:
+      - id: railway_platforms
+        name: "Railway platform"
+        note: "Indian Railways platform polygons (Vivek, 14 Oct 2026): towers 200 m from a platform, the conductor the corridor half-width when not crossing"
+        layer: rail_platforms
+        classes: [platform]
+        mechanism: nogo
+        params:
+          - {key: tower_setback_m, label: "Tower setback from the platform", type: num, unit: m, value: 200}
+          - {key: conductor_buffer_m, label: "Conductor buffer (corridor half-width)", type: num, unit: m, value: {765: 33.5, 400: 23, 220: 17.5, 132: 13.5}}
+
+      - id: platform_crossing_zone
+        name: "No crossing near a station"
+        note: "The line may not cross the railway over a platform or within 1,500 m beyond either end of it, along its long side (Vivek, 14 Oct 2026); the zone is drawn from each platform's rectangle"
+        layer: rail_platforms
+        classes: [platform_crossing_zone]
+        mechanism: nogo
+        params:
+          - {key: tower_setback_m, label: "Tower buffer", type: num, unit: m, value: 0}
+          - {key: conductor_buffer_m, label: "Conductor buffer", type: num, unit: m, value: 0}
+
       - id: railway
         name: "Railway line"
         note: "TSD A: crossing span ≤ 300 m, right angles, D towers, crossing tower ≥ tower height + 6 m from the track centre (78.5 m at 765 kV); Rule_Table 7-8: 100 m tower buffer from the track edge (7.5 m half-width → 107.5 m from the centreline), conductor parallel buffer CHW, angle 80–100°; angle towers both sides"
         layer: rail
         mechanism: crossing
         params:
-          - {key: tower_setback_m, label: "Tower setback from the track centreline", type: num, unit: m, value: 107.5}
-          - {key: parallel_setback_m, label: "Conductor buffer, parallel run", type: num, unit: m, value: {765: 41, 400: 30.5, 220: 25, 132: 21}}
+          # Vivek, 14 Oct 2026 (Indian Railways track layer): towers 86 m from the line, conductor CHW when not
+          # crossing, crossing at 90 ± 10° on a span of at most 300 m
+          - {key: tower_setback_m, label: "Tower setback from the track centreline", type: num, unit: m, value: 86}
+          - {key: parallel_setback_m, label: "Conductor buffer, parallel run (corridor half-width)", type: num, unit: m, value: {765: 33.5, 400: 23, 220: 17.5, 132: 13.5}}
           - {key: angle_deg, label: "Allowed crossing angle", type: rng, unit: "°", value: [80, 100]}
-          - {key: max_span_m, label: "Max crossing span", type: num, unit: m, value: 600}   # Vivek, 13 Oct 2026: was 300 (80 % of the design span)
+          - {key: max_span_m, label: "Max crossing span", type: num, unit: m, value: 300}   # Vivek, 14 Oct 2026: back to 300 (13 Oct: 600)
           - {key: tower_type, label: "Crossing tower type", type: sel, value: "D", options: ["B", "C", "D", "B/C/D"]}
           - {key: preferred_angle_deg, label: "Preferred crossing angle", type: num, unit: "°", value: 90}
           - {key: preferred_angle_tol_deg, label: "… tolerance", type: num, unit: "°", value: 5}
