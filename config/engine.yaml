@@ -68,13 +68,17 @@ parallel_routes:
   gpu_gb_per_route: 5             # measured 9 Oct: 3 routes peak 10.9 GB on BHU-SHI-0122 (~3.6 GB each)
 
 forest_cap:
-  # Multipliers tried in order until the spotted route is under the cap (11 Oct 2026: ×3 is kept — R4, held
-  # out of R1's corridor, meets the cap at ×3 and not at ×10 or ×30; with the edge cache a pass costs ~20 s
-  # of search). Every pass is spotted: the search corridor's own forest is a poor predictor of the spotted
-  # route's, so grid_check_margin is off (0); a value > 0 would skip spotting a pass whose grid forest
-  # exceeds margin × cap (the last multiplier is always spotted).
-  # ×100 added 12 Oct 2026: at ×30 R4's two candidates (1.7 ha / ₹660.5 Cr vs 9.8 ha / ₹643.9 Cr) are a search
-  # tie decided by float rounding (edge costs agree to 2e-7); one more step settles it on the low-forest line
+  # Vivek, 14 Oct 2026: bisection on the forest price. The search alone (~35 s a pass with the edge cache)
+  # finds the lowest multiplier whose search line keeps grid_margin_ha under the cap, then the route is
+  # spotted once; if the spotted route is still over the cap the lower bound moves up (at most max_spots
+  # spots). The x3/x10/x30/x100 ladder (mode: ladder) spotted every pass, 15 min each, and landed far under
+  # the cap at x100 (rev 38: 1.96 ha of a 5 ha cap, back over the km 52-54 hill).
+  mode: bisection
+  max_mult: 1000
+  grid_margin_ha: 1.0
+  search_passes: 7
+  max_spots: 3
+  # ladder mode (kept as a fallback)
   multipliers: [3, 10, 30, 100]
   grid_check_margin: 0
 

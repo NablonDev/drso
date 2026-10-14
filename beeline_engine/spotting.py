@@ -317,6 +317,7 @@ class Checker:
             if side is not None:
                 lo, hi = side
                 item["side_window_m"] = [lo, hi]
+                item["side_relax_rs_per_m"] = float(getattr(cr, "side_relax_rs_per_m", 0.0) or 0.0)
                 if sa < lo - 1e-3 or sb < lo - 1e-3:
                     ok = False
                     item["violation"] = "side"
@@ -364,7 +365,14 @@ def _deflection(p0, p1, p2) -> tuple[float, str]:
 
 
 def _spot_leg(chk: Checker, p, q, sp: SpotParams):
-    """Intermediate tower positions on a straight leg p->q, or None if no spotting works."""
+    """Intermediate tower positions on a straight leg p->q, or None if no spotting works.
+
+    Vivek, 14 Oct 2026: no preference for even spacing. The towers stand wherever the exact checks allow,
+    at the positions that make the leg cheapest: suspension towers (price + site extras), the body
+    extensions each span's ground clearance needs, and the B1 upgrade on a hilly span. A 1-D dynamic
+    programme over 10 m positions along the leg; spans between the minimum and the design span. A span
+    the crossing checks reject is struck and the programme repeated. A single long span (rivers and
+    other 600 m crossings) is tried first, as before."""
     if not chk.conductor_ok(p, q):
         return None
     d = math.hypot(q[0] - p[0], q[1] - p[1])
@@ -372,90 +380,103 @@ def _spot_leg(chk: Checker, p, q, sp: SpotParams):
     hilly_leg = bool(sp.hilly_design_span_m) and chk.is_hilly(p, q)
     if hilly_leg:
         design = sp.hilly_design_span_m
-    n0 = max(1, math.ceil(d / design - 1e-9), math.ceil(d / sp.span_max_m - 1e-9))
-    cands = list(range(n0, n0 + 5))
-    if n0 > 1 and d <= sp.river_max_span_m:
-        cands = [1] + cands       # a single long span across a river
-    for n in cands:
-        span = d / n
-        if span < sp.min_span_m and n > 1:
-            break
-        pts = [(p[0] + (q[0] - p[0]) * i / n, p[1] + (q[1] - p[1]) * i / n) for i in range(1, n)]
-        if _even_leg_ok(chk, p, q, pts, span, n, hilly_leg, sp):
-            return pts
-        if 1 < n <= min(n0 + 1, UNEVEN_MAX_SPANS):
-            # equal spacing fails: uneven spacing with the same tower count (9 Oct 2026)
-            un = _uneven_leg(chk, p, q, n, design, sp)
-            if un is not None:
-                return un
-    return None
+    ok1, items1 = chk.span_crossings(p, q)
+    if ok1 and d <= design + 1e-6:
+        return []
+    if ok1 and d <= sp.river_max_span_m and any(it.get("long_span") for it in items1):
+        return []                             # one long span over the crossing (as before)
+    return _leg_dp(chk, p, q, sp, design, hilly_leg)
 
 
-def _even_leg_ok(chk: Checker, p, q, pts, span: float, n: int, hilly_leg: bool, sp: SpotParams) -> bool:
-    if not all(chk.tower_ok(x, y, angle_tower=False) for x, y in pts):
-        return False
-    seq = [p] + pts + [q]
-    if sp.approach_span_m is not None and span > sp.approach_span_m + 1e-3 and \
-            any(chk.in_approach(a, b) for a, b in zip(seq[:-1], seq[1:])):
-        return False      # approach section: 250 m spans
-    if hilly_leg and span > sp.design_span_m + 1e-3 and n > 1 and \
-            not all(chk.is_hilly(a, b) for a, b in zip(seq[:-1], seq[1:])):
-        return False      # a span longer than the plain value must itself be on hilly ground
-    return all(chk.span_crossings(a, b)[0] for a, b in zip(seq[:-1], seq[1:]))
-
-
-UNEVEN_MAX_SPANS = 8          # uneven spacing is tried on legs of up to this many spans
-
-
-def _uneven_leg(chk: Checker, p, q, n: int, design: float, sp: SpotParams, step: float = 10.0):
-    """n spans on the straight leg p->q with towers where they may stand, spans as even as possible.
-    Every span within ±15 % of the even span (and the span cap): two neighbouring spans then keep
-    the TSD rule one span ≤ 60 % of their sum. Minimises the squared deviation from even spacing;
-    a span the exact checks reject is struck and the search repeated (a few times at most)."""
+def _leg_dp(chk: Checker, p, q, sp: SpotParams, design: float, hilly_leg: bool, step: float = 10.0):
     d = math.hypot(q[0] - p[0], q[1] - p[1])
-    ideal = d / n
-    lo, hi = max(sp.min_span_m, ideal * 0.85), min(design, ideal * 1.15)
-    if lo > hi:
+    lo, hi = sp.min_span_m, min(design, sp.span_max_m)
+    if d < 2 * lo - 1e-6 and d > hi + 1e-6:
         return None
     m = int(d // step)
-    xs = [i * step for i in range(1, m + 1) if i * step < d - lo + 1e-6]
-    pos = [0.0] + xs + [d]
+    pos = np.array([0.0] + [i * step for i in range(1, m + 1) if i * step < d - lo + 1e-6 and i * step >= lo - 1e-6] + [d])
+    n = len(pos)
     at = lambda t: (p[0] + (q[0] - p[0]) * t / d, p[1] + (q[1] - p[1]) * t / d)
-    _ok: dict = {0: True, len(pos) - 1: True}
+    # ground along the leg at the candidate positions (one DEM read); clearance per span from it
+    z = None
+    if chk.dem is not None and getattr(chk.dem, "ok", False):
+        lon, lat = chk.c.frame.frame_to_lonlat(p[0] + (q[0] - p[0]) * pos / d, p[1] + (q[1] - p[1]) * pos / d)
+        z = np.asarray(chk.dem.sample(lon, lat), float)
+        if not np.isfinite(z).all():
+            z = None
+    tA = sp.tower_cost_rs.get("A", 0.0)
+    tB = sp.tower_cost_rs.get("B1", tA)
+    steps_a = _ext_steps(sp, "A")
+    f = chk.c.frame
+    _tok: dict = {0: True, n - 1: True}
+    _site: dict = {}
 
-    def ok_at(j):                         # tower_ok, evaluated on first use only
-        if j not in _ok:
-            _ok[j] = chk.tower_ok(*at(pos[j]), angle_tower=False)
-        return _ok[j]
-    bad: set = set()
-    for _ in range(6):
-        INF_ = float("inf")
-        best = [[INF_] * len(pos) for _ in range(n + 1)]
-        arg = [[-1] * len(pos) for _ in range(n + 1)]
-        best[0][0] = 0.0
-        for k in range(1, n + 1):
-            for j in range(1, len(pos)):
-                # tower k can only stand between k·lo and k·hi from p, and (n-k)·lo..(n-k)·hi from q
-                if pos[j] < k * lo - 1e-6 or pos[j] > k * hi + 1e-6 or \
-                        d - pos[j] < (n - k) * lo - 1e-6 or d - pos[j] > (n - k) * hi + 1e-6:
-                    continue
-                if (k < n and j == len(pos) - 1) or (k == n and j != len(pos) - 1) or not ok_at(j):
-                    continue
-                for i in range(j - 1, -1, -1):
-                    L = pos[j] - pos[i]
-                    if L > hi + 1e-6:
-                        break
-                    if L < lo - 1e-6 or best[k - 1][i] == INF_ or (i, j) in bad:
-                        continue
-                    c = best[k - 1][i] + (L - ideal) ** 2
-                    if c < best[k][j]:
-                        best[k][j], arg[k][j] = c, i
-        if best[n][len(pos) - 1] == INF_:
+    def tower_ok(j):
+        if j not in _tok:
+            x, y = at(pos[j])
+            _tok[j] = chk.tower_ok(x, y, angle_tower=False)
+        return _tok[j]
+
+    def site(j):
+        if j not in _site:
+            x, y = at(pos[j])
+            px = int(np.clip((x - f.x0) / f.res_m, 0, f.width - 1))
+            py = int(np.clip((f.y_top - y) / f.res_m, 0, f.height - 1))
+            _site[j] = _tower_site_rs(chk.c, "A", px, py)
+        return _site[j]
+
+    def span_cost(i, j):
+        """₹ of span i->j: extensions its clearance needs (both towers, closest step; None = needs a taller
+        type), the B1 upgrade when the ground rises more than the hilly limit, and the plain-span rule."""
+        L = pos[j] - pos[i]
+        c = 0.0
+        if z is not None:
+            if hilly_leg and L > sp.design_span_m + 1e-3 and not (sp.hilly_rise_m is not None and abs(z[j] - z[i]) > sp.hilly_rise_m):
+                return None                   # a span longer than the plain value must itself be on hilly ground
+            sag = sp.sag_at_design_m * (L / (sp.sag_ref_span_m or sp.design_span_m)) ** 2
+            t = (pos[i:j + 1] - pos[i]) / L
+            line = (1 - t) * (z[i] + sp.lowest_attachment_m) + t * (z[j] + sp.lowest_attachment_m) - 4 * sag * t * (1 - t)
+            need = max(0.0, sp.ground_clearance_m - float(np.min(line - z[i:j + 1])))
+            ext = nearest_step(need, steps_a) if need > 0 else 0.0
+            if ext is None:
+                return None
+            c += 2 * tA * sp.extension_pct / 100.0 * ext / 18.0
+            if sp.hilly_rise_m is not None and abs(z[j] - z[i]) > sp.hilly_rise_m:
+                c += tB - tA
+        elif hilly_leg and L > sp.design_span_m + 1e-3:
             return None
-        idx, j = [], len(pos) - 1
-        for k in range(n, 0, -1):
+        if sp.approach_span_m is not None and L > sp.approach_span_m + 1e-3 and chk.in_approach(at(pos[i]), at(pos[j])):
+            return None
+        return c
+
+    bad: set = set()
+    for _ in range(8):
+        INF_ = float("inf")
+        best = np.full(n, INF_)
+        arg = np.full(n, -1, int)
+        best[0] = 0.0
+        for j in range(1, n):
+            if j < n - 1 and not tower_ok(j):
+                continue
+            tc = 0.0 if j == n - 1 else tA + site(j)
+            for i in range(j - 1, -1, -1):
+                L = pos[j] - pos[i]
+                if L > hi + 1e-6:
+                    break
+                if L < lo - 1e-6 or best[i] == INF_ or (i, j) in bad:
+                    continue
+                sc = span_cost(i, j)
+                if sc is None:
+                    continue
+                c = best[i] + sc + tc
+                if c < best[j]:
+                    best[j], arg[j] = c, i
+        if best[n - 1] == INF_:
+            return None
+        idx, j = [], n - 1
+        while j > 0:
             idx.append(j)
-            j = arg[k][j]
+            j = int(arg[j])
         idx.append(0)
         idx = idx[::-1]
         seq = [at(pos[i]) for i in idx]
@@ -1021,11 +1042,12 @@ def _cost_polish(chk: Checker, pts, sp: SpotParams, passes: int = 3, min_gain_rs
 
 def _relax_cost(chk: Checker, pts, a: int, b: int) -> float:
     """Search price of the crossing-tower relaxation (beyond the window maximum) on spans a..b-1."""
-    rates = {cr.rule_id: float(getattr(cr, "side_relax_rs_per_m", 0.0) or 0.0) for cr in chk.c.crossings}
     tot = 0.0
     for k in range(max(0, a), min(len(pts) - 1, b)):
         for it in chk.span_crossings(pts[k], pts[k + 1])[1]:
-            tot += float(it.get("side_relaxed_m") or 0.0) * rates.get(it["rule"], 0.0)
+            # the item's own rate (14 Oct 2026: a lookup by rule id took the go-zone copy's zero rate, so the
+            # repair priced a 180 m relaxation at nothing and kept it)
+            tot += float(it.get("side_relaxed_m") or 0.0) * float(it.get("side_relax_rs_per_m") or 0.0)
     return tot
 
 
@@ -1120,8 +1142,8 @@ def _split_relaxed_crossings(chk: Checker, pts, sp: SpotParams, min_excess_m: fl
 
 def _straighten_runs(chk: Checker, pts, sp: SpotParams, max_run: int = 5, reach_m: float = 40.0, min_gain_rs: float = 1e5):
     """Multi-tower move (Vivek, 14 Oct 2026): a run of towers between anchors i and j (2..max_run spans) is
-    replaced by a straight run from i to j, j moved up to reach_m, with the same or one fewer spans spaced
-    evenly — the cheapest by exact cost that passes every check. Merges two nearby bends into one, removes a
+    replaced by a straight run from i to j, j moved up to reach_m, its towers spotted by the leg programme
+    (uneven, wherever they may stand) — the cheapest by exact cost that passes every check. Merges two nearby bends into one, removes a
     tower a bend forced, straightens a bow round an obstacle. Power-line crossing towers are not moved."""
     pts = list(pts)
     offs = [0.0, -10.0, 10.0, -20.0, 20.0, -35.0, 35.0]
@@ -1149,16 +1171,15 @@ def _straighten_runs(chk: Checker, pts, sp: SpotParams, max_run: int = 5, reach_
                     if math.hypot(da, dc) > reach_m + 1e-6:
                         continue
                     jq = (pts[j][0] + ux * da - uy * dc, pts[j][1] + uy * da + ux * dc)
-                    Lr = math.hypot(jq[0] - pts[i][0], jq[1] - pts[i][1])
-                    for nsp in (m, m - 1):
-                        if nsp < 1 or Lr / nsp > sp.span_max_m or Lr / nsp < sp.min_span_m:
-                            continue
-                        run = [(pts[i][0] + (jq[0] - pts[i][0]) * t / nsp, pts[i][1] + (jq[1] - pts[i][1]) * t / nsp) for t in range(1, nsp)]
-                        trial = pts[:i + 1] + run + [jq] + pts[j + 1:]
-                        jn = i + nsp
-                        cost = _chain_cost(chk.c, sp, trial[i - 1:jn + 2], [_type_at(chk, sp, trial, k) for k in range(i, jn + 1)])
-                        if cost < base - min_gain_rs:
-                            cands.append((cost, trial, jn, da == 0 and dc == 0))
+                    run = _spot_leg(chk, pts[i], jq, sp)       # towers where they may stand, cheapest (uneven)
+                    if run is None:
+                        continue
+                    nsp = len(run) + 1
+                    trial = pts[:i + 1] + list(run) + [jq] + pts[j + 1:]
+                    jn = i + nsp
+                    cost = _chain_cost(chk.c, sp, trial[i - 1:jn + 2], [_type_at(chk, sp, trial, k) for k in range(i, jn + 1)])
+                    if cost < base - min_gain_rs:
+                        cands.append((cost, trial, jn, da == 0 and dc == 0))
             for cost, trial, jn, j_kept in sorted(cands, key=lambda z: z[0]):
                 if _run_legal(chk, sp, trial, i + 1, jn, fixed={jn} if j_kept else set()):
                     log.info("straighten %d..%d: %d -> %d spans, ₹%.2f Cr", i, j, j - i, jn - i, (base - cost) / 1e7)
