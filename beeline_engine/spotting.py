@@ -243,9 +243,10 @@ class Checker:
             acute = min(d, 180.0 - d)
             # the crossed feature sits at the middle of its hit samples; distances from each tower to it
             mid = (first + last) / 2.0 * step
+            sa, sb = first * step, L - last * step          # to the first / last wire crossed on this span
             item = {"rule": cr.rule_id, "name": cr.name, "angle_deg": round(acute, 1), "span_m": round(L, 1),
                     "min_type": cr.min_type, "cost_rs": cr.cost_rs, "major": False,
-                    "side_a_m": round(mid, 1), "side_b_m": round(L - mid, 1)}
+                    "side_a_m": round(sa, 1), "side_b_m": round(sb, 1)}
             if getattr(cr, "extension_m", 0):
                 item["extension_m"] = cr.extension_m
             if getattr(cr, "long_span", False):
@@ -275,9 +276,15 @@ class Checker:
             if side is not None:
                 lo, hi = side
                 item["side_window_m"] = [lo, hi]
-                if not (lo - 1e-3 <= mid <= hi + 1e-3 and lo - 1e-3 <= L - mid <= hi + 1e-3):
+                if sa < lo - 1e-3 or sb < lo - 1e-3:
                     ok = False
                     item["violation"] = "side"
+                elif sa > hi + 1e-3 or sb > hi + 1e-3:
+                    if getattr(cr, "side_relax_rs_per_m", 0) > 0:
+                        item["side_relaxed_m"] = round(max(0.0, sa - hi) + max(0.0, sb - hi), 1)   # 14 Oct 2026
+                    else:
+                        ok = False
+                        item["violation"] = "side"
             if cr.width_raster is not None and cr.major_threshold_m is not None:
                 w, st = self._sample(cr.width_raster, p, q)
                 width = float(w.sum()) * st
@@ -922,13 +929,17 @@ def _crossing_side_fix(chk: Checker, pts, sp: SpotParams):
         p, q = pts[i], pts[i + 1]
         L = math.hypot(q[0] - p[0], q[1] - p[1])
         items = [it for it in chk.span_crossings(p, q)[1] if it.get("side_window_m")] if L > 0 else []
-        if not items or all(it.get("violation") != "side" for it in items):
+        # placed again when a tower is outside its window, or stands in another buffer next to the crossing
+        # (14 Oct 2026: e.g. a second line beside the crossed one — the span then relaxes as far as needed)
+        towers_bad = not (chk.tower_ok(p[0], p[1], True) and chk.tower_ok(q[0], q[1], True))
+        if not items or (all(it.get("violation") != "side" for it in items) and not towers_bad):
             i += 1
             continue
         it = items[0]
         lo, hi = it["side_window_m"]
         ux, uy = (q[0] - p[0]) / L, (q[1] - p[1]) / L
-        X = (p[0] + ux * it["side_a_m"], p[1] + uy * it["side_a_m"])       # the crossed wire on the alignment
+        X = (p[0] + ux * it["side_a_m"], p[1] + uy * it["side_a_m"])       # the (first) crossed wire on the alignment
+        gap = max(0.0, L - it["side_a_m"] - it["side_b_m"])                  # to the last wire, when one span crosses two
         # the straight run this span belongs to: from the previous turn (or dead-end) to the next
         run_start = i
         while run_start > 1 and _deflection(pts[run_start - 1], pts[run_start], pts[run_start + 1])[0] < 1.0:
@@ -938,12 +949,16 @@ def _crossing_side_fix(chk: Checker, pts, sp: SpotParams):
             run_end += 1
         done = False
         mid = (lo + hi) / 2
-        # every pair of distances in the window on a 4 m step, nearest the middle first
+        # every pair of distances in the window on a 4 m step, nearest the middle first; then beyond the
+        # maximum (Vivek, 14 Oct 2026: relaxed only as far as needed), least excess first, up to the span cap
         steps = [lo + 2 + 4 * k for k in range(int((hi - lo - 4) // 4) + 1)]
         combos = sorted(((da, db) for da in steps for db in steps), key=lambda c_: abs(c_[0] - mid) + abs(c_[1] - mid))
+        far = [hi + 4 * k for k in range(1, int(max(0.0, sp.span_max_m - lo - hi - gap) // 4) + 1)]
+        ext = [(da, db) for da in steps + far for db in steps + far if (da > hi or db > hi) and da + db + gap <= sp.span_max_m]
+        combos += sorted(ext, key=lambda c_: (max(0, c_[0] - hi) + max(0, c_[1] - hi), abs(c_[0] - c_[1])))
         for da, db in combos:
             p2 = (X[0] - ux * da, X[1] - uy * da)
-            q2 = (X[0] + ux * db, X[1] + uy * db)
+            q2 = (X[0] + ux * (gap + db), X[1] + uy * (gap + db))
             if not (chk.tower_ok(p2[0], p2[1], True) and chk.tower_ok(q2[0], q2[1], True)):
                 log.debug("side fix %d: towers at %g/%g m not legal", i, da, db)
                 continue

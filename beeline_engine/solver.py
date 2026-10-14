@@ -394,14 +394,22 @@ def _edge_geom(compiled: Compiled, grid: Grid, p: SolverParams, rasters: "_Raste
         if cr.side_m is not None:
             # crossing towers this far from the crossed wire, each side (Vivek, 13 Oct 2026); the wire sits at
             # the middle of the hit samples; the lattice gets the crossing-span slack, the spotting is exact
+            # tower a to the first wire it crosses, tower b to the last (one span may cross two lines side by side)
             last = (n_samples - 1) - torch.argmax(hit.flip(-1).to(torch.int8), dim=-1)
-            mid = (first.squeeze(-1).float() + last.float()) / 2.0
             step = length / float(n_samples - 1)
-            d1 = mid * step
-            d2 = length - d1
+            d1 = first.squeeze(-1).float() * step
+            d2 = length - last.float() * step
             lo, hi = cr.side_m
             sl = p.crossing_span_slack_m
-            bad |= (d1 < lo - sl) | (d1 > hi + sl) | (d2 < lo - sl) | (d2 > hi + sl)
+            bad |= (d1 < lo - sl) | (d2 < lo - sl)
+            if cr.side_relax_rs_per_m > 0:
+                # beyond the maximum only as far as needed (Vivek, 14 Oct 2026): priced per metre of excess
+                excess = (d1 - hi - sl).clamp(min=0.0) + (d2 - hi - sl).clamp(min=0.0)
+                side_cost = excess * float(cr.side_relax_rs_per_m)
+            else:
+                bad |= (d1 > hi + sl) | (d2 > hi + sl)
+        if cr.side_m is None or cr.side_relax_rs_per_m <= 0:
+            side_cost = None
         pen = torch.zeros_like(crossed)
         if cr.pref_window is not None:
             pen |= acute < cr.pref_window[0] - 1e-3
@@ -436,6 +444,8 @@ def _edge_geom(compiled: Compiled, grid: Grid, p: SolverParams, rasters: "_Raste
             # non-preferred angle: the full allowance; position: graded by the distance from the null point
             E = E + torch.where(crossed & pen, torch.full_like(E, float(cr.penalty_rs)), torch.zeros_like(E))
             E = E + torch.where(crossed, pos_frac * float(cr.penalty_rs), torch.zeros_like(E))
+        if side_cost is not None:
+            E = E + torch.where(crossed, side_cost, torch.zeros_like(E))
         invalid |= crossed & bad
     for pa, (rid, exempt) in zip(rasters.par, rasters.par_meta):
         a = pa[row, col]

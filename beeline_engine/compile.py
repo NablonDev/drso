@@ -61,6 +61,7 @@ class CrossingRaster:
     null_offset_wide: np.ndarray | None = None
     null_allowed: float = 0.2
     side_m: tuple[float, float] | None = None        # each crossing tower this far from the crossed wire (min, max)
+    side_relax_rs_per_m: float = 0.0                 # beyond the max: allowed at this search cost per metre (14 Oct 2026)
     max_dev_deg: float | None = None                 # deviation cap at the two crossing towers
     penalty_rs: float = 0.0                          # search cost of a non-preferred crossing
 
@@ -993,6 +994,7 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
             side_m = (float(side[0]), float(side[1])) if isinstance(side, (list, tuple)) and len(side) == 2 else None
             mdev = p.get("max_dev_adjacent_deg")
             pen_pct = float(p.get("relax_penalty_pct", 0) or 0) / 100.0
+            srp = float(p.get("side_relax_pct_per_25m", 0) or 0) / 100.0
             for x in built:
                 x.pref_window = pref_win
                 x.side_m = side_m
@@ -1008,6 +1010,8 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
                     x.long_span = True                                            # spans up to 600 m over a crossing
                 if pen_pct > 0 and tower_cost_rs:
                     x.penalty_rs = pen_pct * float(tower_cost_rs.get(x.min_type) or tower_cost_rs.get("D45") or 0.0)
+                if side_m is not None and srp > 0 and tower_cost_rs:
+                    x.side_relax_rs_per_m = srp * float(tower_cost_rs.get(x.min_type) or tower_cost_rs.get("D45") or 0.0) / 25.0
             cr = built[0]
             for extra in built[1:]:
                 if r.id in angle_tower_rules:

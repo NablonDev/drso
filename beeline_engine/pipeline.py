@@ -996,6 +996,8 @@ def _route_events(sr, frame, comp, findex, rules, sp, layer_names, inp, dem, blo
             why = []
             if not c.get("angle_preferred", True):
                 why.append(f"at {c['angle_deg']:.0f}° instead of 90° ± 5°")
+            if c.get("side_relaxed_m"):
+                why.append(f"with its crossing towers {c['side_relaxed_m']:.0f} m beyond the {c['side_window_m'][1]:g} m maximum from the wire (span relaxed only as far as needed)")
             if c.get("point_preferred") is False:
                 why.append("away from the null point of the crossed span (allowed within ± 20 % of it)")
             if why:

@@ -451,6 +451,10 @@ groups:
           - {key: angle_min_kv, label: "Crossing angle applies from", type: num, unit: kV, value: 66}
           # the two crossing towers stand 1.2-1.7 × our tower height from the crossed conductor, no more (72.5 m → 87-123 m)
           - {key: crossing_side_m, label: "Crossing tower to the crossed conductor, each side (min-max)", type: rng, unit: m, value: {765: [87, 123], 400: [66, 94], 220: [48, 68], 132: [38, 54]}}
+          # Vivek, 14 Oct 2026: where the window cannot be kept (another line, buildings next to the crossing), the
+          # crossing towers may stand further out — the span relaxed only as far as needed: every metre beyond the
+          # maximum costs the search this share of the crossing tower's price per 25 m; the minimum stays hard
+          - {key: side_relax_pct_per_25m, label: "Beyond the maximum: search cost per 25 m, % of the crossing tower's price", type: num, unit: "%", value: 20}
           # Vivek, 13 Oct 2026: the position penalty is graded — 0 at the null point, rising linearly with the distance from
           # it to the full allowance at the edge of the allowed band, so the crossing stays as close to the null point as it can
           - {key: relax_penalty_pct, label: "Search allowance for a non-preferred crossing, % of the crossing tower's price (position: graded from the null point)", type: num, unit: "%", value: 20}
@@ -488,6 +492,10 @@ groups:
           - {key: angle_min_kv, label: "Crossing angle applies from", type: num, unit: kV, value: 66}
           # the two crossing towers stand 1.2-1.7 × our tower height from the crossed conductor, no more (72.5 m → 87-123 m)
           - {key: crossing_side_m, label: "Crossing tower to the crossed conductor, each side (min-max)", type: rng, unit: m, value: {765: [87, 123], 400: [66, 94], 220: [48, 68], 132: [38, 54]}}
+          # Vivek, 14 Oct 2026: where the window cannot be kept (another line, buildings next to the crossing), the
+          # crossing towers may stand further out — the span relaxed only as far as needed: every metre beyond the
+          # maximum costs the search this share of the crossing tower's price per 25 m; the minimum stays hard
+          - {key: side_relax_pct_per_25m, label: "Beyond the maximum: search cost per 25 m, % of the crossing tower's price", type: num, unit: "%", value: 20}
           # Vivek, 13 Oct 2026: the position penalty is graded — 0 at the null point, rising linearly with the distance from
           # it to the full allowance at the edge of the allowed band, so the crossing stays as close to the null point as it can
           - {key: relax_penalty_pct, label: "Search allowance for a non-preferred crossing, % of the crossing tower's price (position: graded from the null point)", type: num, unit: "%", value: 20}
