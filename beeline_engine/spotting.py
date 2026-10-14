@@ -1151,14 +1151,16 @@ def _is_crossing_tower(chk: Checker, pts, i: int) -> bool:
 
 def _cost_polish(chk: Checker, pts, sp: SpotParams, passes: int = 3, min_gain_rs: float = 1e5):
     """Final pass: each tower (not a gantry, dead end or power-line crossing tower) tries spots along the
-    line (±10..50 m), across it (±5..20 m) and both; the cheapest that passes every exact check and keeps
+    line (±10..50 m), across it (±5..40 m), both, and — for a bend — the exact inward shift that brings its
+    deflection down to the next type band (idea 3); the cheapest that passes every exact check and keeps
     the ground clearance replaces it when it saves at least min_gain_rs. Repeats until nothing improves.
     Returns (points, ₹ saved, moves)."""
     pts = list(pts)
     n = len(pts)
     saved, moves = 0.0, 0
     along = (10, 20, 35, 50)
-    across = (5, 10, 20)
+    across = (5, 10, 15, 20, 30, 40)
+    edges = sorted(v for k, v in sp.type_bands.items() if k != "D60") if sp.type_bands else [2.0, 15.0, 30.0, 45.0]
     for _ in range(passes):
         gain_pass = 0.0
         for i in range(2, n - 2):
@@ -1170,10 +1172,24 @@ def _cost_polish(chk: Checker, pts, sp: SpotParams, passes: int = 3, min_gain_rs
             vx, vy = -uy, ux
             offs = [(s * a, 0.0) for a in along for s in (1, -1)] + [(0.0, s * c) for c in across for s in (1, -1)] + \
                    [(s * a, t * c) for a in (10, 20) for c in (5, 10) for s in (1, -1) for t in (1, -1)]
+            cand_pts = [(pts[i][0] + ux * da + vx * dc, pts[i][1] + uy * da + vy * dc) for da, dc in offs]
+            # angle redistribution to a band edge (Vivek, 14 Oct 2026: idea 3): a bend just above a type band
+            # (16° -> C1) moves inward along its bisector by the exact amount that brings it to the edge
+            # (14.7° -> B1); its neighbours take the difference, which the local cost prices
+            dfl = _deflection(pts[i - 1], pts[i], pts[i + 1])[0]
+            if dfl > 2.0:
+                L1 = math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1])
+                L2 = math.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1])
+                mx, my = (pts[i - 1][0] + pts[i + 1][0]) / 2 - pts[i][0], (pts[i - 1][1] + pts[i + 1][1]) / 2 - pts[i][1]
+                mn = math.hypot(mx, my) or 1.0
+                for e in edges:
+                    if 0 < dfl - e <= 8.0:
+                        delta = math.radians(dfl - e + 0.3) / (1.0 / L1 + 1.0 / L2)
+                        if delta <= 60.0:
+                            cand_pts.append((pts[i][0] + mx / mn * delta, pts[i][1] + my / mn * delta))
             base = _local_cost(chk, sp, pts, i)
             cands = []
-            for da, dc in offs:
-                c = (pts[i][0] + ux * da + vx * dc, pts[i][1] + uy * da + vy * dc)
+            for c in cand_pts:
                 trial = list(pts); trial[i] = c
                 if min(math.hypot(c[0] - pts[i - 1][0], c[1] - pts[i - 1][1]),
                        math.hypot(pts[i + 1][0] - c[0], pts[i + 1][1] - c[1])) < sp.min_span_m:
