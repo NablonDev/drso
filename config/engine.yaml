@@ -4,6 +4,10 @@
 grid:
   raster_res_m: 20            # rule-compile raster resolution
   site_spacing_m: 50          # candidate tower site spacing (chainage and lateral)
+  # targeted finer lattice (Vivek, 14 Oct 2026): the search again at refine_spacing_m, confined to the sites
+  # within refine_half_width_m of the 50 m solution (every cap pass too); 0 = off
+  refine_spacing_m: 25
+  refine_half_width_m: 300
   band_margin_m: 500          # extra length before A and after B in the chainage frame
   raster_margin_m: 0          # padding on raster buffers; spotting repairs grid/exact disagreements
   nudge_radius_m: 30          # how far spotting may move a grid tower to satisfy the exact check

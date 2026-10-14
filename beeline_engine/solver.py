@@ -235,15 +235,16 @@ def _acute(a_deg, b_deg):
 _CACHE_MUTEX = threading.Lock()
 
 
-def _edge_index(grid: Grid, rasters: "_Rasters", c_from: int, c_to: int, kidx: np.ndarray, n_samples: int):
+def _edge_index(grid: Grid, rasters: "_Rasters", c_from: int, c_to: int, kidx: np.ndarray, n_samples: int, rows=None):
     """Raster rows / cols sampled along every edge of the block, plus the edge geometry tensors."""
     dev = rasters.dev
     f_x0, f_y_top, res = rasters.f_x0, rasters.f_y_top, rasters.res_m
     C = c_to - c_from
-    R, K = grid.nr, len(kidx)
+    rlo, rhi = (0, grid.nr) if rows is None else rows
+    R, K = rhi - rlo, len(kidx)
     offs = grid.offsets[kidx]
     cs = torch.arange(c_from, c_to, device=dev, dtype=torch.float32)
-    rs = torch.arange(R, device=dev, dtype=torch.float32)
+    rs = torch.arange(rlo, rhi, device=dev, dtype=torch.float32)
     x0 = (cs * grid.sx).view(C, 1, 1, 1)
     y0 = ((rs - grid.r0) * grid.sy).view(1, R, 1, 1)
     dx = torch.as_tensor(offs[:, 0] * grid.sx, device=dev, dtype=torch.float32).view(1, 1, K, 1)
@@ -263,15 +264,17 @@ def _edge_strip(grid: Grid, rasters: "_Rasters", c_from: int, c_to: int, kidx: n
 
 def _edge_block(compiled: Compiled, grid: Grid, p: SolverParams, rasters: "_Rasters",
                 c_from: int, c_to: int, kidx: np.ndarray, n_samples: int, require_river: bool,
-                cache: dict | None = None) -> torch.Tensor:
+                cache: dict | None = None, rows=None) -> torch.Tensor:
     """E for columns c_from..c_to-1 and offsets kidx -> (C, R, len(kidx)) ₹, inf = invalid.
     E = B + A × strip, with (A, B) the strip-independent geometry of the block; `cache` (shared by the
     solves on one compile: the route variants and the forest-cap passes) keeps (A, B) on the GPU."""
     key = (c_from, c_to, int(require_river), int(n_samples), int(len(kidx)), grid.nc, grid.nr, len(grid.offsets), "u1")
+    if rows is not None:
+        cache = None                                   # a row window (refinement pass) is never cached
     geom = cache.get(key) if cache is not None else None
     if geom is None:
         if cache is None:
-            geom = _edge_geom(compiled, grid, p, rasters, c_from, c_to, kidx, n_samples, require_river)
+            geom = _edge_geom(compiled, grid, p, rasters, c_from, c_to, kidx, n_samples, require_river, rows)
         else:
             # one route computes a block while the others wait for it instead of computing it too
             with _CACHE_MUTEX:
@@ -286,21 +289,25 @@ def _edge_block(compiled: Compiled, grid: Grid, p: SolverParams, rasters: "_Rast
                         torch.cuda.current_stream(rasters.dev).synchronize()
                     cache[key] = geom
     A, B, X, U = geom
-    return B + A * _edge_strip(grid, rasters, c_from, c_to, kidx, n_samples), X, U
+    strip = _edge_strip(grid, rasters, c_from, c_to, kidx, n_samples)
+    if rows is not None:
+        strip = strip[:, rows[0]:rows[1]]
+    return B + A * strip, X, U
 
 
 def _edge_geom(compiled: Compiled, grid: Grid, p: SolverParams, rasters: "_Rasters",
-               c_from: int, c_to: int, kidx: np.ndarray, n_samples: int, require_river: bool):
+               c_from: int, c_to: int, kidx: np.ndarray, n_samples: int, require_river: bool, rows=None):
     """(A, B, X, U) for the block: E = B + A × mean strip ₹/m; B carries inf where the edge is invalid; X marks
     edges that cross a feature with a deviation cap at its crossing towers; U is the ₹ over an A that a
     crossing forces on each end tower (charged once at the tower, in solve())."""
     dev = rasters.dev
     f = compiled.frame
     C = c_to - c_from
-    R, K = grid.nr, len(kidx)
+    rlo, rhi = (0, grid.nr) if rows is None else rows
+    R, K = rhi - rlo, len(kidx)
     offs = grid.offsets[kidx]
     cs = torch.arange(c_from, c_to, device=dev, dtype=torch.float32)
-    rs = torch.arange(R, device=dev, dtype=torch.float32)
+    rs = torch.arange(rlo, rhi, device=dev, dtype=torch.float32)
     x0 = (cs * grid.sx).view(C, 1, 1, 1)
     y0 = ((rs - grid.r0) * grid.sy).view(1, R, 1, 1)
     dx = torch.as_tensor(offs[:, 0] * grid.sx, device=dev, dtype=torch.float32).view(1, 1, K, 1)
@@ -479,7 +486,7 @@ def _edge_geom(compiled: Compiled, grid: Grid, p: SolverParams, rasters: "_Raste
 
 
 def edge_costs(compiled: Compiled, grid: Grid, p: SolverParams, rasters: "_Rasters",
-               c_from: int, c_to: int, n_samples: int, cache: dict | None = None) -> torch.Tensor:
+               c_from: int, c_to: int, n_samples: int, cache: dict | None = None, rows=None) -> torch.Tensor:
     """(E, X, U): E[c, r, k] for columns c_from..c_to-1 -> tensor (C, R, K) of ₹ (inf = invalid); X marks edges
     that cross a feature whose crossing towers carry a deviation cap; U the forced-type ₹ over an A per end. Long offsets are evaluated only
     where a long-span feature lies within reach."""
@@ -489,7 +496,8 @@ def edge_costs(compiled: Compiled, grid: Grid, p: SolverParams, rasters: "_Raste
     E = torch.full((C, R, K), INF, device=dev)
     X = torch.zeros((C, R, K), dtype=torch.bool, device=dev)
     U = torch.zeros((C, R, K), device=dev)
-    E[:, :, short], X[:, :, short], U[:, :, short] = _edge_block(compiled, grid, p, rasters, c_from, c_to, short, n_samples, False, cache)
+    rsl = slice(0, R) if rows is None else slice(rows[0], rows[1])     # refinement pass: this row window only
+    E[:, rsl, short], X[:, rsl, short], U[:, rsl, short] = _edge_block(compiled, grid, p, rasters, c_from, c_to, short, n_samples, False, cache, rows)
     long_ = np.nonzero(grid.is_long)[0]
     if len(long_) and rasters.river_cols is not None and rasters.river_cols[c_from:c_to].any():
         n_long = int(math.ceil(p.river_max_span_m / (compiled.frame.res_m / 2))) + 1
@@ -498,10 +506,10 @@ def edge_costs(compiled: Compiled, grid: Grid, p: SolverParams, rasters: "_Raste
             c1 = min(c_to, c0 + sub)
             if not rasters.river_cols[c0:c1].any():
                 continue
-            Eb, Xb, Ub = _edge_block(compiled, grid, p, rasters, c0, c1, long_, n_long, True, cache)
-            E[c0 - c_from:c1 - c_from, :, long_] = Eb
-            X[c0 - c_from:c1 - c_from, :, long_] = Xb
-            U[c0 - c_from:c1 - c_from, :, long_] = Ub
+            Eb, Xb, Ub = _edge_block(compiled, grid, p, rasters, c0, c1, long_, n_long, True, cache, rows)
+            E[c0 - c_from:c1 - c_from, rsl, long_] = Eb
+            X[c0 - c_from:c1 - c_from, rsl, long_] = Xb
+            U[c0 - c_from:c1 - c_from, rsl, long_] = Ub
     return E, X, U
 
 
@@ -652,13 +660,24 @@ def gantry_seeds(compiled: Compiled, grid: Grid, p: SolverParams, S_np: np.ndarr
     return seeds
 
 
-def solve(compiled: Compiled, p: SolverParams, cancel_check=None, progress=None) -> SolveOutcome:
-    """A and B are gantries. The route is gantry A -> dead-end tower -> ... -> dead-end tower -> gantry B."""
+def solve(compiled: Compiled, p: SolverParams, cancel_check=None, progress=None, corridor=None) -> SolveOutcome:
+    """A and B are gantries. The route is gantry A -> dead-end tower -> ... -> dead-end tower -> gantry B.
+    corridor = (line, half_width_m): the search is confined to the sites within half_width_m of the
+    frame-coordinate line (the targeted refinement pass on a finer lattice, 14 Oct 2026)."""
     t0 = time.time()
     dev = _device()
     grid = make_grid(compiled, p)
     R, K = grid.nr, len(grid.offsets)
     nc = grid.nc
+    win = None                                   # (nc+1, 2) row window per column, or None = every row
+    if corridor is not None:
+        line, half = corridor
+        xs = np.asarray([pt[0] for pt in line.coords]); ys = np.asarray([pt[1] for pt in line.coords])
+        cx = np.arange(nc + 1) * grid.sx
+        yc = np.interp(cx, xs, ys)
+        lo = np.clip(np.floor((yc - half) / grid.sy).astype(int) + grid.r0, 0, R - 1)
+        hi = np.clip(np.ceil((yc + half) / grid.sy).astype(int) + grid.r0 + 1, 1, R)
+        win = np.stack([lo, hi], axis=1)
     S_np, angle_only_np = site_costs(compiled, grid, p)
     T_np, TA_np = transition_matrix(grid, p)
     T45_np = TA45_np = None
@@ -703,7 +722,8 @@ def solve(compiled: Compiled, p: SolverParams, cancel_check=None, progress=None)
     Xring = torch.zeros((ring, R, K), dtype=torch.bool, device=dev)       # the edge into each site crossed a capped feature
     Uring = torch.zeros((ring, R, K), device=dev)                         # forced-type ₹ the edge into each site carries
     tA_f = float(p.tower_cost_rs["A"])
-    arg = torch.zeros((nc + 1, R, K), dtype=torch.int16, device=dev)
+    arg = torch.zeros((nc + 1, R, K), dtype=torch.int16, device=dev) if win is None else None
+    arg_cols: list = [None] * (nc + 1)           # (lo, (hi-lo, K) int16) per column with a row window
     rows = torch.arange(R, device=dev).view(R, 1)
     src_rows = rows - drs.view(1, K)                 # (R, K)
     row_ok = (src_rows >= 0) & (src_rows < R)
@@ -758,37 +778,49 @@ def solve(compiled: Compiled, p: SolverParams, cancel_check=None, progress=None)
             break
         if E_chunk is None or c >= E_start + E_chunk.shape[0]:
             E_start = c
-            E_chunk, X_chunk, U_chunk = edge_costs(compiled, grid, p, rasters, c, min(nc, c + chunk), n_samples, cache)
+            c_end = min(nc, c + chunk)
+            rows = None if win is None else (int(win[c:c_end + 1, 0].min()), int(win[c:c_end + 1, 1].max()))
+            E_chunk, X_chunk, U_chunk = edge_costs(compiled, grid, p, rasters, c, c_end, n_samples, cache, rows)
         cross_out = X_chunk[c - E_start]                  # (R, K): the edge leaving this site crosses a capped feature
         up_out = U_chunk[c - E_start]
+        lo_r, hi_r = (0, R) if win is None else (int(win[c, 0]), int(win[c, 1]))
+        Rw = hi_r - lo_r
+        rw = slice(lo_r, hi_r)
         # tower at column c: from an arrival (type by deflection) or as the first dead-end. A crossing tower pays
         # max(type by deflection, the type its crossing forces) — once (14 Oct 2026; the forced type was also on
         # the edge before, so a bend at a crossing tower, free up to 45°, cost the search a second tower premium)
-        sc = tfac[c].view(R, 1, 1) if tfac is not None else 1.0
-        forced = tA_f + torch.maximum(up_in.unsqueeze(2), up_out.unsqueeze(1))     # (R, K_in, K_out)
-        tot = V.unsqueeze(2) + torch.maximum(T.unsqueeze(0), forced) * sc
-        totA = V.unsqueeze(2) + torch.maximum(TA.unsqueeze(0), forced) * sc
+        sc = tfac[c, rw].view(Rw, 1, 1) if tfac is not None else 1.0
+        Vw = V[rw]
+        forced = tA_f + torch.maximum(up_in[rw].unsqueeze(2), up_out[rw].unsqueeze(1))     # (Rw, K_in, K_out)
+        tot = Vw.unsqueeze(2) + torch.maximum(T.unsqueeze(0), forced) * sc
+        totA = Vw.unsqueeze(2) + torch.maximum(TA.unsqueeze(0), forced) * sc
         if T45 is not None:
-            capped = cross_in.unsqueeze(2) | cross_out.unsqueeze(1)          # (R, K_in, K_out)
-            tot = torch.where(capped, V.unsqueeze(2) + torch.maximum(T45.unsqueeze(0), forced) * sc, tot)
-            totA = torch.where(capped, V.unsqueeze(2) + torch.maximum(TA45.unsqueeze(0), forced) * sc, totA)
+            capped = cross_in[rw].unsqueeze(2) | cross_out[rw].unsqueeze(1)          # (Rw, K_in, K_out)
+            tot = torch.where(capped, Vw.unsqueeze(2) + torch.maximum(T45.unsqueeze(0), forced) * sc, tot)
+            totA = torch.where(capped, Vw.unsqueeze(2) + torch.maximum(TA45.unsqueeze(0), forced) * sc, totA)
         del forced
-        tot = torch.where(angle_only[c].view(R, 1, 1), totA, tot)
+        tot = torch.where(angle_only[c, rw].view(Rw, 1, 1), totA, tot)
         mval, am = tot.min(dim=1)
-        M = mval + S[c].view(R, 1)
+        Mw = mval + S[c, rw].view(Rw, 1)
         am = am.to(torch.int16)
         del tot, totA
-        seed = SA[c].view(R, 1).expand(R, K)
+        seed = SA[c, rw].view(Rw, 1).expand(Rw, K)
         if p.dead_end_max_dev_deg is not None:
             # TSD note J: the first dead-end tower turns at most dead_end_max_dev_deg between the
             # gantry slack span and the line
-            hs = torch.rad2deg(torch.atan2(ys_t, torch.full_like(ys_t, max(c * grid.sx, 1.0)))).view(R, 1)
+            hs = torch.rad2deg(torch.atan2(ys_t[rw], torch.full_like(ys_t[rw], max(c * grid.sx, 1.0)))).view(Rw, 1)
             dev_ok = (head_t.view(1, K) - hs).abs() <= p.dead_end_max_dev_deg + 1e-6
             seed = torch.where(dev_ok, seed, torch.full_like(seed, INF))
-        use_seed = seed < M
-        M = torch.where(use_seed, seed, M)
+        use_seed = seed < Mw
+        Mw = torch.where(use_seed, seed, Mw)
         am = torch.where(use_seed, start_marker, am)
-        arg[c] = am
+        if win is None:
+            M = Mw
+            arg[c] = am
+        else:
+            M = torch.full((R, K), INF, device=dev)
+            M[rw] = Mw
+            arg_cols[c] = (lo_r, am)
         reach_map[c] = torch.isfinite(M).any(dim=1)
         E = E_chunk[c - E_start]
         Wring[c % ring] = M + E
@@ -819,13 +851,38 @@ def solve(compiled: Compiled, p: SolverParams, cancel_check=None, progress=None)
         dc, dr = grid.offsets[k]
         pc, pr = c - int(dc), r - int(dr)
         sites.append((pc, pr))
-        k_prev = int(arg[pc, pr, k].item())
+        if win is None:
+            k_prev = int(arg[pc, pr, k].item())
+        else:
+            lo_p, am_p = arg_cols[pc]
+            k_prev = int(am_p[pr - lo_p, k].item())
         if k_prev == -1:
             break
         c, r, k = pc, pr, k_prev
     sites.reverse()
     heads.reverse()
     return SolveOutcome(True, best, sites, heads, grid, compiled.frame.length_m, time.time() - t0)
+
+
+def refine(compiled: Compiled, p: SolverParams, out: SolveOutcome, spacing_m: float = 25.0, half_width_m: float = 300.0,
+           cancel_check=None, progress=None) -> SolveOutcome:
+    """Targeted finer lattice (Vivek, 14 Oct 2026): the search again at spacing_m, confined to the sites within
+    half_width_m of the coarse solution's line; the lattice slack (site tolerance, crossing-span slack) scales
+    with the spacing. Returns the finer outcome when it is feasible and no dearer, else the coarse one."""
+    from dataclasses import replace as _replace
+    from shapely.geometry import LineString as _LS
+    if not out.feasible:
+        return out
+    line = _LS([out.grid.site_xy(c, r) for c, r in out.sites])
+    p2 = _replace(p, site_spacing_m=float(spacing_m), site_tolerance_m=float(spacing_m) / 2.0,
+                  crossing_span_slack_m=float(spacing_m) / 2.0, edge_cache_limit_bytes=0)
+    out2 = solve(compiled, p2, cancel_check=cancel_check, progress=progress, corridor=(line, float(half_width_m)))
+    if out2.feasible and out2.cost_rs <= out.cost_rs + 1e-6:
+        log.info("refine %gm: ₹%.2f Cr -> ₹%.2f Cr (search prices), %d -> %d towers, %.0f s",
+                 spacing_m, out.cost_rs / 1e7, out2.cost_rs / 1e7, len(out.sites), len(out2.sites), out2.seconds)
+        return out2
+    log.info("refine %gm: kept the coarse solution (%s)", spacing_m, "infeasible" if not out2.feasible else "dearer")
+    return out
 
 
 def tower_type_cost(costs: dict, kv: int) -> dict[str, float]:

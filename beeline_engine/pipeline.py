@@ -22,7 +22,7 @@ from .compile import COST_CLASS_CODES, merge_approach, attach_terrain, attach_hi
 from .config import TOWER_TYPES, LineSpec, load_engine, load_layers, resolve_costs, resolve_rules
 from .events import event
 from .frame import Frame
-from .solver import SolverParams, solve, tower_type_cost
+from .solver import SolverParams, refine, solve, tower_type_cost
 from .spotting import SpotParams, SpottedRoute, _frame_geom_to_utm, route_cost, spot
 
 log = logging.getLogger(__name__)
@@ -462,6 +462,19 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
                     out, cv = out_p, cvp
                     prec_used = True
         solve_s = time.time() - t
+
+        def refine_pass(cvx, out_):
+            """Targeted finer lattice round the coarse solution (14 Oct 2026); engine.yaml grid.refine_spacing_m."""
+            sp_m = float((eng["grid"].get("refine_spacing_m") or 0) or 0)
+            if sp_m <= 0 or not out_.feasible or var.get("relaxed"):
+                return out_
+            t_r = time.time()
+            out_r = refine(cvx, p, out_, spacing_m=sp_m, half_width_m=float(eng["grid"].get("refine_half_width_m", 300) or 300),
+                           cancel_check=check_cancel, progress=sub)
+            timings.setdefault("refine_s", []).append(round(time.time() - t_r, 1))
+            return out_r
+
+        out = refine_pass(_srch(cv, var), out)
         if out.feasible and vi > 0 and not apart and not var.get("relaxed"):
             # every earlier route's line, in route order (as the one-at-a-time loop saw them)
             prev_lines = [ln for ln in (wait_line(j).get("line") for j in range(vi)) if ln is not None]
@@ -548,6 +561,7 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
                             break
                     cvp, out2, rec = hi_res
                     vprog(vi, 0.5, f"Route {var['id']}: forest {best[0].stats['forest_ha']:.0f} ha over the {forest_cap:g} ha cap — forest priced ×{hi_m:.2f}")
+                    out2 = refine_pass(_srch(cvp, var), out2)
                     pts2 = [(float(x), float(y)) for x, y in (out2.grid.site_xy(c, r) for c, r in out2.sites)]
                     t3 = time.time()
                     sr2 = spot(_srch(cvp, var), pts2, sp, dem=dem)
