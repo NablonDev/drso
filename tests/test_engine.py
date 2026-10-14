@@ -324,14 +324,15 @@ def test_existing_line_is_not_crossed_within_80m_of_a_tower():
     assert x.geom_type == "Point"
     d = min(abs(x.y - y) for y in ys)
     assert d >= 80.0 - 1.0, d
-    # (2) the nearest tower 110 m from the bee-line: outside the old mid-span window (160-240 m) but
-    # more than 80 m from the tower, so the line crosses where it runs, close to the bee-line
+    # (2) the nearest tower 110 m from the bee-line: the crossing keeps 80 m from it. Since 14 Oct 2026 the
+    # 25 m refinement and the vertex moves shift the line to the preferred null point (200 m from the towers)
+    # when that costs nothing, as on this empty band — so only the 80 m ban is asserted
     ys = np.arange(-1800.0, 1801.0, 400.0) + 110.0
     r = run_solve(solve_input({"power": _existing_400(f, c, ys)}))["routes"][0]
     x = LineString(towers_frame(f, r)).intersection(ex)
     assert x.geom_type == "Point"
     d = min(abs(x.y - y) for y in ys)
-    assert d >= 80.0 - 1.0 and d < 160.0, d
+    assert d >= 80.0 - 1.0, d
 
 
 def test_power_line_crossing_window_and_tower_types():
