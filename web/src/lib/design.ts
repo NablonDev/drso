@@ -240,10 +240,18 @@ export interface CrossingRow {
   issues: Flag[];
   /** which values sit at their limit: angle, span, side, null, deviation */
   binding: string[];
+  /** confidence of the layer the crossed feature came from (the CROSSING event's source) */
+  confidence: number | null;
 }
 
 export function crossingRows(route: Route, rules: RulesResponse | undefined, lim: Limits): CrossingRow[] {
   const byNo = new Map(route.towers.map((t) => [t.no, t]));
+  const confAt = new Map<string, number>();
+  for (const e of route.events) {
+    if (e.type !== "CROSSING") continue;
+    const d = (e.data ?? {}) as { tower_a?: number; rule_id?: string };
+    if (d.tower_a !== undefined && typeof e.source?.confidence === "number") confAt.set(`${d.tower_a}:${d.rule_id ?? ""}`, e.source.confidence);
+  }
   const out: CrossingRow[] = [];
   for (const span of route.spans) {
     const a = byNo.get(span.a), b = byNo.get(span.b);
@@ -305,7 +313,8 @@ export function crossingRows(route: Route, rules: RulesResponse | undefined, lim
       if (sideWindow && [c.side_a_m, c.side_b_m].some((d) => d <= sideWindow[0] + NEAR.sideM || d >= sideWindow[1] - NEAR.sideM)) binding.push("side");
       if (hasNull && nullAllowed !== null && (c.null_offset_pct as number) >= nullAllowed - NEAR.pct) binding.push("null");
       if (maxDev !== null && [a, b].some((t) => t.type !== "G" && t.deflection_deg >= maxDev - NEAR.deg)) binding.push("deviation");
-      out.push({ key: `${route.id}-${span.a}-${j}`, span, c, a, b, km: a.chainage_km + along / 1000, lonlat, angleAllowed, anglePref, spanMax, sideWindow, nullPref, nullAllowed, maxDev, status, issues, binding });
+      const confidence = confAt.get(`${span.a}:${c.rule}`) ?? null;
+      out.push({ key: `${route.id}-${span.a}-${j}`, span, c, a, b, km: a.chainage_km + along / 1000, lonlat, angleAllowed, anglePref, spanMax, sideWindow, nullPref, nullAllowed, maxDev, status, issues, binding, confidence });
     });
   }
   return out;

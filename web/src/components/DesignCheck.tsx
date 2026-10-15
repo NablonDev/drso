@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import type { Route, RulesResponse } from "../api/types";
 import { num } from "../lib/format";
+import { ConfPill } from "./ui";
 import { ruleRows, STATUS_COLOUR, STATUS_LABEL, type Design, type Flag } from "../lib/design";
 
 type Tab = "towers" | "crossings" | "sections" | "rules";
@@ -130,7 +131,7 @@ export default function DesignCheck({ route, d, onFly, rules, fired, statutory }
                   return (
                     <tr key={r.key} className="pick" onClick={() => onFly(r.lonlat[0], r.lonlat[1])} tabIndex={0} onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && onFly(r.lonlat[0], r.lonlat[1])}>
                       <td className="r mono">{num(r.km, 2)}</td>
-                      <td>{c.name}{c.major ? <span className="lim">major</span> : null}</td>
+                      <td>{c.name}{c.major ? <span className="lim">major</span> : null}{r.confidence !== null && r.confidence < 0.8 ? <> <ConfPill value={r.confidence} /></> : null}</td>
                       <td className="mono">{r.a.no} {r.a.type} → {r.b.no} {r.b.type}{c.min_type && c.min_type !== "A" ? <span className="lim">min {c.min_type}</span> : null}</td>
                       <td className="r mono"><span className={`${cls(r.issues, "angle")} ${bind(r.binding, "angle")}`}>{num(c.angle_deg, 0)}°</span><span className="lim">{rng(r.angleAllowed, "°")}</span></td>
                       <td className="r mono"><span className={`${cls(r.issues, "span")} ${bind(r.binding, "span")}`}>{num(c.span_m, 0)}</span>{r.spanMax !== null ? <span className="lim">≤ {r.spanMax}</span> : null}</td>
@@ -146,7 +147,7 @@ export default function DesignCheck({ route, d, onFly, rules, fired, statutory }
               </tbody>
             </table>
           </div>
-          <div className="foot">Limits in grey come from the crossing's rule. Null point = distance of the crossing from the mid-span of the crossed line, as a share of that span. Preferred = at 90° and the null point; relaxed = allowed at the rule's penalty; violation = outside what the rule allows. <span className="bind">Underlined</span> = at its limit: the crossing cannot move without breaking the rule.</div>
+          <div className="foot">Limits in grey come from the crossing's rule. Null point = distance of the crossing from the mid-span of the crossed line, as a share of that span. Preferred = at 90° and the null point; relaxed = allowed at the rule's penalty; violation = outside what the rule allows. A confidence pill marks a crossed feature whose layer came in below 0.80: verify its position on site. <span className="bind">Underlined</span> = at its limit: the crossing cannot move without breaking the rule.</div>
         </>
       ) : null}
 

@@ -30,6 +30,7 @@ export function CrossingPopup({ r }: { r: CrossingRow }) {
           <tr><td>Deviation</td><td className="mono">{num(r.a.deflection_deg, 1)}° / {num(r.b.deflection_deg, 1)}°{r.maxDev !== null ? <span className="lim"> max {r.maxDev}°</span> : null}</td></tr>
           {r.span.min_clearance_m !== null ? <tr><td>Clearance</td><td className="mono">{num(r.span.min_clearance_m, 1)} m</td></tr> : null}
           {c.width_m ? <tr><td>Width</td><td className="mono">{num(c.width_m, 0)} m{c.major ? " · major" : ""}</td></tr> : null}
+          {r.confidence !== null ? <tr><td>Source</td><td className="mono"><span className={r.confidence < 0.8 ? "warn" : ""}>confidence {r.confidence.toFixed(2)}</span>{r.confidence < 0.8 ? <span className="lim">verify on site</span> : null}</td></tr> : null}
           {r.binding.length ? <tr><td>At limit</td><td className="bind">{r.binding.join(", ")}</td></tr> : null}
           {r.issues.length ? (
             <tr><td>Notes</td><td>{r.issues.map((f, i) => <span key={i} className={`fl ${f.kind}`}>{f.text}</span>)}</td></tr>
@@ -50,10 +51,10 @@ export default function CrossingLayer({ map, rows, visible }: { map: maplibregl.
   const popupRef = useRef<maplibregl.Popup | null>(null);
   const [labels, setLabels] = useState<{ key: string; x: number; y: number; text: string; cls: string }[]>([]);
   const index = useMemo(() => new Map(rows.map((r) => [r.key, r])), [rows]);
-  const data = useMemo<GeoJSON.FeatureCollection<GeoJSON.Point, { key: string; status: string }>>(
+  const data = useMemo<GeoJSON.FeatureCollection<GeoJSON.Point, { key: string; status: string; lowconf: boolean }>>(
     () => ({
       type: "FeatureCollection",
-      features: rows.map((r) => ({ type: "Feature", geometry: { type: "Point", coordinates: r.lonlat }, properties: { key: r.key, status: r.status } })),
+      features: rows.map((r) => ({ type: "Feature", geometry: { type: "Point", coordinates: r.lonlat }, properties: { key: r.key, status: r.status, lowconf: r.confidence !== null && r.confidence < 0.8 } })),
     }),
     [rows],
   );
@@ -69,8 +70,9 @@ export default function CrossingLayer({ map, rows, visible }: { map: maplibregl.
         paint: {
           "circle-color": ["match", ["get", "status"], "violation", STATUS_COLOUR.violation, "relaxed", STATUS_COLOUR.relaxed, STATUS_COLOUR.ok],
           "circle-radius": ["interpolate", ["linear"], ["zoom"], 9, 2.5, 12, 4, 15, 6, 18, 8],
-          "circle-stroke-color": "#ffffff",
-          "circle-stroke-width": ["case", ["boolean", ["feature-state", "hover"], false], 2.5, 1.2],
+          // a low-confidence source gets an amber ring: the crossed feature may not be where the map says
+          "circle-stroke-color": ["case", ["get", "lowconf"], "#D69A4E", "#ffffff"],
+          "circle-stroke-width": ["case", ["boolean", ["feature-state", "hover"], false], 2.5, ["case", ["get", "lowconf"], 2.2, 1.2]],
           "circle-opacity": 0.95,
         },
       });
