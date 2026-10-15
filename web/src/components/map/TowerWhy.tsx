@@ -99,7 +99,7 @@ export default function TowerWhyPanel({ t, ctx, map }: { t: Tower; ctx: WhyCtx; 
               {!s.allowed ? (
                 <ul className="bad-list">
                   {s.wire_buffers.map((x) => (
-                    <li key={x.id}>the wire would {x.buffer_m > 0 ? `pass within ${num(x.buffer_m, 1)} m of` : "pass through"} {x.feature ?? "a feature"} ({x.name})</li>
+                    <li key={x.id}>{x.buffer_m > 0 ? `the wire would pass within ${num(x.buffer_m, 1)} m of ${x.feature ?? "a feature"} (${x.name})` : `the wire would enter the ${x.name.toLowerCase()} no-go zone (${x.feature ?? "a feature"})`}</li>
                   ))}
                   {badX.map((c, i) => <li key={`x${i}`}>it would cross the {c.name.toLowerCase()} at {num(c.angle_deg, 0)}°, outside the rule's angle window</li>)}
                   {longStops.map((r, i) => (

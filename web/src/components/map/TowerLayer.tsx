@@ -17,7 +17,7 @@ const ARC_MIN_PX = 11;          // below this the arc is unreadable: the angle g
 const SPAN_MIN_ZOOM = 14.5;     // span length at the midpoint of each span
 const MAX_LABELS = 220;
 
-export function TowerPopup({ t, why, map }: { t: StoredTower; why?: WhyCtx; map?: maplibregl.Map | null }) {
+export function TowerPopup({ t, onWhy }: { t: StoredTower; onWhy?: () => void }) {
   const isG = t.type === "G";
   return (
     <div>
@@ -38,7 +38,11 @@ export function TowerPopup({ t, why, map }: { t: StoredTower; why?: WhyCtx; map?
           {t.violations.length ? <tr><td>Violations</td><td style={{ color: "var(--nogo)" }}>{t.violations.join("; ")}</td></tr> : null}
         </tbody>
       </table>
-      {why && !isG ? <TowerWhyPanel t={t} ctx={why} map={map ?? null} /> : null}
+      {onWhy && !isG ? (
+        <button className="mini" style={{ marginTop: 8 }} onClick={onWhy} data-testid="tower-why-open">
+          Why this tower{t.angle_point ? ", and why not straight?" : "?"}
+        </button>
+      ) : null}
     </div>
   );
 }
@@ -77,6 +81,8 @@ export default function TowerLayer({
   const data = useMemo(() => towersToGeoJSON(towers), [towers]);
   const index = useMemo(() => new Map(towers.map((t) => [t.fid, t])), [towers]);
   const [popup, setPopup] = useState<{ t: StoredTower; el: HTMLDivElement } | null>(null);
+  // the "why this tower" panel, docked inside the map so the straight alternative stays visible beside it
+  const [whyT, setWhyT] = useState<StoredTower | null>(null);
   const popupRef = useRef<maplibregl.Popup | null>(null);
   const [labels, setLabels] = useState<{ fid: string; x: number; y: number; text: string; cls: string }[]>([]);
   // deflection arcs in screen space (SVG over the map): extension of the incoming line, the arc to the
@@ -141,7 +147,7 @@ export default function TowerLayer({
       e.preventDefault();
       popupRef.current?.remove();
       const el = document.createElement("div");
-      const p = new maplibregl.Popup({ closeButton: true, maxWidth: why ? "420px" : "340px", offset: 10 })
+      const p = new maplibregl.Popup({ closeButton: true, maxWidth: "340px", offset: 10 })
         .setLngLat([t.lon, t.lat])
         .setDOMContent(el)
         .addTo(map);
@@ -314,7 +320,21 @@ export default function TowerLayer({
             container,
           )
         : null}
-      {popup ? createPortal(<TowerPopup t={popup.t} why={why} map={map} />, popup.el) : null}
+      {popup ? createPortal(<TowerPopup t={popup.t} onWhy={why ? () => { setWhyT(popup.t); popupRef.current?.remove(); } : undefined} />, popup.el) : null}
+      {container && why && whyT ? createPortal(
+        <div className="whypanel" data-testid="why-panel">
+          <div className="whypanel-h">
+            <div>
+              <div className="eyebrow">{whyT.angle_point ? "Angle tower" : "Tower"} · route {whyT.route}</div>
+              <b>Tower {whyT.no} · {whyT.type} · {num(whyT.deflection_deg, 1)}°{whyT.turn && whyT.turn !== "-" ? ` ${whyT.turn}` : ""}</b>
+              <span className="hint" style={{ margin: 0 }}> · km {num(whyT.chainage_km, 2)}</span>
+            </div>
+            <button className="mini" onClick={() => setWhyT(null)} aria-label="Close" data-testid="why-close">✕</button>
+          </div>
+          <TowerWhyPanel t={whyT} ctx={why} map={map} />
+        </div>,
+        container,
+      ) : null}
     </>
   );
 }

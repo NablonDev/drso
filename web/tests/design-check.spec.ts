@@ -40,3 +40,22 @@ test("design check lists crossings, towers and sections against the limits", asy
   await page.getByTestId("toggle-crossings").click();
   await expect(page.getByTestId("toggle-crossings")).toHaveAttribute("aria-pressed", "false");
 });
+
+// Why this tower (15 Oct 2026): the tower popup opens the docked panel. A straight-run tower is used so the
+// test does not start loading the solve's rule checker (minutes and ~9 GB) on the dev server.
+test("tower popup opens the why panel with the type reason", async ({ page }) => {
+  await page.goto("/runs/BHU-SHI-0003/map");
+  await page.getByTestId("dc-tab-towers").click();
+  const row = page.getByTestId("dc-towers").locator("tbody tr").filter({ has: page.locator("td:nth-child(3)", { hasText: /^0\.0°$/ }) }).first();
+  await row.click();
+  await page.waitForTimeout(3000);
+  const map = page.getByTestId("route-map");
+  await map.scrollIntoViewIfNeeded();
+  const box = (await map.boundingBox())!;
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  await page.getByTestId("tower-why-open").click();
+  await expect(page.getByTestId("why-panel")).toContainText("Why this type");
+  await expect(page.getByTestId("why-panel")).toContainText("straight");
+  await page.getByTestId("why-close").click();
+  await expect(page.getByTestId("why-panel")).toHaveCount(0);
+});

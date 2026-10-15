@@ -482,7 +482,10 @@ textarea{width:100%;padding:8px 10px;border:1px solid var(--rule);border-radius:
 .maplibregl-popup-tip{border-top-color:var(--surface)!important;border-bottom-color:var(--surface)!important}
 .maplibregl-popup-close-button{color:var(--muted);font-size:16px;padding:0 6px}
 .maplibregl-popup-content table td{padding:4px 6px;font-size:12px}
-.why{margin-top:8px;padding-top:8px;border-top:1px solid var(--rule);max-height:52vh;overflow:auto;font-size:12px;line-height:1.45}
+.whypanel{position:absolute;top:92px;right:10px;width:380px;max-width:calc(100% - 150px);max-height:calc(100% - 104px);overflow:auto;z-index:8;
+  background:var(--surface);color:var(--ink);border:1px solid var(--rule);border-radius:9px;box-shadow:0 2px 12px rgba(0,0,0,.25);padding:11px 13px}
+.whypanel-h{display:flex;align-items:flex-start;gap:8px;justify-content:space-between;font-size:13px}
+.why{margin-top:8px;padding-top:8px;border-top:1px solid var(--rule);font-size:12px;line-height:1.45}
 .why .why-h{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--faint);font-weight:600;margin:8px 0 3px}
 .why .why-h:first-child{margin-top:0}
 .why ul{margin:0;padding-left:16px}
