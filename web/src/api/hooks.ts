@@ -6,7 +6,7 @@ import {
   type UseMutationOptions,
 } from "@tanstack/react-query";
 import { ApiError, api, errorText } from "./client";
-import type { DemCoverage, RouteProfile, ImageryCatalog, ModelStatus, NearestPoint, NearestResult, WithinHit,
+import type { BufferItem, DemCoverage, RouteProfile, ImageryCatalog, ModelStatus, NearestPoint, NearestResult, WithinHit,
   AppConfig,
   BandInfo,
   CompareResponse,
@@ -16,6 +16,7 @@ import type { DemCoverage, RouteProfile, ImageryCatalog, ModelStatus, NearestPoi
   Health,
   Imagery,
   Job,
+  LonLat,
   LayersResponse,
   Mapping,
   MappingCheck,
@@ -156,6 +157,16 @@ export function useWithin(runId: string | undefined, key: string, body: { layer:
     queryKey: ["within", runId ?? "", key, body?.layer ?? "", body?.radius_m ?? 0] as const,
     queryFn: () => api<{ hits: WithinHit[] }>(`/api/runs/${encodeURIComponent(runId!)}/within`, { method: "POST", json: body }),
     enabled: Boolean(runId && body && body.radius_m && body.points.length),
+    staleTime: Infinity,
+  });
+}
+
+/** Buffered features of run layers near a route: setbacks, parallel-run bands, no-crossing zones. */
+export function useBuffers(runId: string | undefined, key: string, body: { route: LonLat[]; items: BufferItem[] } | null, enabled = true) {
+  return useQuery({
+    queryKey: ["buffers", runId ?? "", key] as const,
+    queryFn: () => api<GeoJSON.FeatureCollection>(`/api/runs/${encodeURIComponent(runId!)}/buffers`, { method: "POST", json: body }),
+    enabled: enabled && Boolean(runId && body && body.items.length && body.route.length > 1),
     staleTime: Infinity,
   });
 }

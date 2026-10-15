@@ -9,6 +9,7 @@ import CopyDialog from "../components/CopyDialog";
 import TowerLayer from "../components/map/TowerLayer";
 import CrossingLayer from "../components/map/CrossingLayer";
 import BendLayer, { BEND_COLOUR } from "../components/map/BendLayer";
+import BufferLayer, { BUFFER_COLOUR } from "../components/map/BufferLayer";
 import DesignCheck from "../components/DesignCheck";
 import { designOf, spanNotesOf, STATUS_COLOUR, statutoryChecks } from "../lib/design";
 import {
@@ -38,7 +39,7 @@ import { useUi } from "../store/ui";
 import { useSelectedRoute } from "../store/selection";
 import { useStartSolve } from "./Solve";
 
-type Toggles = { towers: boolean; angles: boolean; spans: boolean; crossings: boolean; bends: boolean; beeline: boolean; lowconf: boolean; prev: boolean; hills: boolean };
+type Toggles = { towers: boolean; angles: boolean; spans: boolean; crossings: boolean; bends: boolean; buffers: boolean; beeline: boolean; lowconf: boolean; prev: boolean; hills: boolean };
 
 export default function Results() {
   const run = useRunCtx();
@@ -71,7 +72,7 @@ function Body({ s }: { s: Solve }) {
   const pendingMoves = useTowers((x) => (selId ? (x.byRoute[selId] ?? []).filter((t) => t.moved).length : 0));
   const focus = useUi((x) => x.focus);
   const setFocus = useUi((x) => x.setFocus);
-  const [t, setT] = useState<Toggles>({ towers: true, angles: false, spans: false, crossings: true, bends: false, beeline: false, lowconf: false, prev: false, hills: false });
+  const [t, setT] = useState<Toggles>({ towers: true, angles: false, spans: false, crossings: true, bends: false, buffers: false, beeline: false, lowconf: false, prev: false, hills: false });
   // every run layer can be shown under the routes (6 Oct 2026); starts as on Review the layers
   const [on, setOn] = useState<Record<string, boolean>>(() => Object.fromEntries(LAYER_ORDER.map((k) => [k, DEFAULT_ON.has(k)])));
   const [widen, setWiden] = useState(false);
@@ -365,7 +366,8 @@ function Body({ s }: { s: Solve }) {
     { k: "angles", label: "Angles", off: !feasible || !t.towers, title: "Deflection arcs at the angle towers (from z14)" },
     { k: "spans", label: "Spans", off: !feasible || !t.towers, title: "Span length at the midpoint of every span (from z14.5)" },
     { k: "crossings", label: "Crossings", off: !feasible, title: "Where the route crosses a feature, coloured by how the crossing stands against its rule; click one for the metrics" },
-    { k: "bends", label: "Why bends", off: !feasible, title: "A tie from each bend to the feature it reacts to, with the distance and the rule's setback (from z13)" },
+    { k: "bends", label: "Why bends", off: !feasible, title: "A tie from each bend to the feature it reacts to, with the distance and the rule's setback (from z13), and the setback drawn round that feature" },
+    { k: "buffers", label: "Buffers", off: !feasible, title: "Parallel-run bands along roads, canals, rail, rivers and power lines, and the railway no-crossing zones" },
     { k: "beeline", label: "Bee-line" },
     { k: "hills", label: "Hills", off: !hillFC, title: hillFC ? "Hill ground the search avoids (relief + slope from the DEM)" : "This solve has no hill layer" },
   ];
@@ -432,6 +434,7 @@ function Body({ s }: { s: Solve }) {
           {(t.towers || moveMode) && feasible && !hidden.includes(sel.id) ? <TowerLayer map={map} routes={[sel.id]} editable={moveMode} angles={t.angles} spans={t.spans} spanNotes={spanNotes} /> : null}
           {feasible && design ? <CrossingLayer map={map} rows={design.crossings} visible={t.crossings && !hidden.includes(sel.id)} /> : null}
           {feasible && sel ? <BendLayer map={map} runId={run.id} sid={s.id} route={sel} rules={rulesQ.data} visible={t.bends && !hidden.includes(sel.id)} /> : null}
+          {feasible && sel ? <BufferLayer map={map} runId={run.id} sid={s.id} route={sel} rules={rulesQ.data} bends={t.bends && !hidden.includes(sel.id)} buffers={t.buffers && !hidden.includes(sel.id)} /> : null}
           <ScaleBar map={map} />
           <CeilingNote ceiling={ceiling} />
           {feasible && sel ? <RouteProfile sid={s.id} route={sel} map={map} enabled={!maxed} limits={design?.limits} /> : null}
@@ -456,6 +459,12 @@ function Body({ s }: { s: Solve }) {
                 <i style={{ background: BEND_COLOUR.avoid }} />
                 <i style={{ background: BEND_COLOUR.cross, marginLeft: -2 }} />
                 <i style={{ background: BEND_COLOUR.clear, marginLeft: -2 }} />Bend: avoids / crosses / keeps clear
+              </div>
+            ) : null}
+            {t.buffers ? (
+              <div>
+                <i style={{ background: BUFFER_COLOUR.parallel, opacity: 0.5, height: 8 }} />
+                <i style={{ background: BUFFER_COLOUR.nocross, opacity: 0.5, height: 8, marginLeft: -2 }} />Parallel-run band / no-crossing zone
               </div>
             ) : null}
             {t.crossings ? (

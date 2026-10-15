@@ -337,6 +337,8 @@ export interface Rule {
   name: string;
   note: string | null;
   layer: string | null;
+  /** feature classes of the layer the rule applies to (null = the whole layer) */
+  classes?: string[] | null;
   params: RuleParam[];
   enabled: boolean;
   reason: string | null;
@@ -612,6 +614,16 @@ export interface WithinHit {
   id: number;
   name: string | null;
   class: string | null;
+}
+
+export interface BufferItem {
+  kind: "setback" | "parallel" | "nocross";
+  layer: string;
+  buffer_m: number;
+  classes?: string[] | null;
+  ids?: number[] | null;
+  near_m?: number;
+  limit?: number;
 }
 
 export interface DemCoverage {
