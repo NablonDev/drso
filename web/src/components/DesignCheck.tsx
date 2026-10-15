@@ -13,7 +13,7 @@ type Filter = "all" | "angle" | "flagged" | "crossing" | "statutory";
  * rule's angle / span / tower-distance / null-point limits, and the section intervals.
  * Click a row to fly there on the map.
  */
-export default function DesignCheck({ route, d, onFly, rules, fired, sources, statutory }: {
+export default function DesignCheck({ route, d, onFly, rules, fired, sources, statutory, pendingMoves }: {
   route: Route; d: Design; onFly: (lon: number, lat: number) => void; rules?: RulesResponse; fired?: Record<string, number>;
   sources?: { layer: string; features: number }[];
   /** statutory notes by tower number (airport NOC, pipeline footing, building setback) */
