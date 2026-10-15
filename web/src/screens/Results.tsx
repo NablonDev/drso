@@ -431,7 +431,8 @@ function Body({ s }: { s: Solve }) {
             ) : null}
             {!map ? <div className="mapnote"><Loading text="Loading imagery…" /></div> : null}
           </div>
-          {(t.towers || moveMode) && feasible && !hidden.includes(sel.id) ? <TowerLayer map={map} routes={[sel.id]} editable={moveMode} angles={t.angles} spans={t.spans} spanNotes={spanNotes} /> : null}
+          {(t.towers || moveMode) && feasible && !hidden.includes(sel.id) ? <TowerLayer map={map} routes={[sel.id]} editable={moveMode} angles={t.angles} spans={t.spans} spanNotes={spanNotes}
+            why={design ? { sid: s.id, route: sel, rules: rulesQ.data, limits: design.limits } : undefined} /> : null}
           {feasible && design ? <CrossingLayer map={map} rows={design.crossings} visible={t.crossings && !hidden.includes(sel.id)} /> : null}
           {feasible && sel ? <BendLayer map={map} runId={run.id} sid={s.id} route={sel} rules={rulesQ.data} visible={t.bends && !hidden.includes(sel.id)} /> : null}
           {feasible && sel ? <BufferLayer map={map} runId={run.id} sid={s.id} route={sel} rules={rulesQ.data} bends={t.bends && !hidden.includes(sel.id)} buffers={t.buffers && !hidden.includes(sel.id)} /> : null}

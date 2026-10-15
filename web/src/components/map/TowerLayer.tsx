@@ -6,6 +6,7 @@ import maplibregl from "maplibre-gl";
 import type { GeoJSONSource } from "maplibre-gl";
 import { towersToGeoJSON, useTowers, type StoredTower } from "../../store/towers";
 import { num } from "../../lib/format";
+import TowerWhyPanel, { type WhyCtx } from "./TowerWhy";
 
 const SRC = "towers";
 const CIRCLE = "towers-circle";
@@ -16,7 +17,7 @@ const ARC_MIN_PX = 11;          // below this the arc is unreadable: the angle g
 const SPAN_MIN_ZOOM = 14.5;     // span length at the midpoint of each span
 const MAX_LABELS = 220;
 
-export function TowerPopup({ t }: { t: StoredTower }) {
+export function TowerPopup({ t, why, map }: { t: StoredTower; why?: WhyCtx; map?: maplibregl.Map | null }) {
   const isG = t.type === "G";
   return (
     <div>
@@ -37,6 +38,7 @@ export function TowerPopup({ t }: { t: StoredTower }) {
           {t.violations.length ? <tr><td>Violations</td><td style={{ color: "var(--nogo)" }}>{t.violations.join("; ")}</td></tr> : null}
         </tbody>
       </table>
+      {why && !isG ? <TowerWhyPanel t={t} ctx={why} map={map ?? null} /> : null}
     </div>
   );
 }
@@ -54,6 +56,7 @@ export default function TowerLayer({
   angles = false,
   spans = false,
   spanNotes,
+  why,
 }: {
   map: maplibregl.Map | null;
   routes: number[];
@@ -65,6 +68,8 @@ export default function TowerLayer({
   spans?: boolean;
   /** why a span is allowed its length (crossing / hilly / approach), by the tower it leaves */
   spanNotes?: Map<number, string>;
+  /** the solve and route for the "why this tower" section of the popup */
+  why?: WhyCtx;
 }) {
   const byRoute = useTowers((s) => s.byRoute);
   const moveTower = useTowers((s) => s.moveTower);
@@ -136,7 +141,7 @@ export default function TowerLayer({
       e.preventDefault();
       popupRef.current?.remove();
       const el = document.createElement("div");
-      const p = new maplibregl.Popup({ closeButton: true, maxWidth: "340px", offset: 10 })
+      const p = new maplibregl.Popup({ closeButton: true, maxWidth: why ? "420px" : "340px", offset: 10 })
         .setLngLat([t.lon, t.lat])
         .setDOMContent(el)
         .addTo(map);
@@ -166,7 +171,7 @@ export default function TowerLayer({
       map.off("mousemove", CIRCLE, onMove);
       map.off("mouseleave", CIRCLE, onLeave);
     };
-  }, [map, index, editable]);
+  }, [map, index, editable, why]);
 
   // drag to move (future editing) — only wired when editable
   useEffect(() => {
@@ -309,7 +314,7 @@ export default function TowerLayer({
             container,
           )
         : null}
-      {popup ? createPortal(<TowerPopup t={popup.t} />, popup.el) : null}
+      {popup ? createPortal(<TowerPopup t={popup.t} why={why} map={map} />, popup.el) : null}
     </>
   );
 }

@@ -626,6 +626,29 @@ export interface BufferItem {
   limit?: number;
 }
 
+/** Why the line bends at a tower: the straight alternative tested with the solve's own rules (15 Oct 2026). */
+export interface TowerWhy {
+  preparing?: boolean;
+  tower: number;
+  type: string;
+  deflection_deg: number;
+  engine_commit?: string | null;
+  on_line: { lonlat: LonLat; shift_m: number; new_problems: string[]; existing_problems: string[] };
+  straight: {
+    from_tower: number;
+    to_tower: number;
+    from: LonLat;
+    to: LonLat;
+    length_m: number;
+    bend_length_m: number;
+    allowed: boolean;
+    no_tower_stretches: { length_m: number; from_m: number; to_m: number; rules: { id: string; name: string }[]; feature: string | null; spannable: boolean; a: LonLat; b: LonLat }[];
+    wire_buffers: { id: string; name: string; buffer_m: number; feature: string | null }[];
+    crossings: { rule: string; name: string; angle_deg: number; angle_ok: boolean }[];
+    saving_rs: { length: number; tower_type: number; fewer_towers: number; total: number; towers_bend: number; towers_straight: number };
+  };
+}
+
 export interface DemCoverage {
   needed: string[];
   present: string[];

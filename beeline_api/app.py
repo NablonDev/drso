@@ -1259,6 +1259,26 @@ def edit_status(sid: int, prepare: bool = False):
     return st
 
 
+@app.get("/api/solves/{sid}/routes/{route_id}/towers/{tower_no}/why")
+def tower_why(sid: int, route_id: int, tower_no: int):
+    """Why the line bends at this tower: the straight alternative tested with the solve's own rules (see
+    towers_edit.EditContext.explain). The rule checker is loaded on first use (a few minutes per solve);
+    until then {"preparing": true} and the caller polls."""
+    import threading
+    from . import towers_edit
+    if not db.one("select id from solves where id=%s", (sid,)):
+        raise HTTPException(404, "solve not found")
+    ctx = towers_edit.context(sid, wait=False)
+    if ctx is None:
+        if not towers_edit.status(sid).get("building"):
+            threading.Thread(target=towers_edit.context, args=(sid,), daemon=True).start()
+        return {"preparing": True}
+    try:
+        return ctx.explain(route_id, tower_no)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
 @app.post("/api/solves/{sid}/edit/check")
 def edit_check(sid: int, req: TowerCheck):
     from . import towers_edit

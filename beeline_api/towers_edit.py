@@ -185,6 +185,125 @@ class EditContext:
         out["ok"] = not probs
         return out
 
+    # ---- why this angle tower (15 Oct 2026) -------------------------------------------------
+    def explain(self, route_id: int, tower_no: int) -> dict:
+        """Why the line bends at this tower, tested with the solve's own compiled rules:
+        (1) the tower moved onto the straight line through its two neighbours, checked like a hand move;
+        (2) the straight leg between the angle points either side: stretches where no tower may stand, wire
+            buffers it would pass through, crossings it would make at an illegal angle;
+        (3) what the straight leg would save on length and towers (an estimate: land, forest, foundation and
+            existing-line pricing are left out)."""
+        from collections import Counter
+        route = self.route(route_id)
+        T = route["towers"]
+        n = len(T)
+        if tower_no <= 0 or tower_no >= n - 1:
+            raise ValueError("a gantry has no bend to explain")
+        chk, sp, comp, fr = self.chk, self.sp, self.comp, self.frame
+        t = T[tower_no]
+
+        def ll(x, y):
+            lon, lat = fr.frame_to_lonlat(x, y)
+            return [round(float(lon), 7), round(float(lat), 7)]
+
+        def rname(rid):
+            r = self.rules.get(rid)
+            return r.name if r else rid.replace("_", " ")
+
+        out: dict = {"tower": tower_no, "type": t["type"], "deflection_deg": t["deflection_deg"],
+                     "engine_commit": (self.solve.get("manifest") or {}).get("engine_commit")}
+
+        # (1) this tower on the straight line through its neighbours
+        pts0 = self.pts(route)
+        a, b, p = pts0[tower_no - 1], pts0[tower_no + 1], pts0[tower_no]
+        ax, ay = b[0] - a[0], b[1] - a[1]
+        u = max(0.0, min(1.0, ((p[0] - a[0]) * ax + (p[1] - a[1]) * ay) / ((ax * ax + ay * ay) or 1.0)))
+        q = (a[0] + u * ax, a[1] + u * ay)
+        base = self._check_at(route, self.pts(route), tower_no, p)
+        moved = self._check_at(route, self.pts(route), tower_no, q)
+        seen = set(base["all_problems"])
+        out["on_line"] = {"lonlat": ll(*q), "shift_m": round(math.hypot(q[0] - p[0], q[1] - p[1]), 1),
+                          "new_problems": [x for x in moved["all_problems"] if x not in seen],
+                          "existing_problems": [x for x in moved["all_problems"] if x in seen]}
+
+        # (2) the straight leg between the angle points either side
+        prev = max(j for j in range(0, tower_no) if j == 0 or T[j].get("angle_point"))
+        nxt = min(j for j in range(tower_no + 1, n) if j == n - 1 or T[j].get("angle_point"))
+        P, N = pts0[prev], pts0[nxt]
+        Ls = math.hypot(N[0] - P[0], N[1] - P[1])
+        bend_len = sum(math.hypot(pts0[j + 1][0] - pts0[j][0], pts0[j + 1][1] - pts0[j][1]) for j in range(prev, nxt))
+        step = 10.0
+        ns = max(2, int(Ls // step) + 1)
+        runs, cur = [], None
+        for k in range(ns):
+            s_ = Ls * k / (ns - 1)
+            x, y = P[0] + (N[0] - P[0]) * s_ / Ls, P[1] + (N[1] - P[1]) * s_ / Ls
+            if k in (0, ns - 1) or chk.tower_ok(x, y, False):
+                if cur is not None:
+                    runs.append(cur)
+                    cur = None
+                continue
+            pt = Point(x, y)
+            ids = ["band"] if abs(y) > fr.half_width_m else \
+                [r.rule_id for r in (comp.go_overlap if chk.in_go_zone(pt) else comp.tower_nogo) if r.hits(pt)]
+            if cur is None:
+                cur = {"s0": s_, "s1": s_, "rules": Counter(), "layer": {}}
+            cur["s1"] = s_
+            cur["rules"].update(ids)
+            for r in comp.tower_nogo:
+                if r.rule_id in ids:
+                    cur["layer"].setdefault(r.rule_id, r.layer)
+        if cur is not None:
+            runs.append(cur)
+        blocked_runs = []
+        for r_ in runs:
+            length = r_["s1"] - r_["s0"] + step
+            top = [rid for rid, _ in r_["rules"].most_common(3)]
+            sm = (r_["s0"] + r_["s1"]) / 2
+            mid = Point(P[0] + (N[0] - P[0]) * sm / Ls, P[1] + (N[1] - P[1]) * sm / Ls)
+            feat = None
+            if top and top[0] != "band":
+                lyr = r_["layer"].get(top[0])
+                it, d = self.findex.nearest(mid, layers={lyr} if lyr else None, max_dist=2000.0)
+                feat = it["label"] if it else None
+            s0, s1 = r_["s0"], r_["s1"] + step
+            blocked_runs.append({"length_m": round(length), "from_m": round(s0), "to_m": round(min(s1, Ls)),
+                                 "rules": [{"id": rid, "name": "Outside the corridor band" if rid == "band" else rname(rid)} for rid in top],
+                                 "feature": feat, "spannable": length <= sp.span_max_m,
+                                 "a": ll(P[0] + (N[0] - P[0]) * s0 / Ls, P[1] + (N[1] - P[1]) * s0 / Ls),
+                                 "b": ll(P[0] + (N[0] - P[0]) * min(s1, Ls) / Ls, P[1] + (N[1] - P[1]) * min(s1, Ls) / Ls)})
+        leg = LineString([P, N])
+        wire = []
+        if not chk.conductor_ok(P, N):
+            for r in comp.conductor_nogo:
+                if r.hits(leg):
+                    it, d = self.findex.nearest(leg, layers={r.layer} if r.layer else None, max_dist=r.d + 100.0)
+                    wire.append({"id": r.rule_id, "name": rname(r.rule_id), "buffer_m": round(r.d, 1), "feature": it["label"] if it else None})
+            wire = list({w["id"]: w for w in wire}.values())
+        _, items = chk.span_crossings(P, N)
+        crossings = [{"rule": c["rule"], "name": c["name"], "angle_deg": c["angle_deg"], "angle_ok": c.get("violation") != "angle"}
+                     for c in items]
+        long_runs = [r_ for r_ in blocked_runs if not r_["spannable"]]
+        bad_angle = [c for c in crossings if not c["angle_ok"]]
+        allowed = not long_runs and not wire and not bad_angle
+
+        # (3) estimate of what the straight leg saves
+        cost, stats = route.get("cost") or {}, route.get("stats") or {}
+        per_m = ((cost.get("conductor") or 0) + (cost.get("land_row") or 0)) / max(1.0, (stats.get("length_km") or 0) * 1000)
+        ext = float(t.get("extension_m") or 0)
+        type_rs = SP._tower_rs(sp, t["type"], ext) - SP._tower_rs(sp, "A", ext) if t["type"] != "A" else 0.0
+        n_bend, n_straight = nxt - prev, max(1, math.ceil(Ls / sp.design_span_m))
+        towers_rs = max(0, n_bend - n_straight) * SP._tower_rs(sp, "A", 0.0)
+        length_rs = max(0.0, bend_len - Ls) * per_m
+        out["straight"] = {
+            "from_tower": prev, "to_tower": nxt, "from": ll(*P), "to": ll(*N),
+            "length_m": round(Ls, 1), "bend_length_m": round(bend_len, 1), "allowed": allowed,
+            "no_tower_stretches": blocked_runs, "wire_buffers": wire, "crossings": crossings,
+            "saving_rs": {"length": round(length_rs), "tower_type": round(type_rs), "fewer_towers": round(towers_rs),
+                          "total": round(length_rs + type_rs + towers_rs), "towers_bend": n_bend - 1, "towers_straight": n_straight - 1},
+        }
+        return out
+
     # ---- no-tower overlay tiles ------------------------------------------------------------
     def nogo_tile(self, z: int, x: int, y: int) -> bytes:
         f = self.frame

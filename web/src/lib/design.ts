@@ -458,3 +458,50 @@ export function statutoryChecks(rules: RulesResponse | undefined): StatutoryChec
     { key: "building", layer: "buildings", radius_m: pnum(bld, "tower_setback_m"), label: () => `building within ${pnum(bld, "tower_setback_m")} m` },
   ];
 }
+
+// ---- why this tower type (15 Oct 2026) ------------------------------------------------------
+/** The plain-language reasons for a tower's type: the deflection band, or what made it heavier. */
+export function typeReasons(t: Tower, lim: Limits, rules: RulesResponse | undefined): string[] {
+  if (t.type === "G") return ["Gantry: the line starts or ends at the substation."];
+  const out: string[] = [];
+  const bands = lim.bands;
+  const i = bands.findIndex(([, up]) => t.deflection_deg <= up + 1e-6);
+  const bandType = i >= 0 ? bands[i][0] : bands[bands.length - 1]?.[0];
+  const lo = i > 0 ? bands[i - 1][1] : 0;
+  if (bandType) {
+    out.push(t.deflection_deg < 0.05
+      ? "No deflection: the line runs straight through this tower."
+      : `Deflection ${t.deflection_deg.toFixed(1)}° falls in the ${bandType} band (${lo}–${bands[i]?.[1] ?? "?"}°).`);
+  }
+  const name = (id: string) => {
+    for (const g of rules?.groups ?? []) for (const r of g.rules) if (r.id === id) return r.name;
+    return id.replace(/_/g, " ");
+  };
+  const heavier = bandType && rank(t.type) > rank(bandType);
+  const said = new Set<string>();
+  for (const r of t.reasons) {
+    let txt: string | null = null;
+    if (r === "dead_end") txt = "Dead-end tower next to the gantry: always a tension type.";
+    else if (r === "section") txt = `Section point: tension towers may not be more than ${lim.sectionKm ?? "?"} km or ${lim.sectionSpans ?? "?"} spans apart.`;
+    else if (r === "section_hilly") txt = `Section point on hilly ground: at most ${lim.hillyKm ?? "?"} km or ${lim.hillySpans ?? "?"} spans between tension towers.`;
+    else if (r.startsWith("crossing:")) txt = `Crossing tower for the ${name(r.slice(9))} crossing: the rule sets a minimum type.`;
+    else if (r === "crossing_tower") txt = "Crossing tower: raised or strengthened for the crossing span.";
+    else if (r === "span_table") txt = "The two adjacent spans are too long for a lighter type under the TSD span table.";
+    else if (r === "weight_span") txt = "Weight span / uplift: the tower sits lower than its neighbours, so it needs a stronger type.";
+    else if (r === "weight_span_extension") txt = "Raised by an extension to keep the weight span positive.";
+    else if (r === "extension") txt = `Body extension +${t.extension_m} m to keep ground clearance on an adjacent span.`;
+    else if (r === "hilly") txt = "Hilly ground: hilly design span and section interval apply.";
+    else if (r === "moved_by_hand" || r === "retyped_after_move") txt = "Moved by hand; type recomputed from the new deflection.";
+    if (txt && !said.has(txt)) {
+      said.add(txt);
+      out.push(txt);
+    }
+  }
+  if (heavier && out.length === 1) out.push(`Heavier than its ${bandType} band, with no reason recorded by the spotting.`);
+  return out;
+}
+
+/** The decision-log entry that explains the turn at this tower, if any. */
+export function turnEvent(route: Route, no: number) {
+  return route.events.find((e) => e.type.startsWith("TURN") && (e.data as { tower?: number } | null)?.tower === no) ?? null;
+}

@@ -482,6 +482,16 @@ textarea{width:100%;padding:8px 10px;border:1px solid var(--rule);border-radius:
 .maplibregl-popup-tip{border-top-color:var(--surface)!important;border-bottom-color:var(--surface)!important}
 .maplibregl-popup-close-button{color:var(--muted);font-size:16px;padding:0 6px}
 .maplibregl-popup-content table td{padding:4px 6px;font-size:12px}
+.why{margin-top:8px;padding-top:8px;border-top:1px solid var(--rule);max-height:52vh;overflow:auto;font-size:12px;line-height:1.45}
+.why .why-h{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--faint);font-weight:600;margin:8px 0 3px}
+.why .why-h:first-child{margin-top:0}
+.why ul{margin:0;padding-left:16px}
+.why li{margin:2px 0}
+.why p{margin:3px 0}
+.why .why-note{color:var(--muted);font-size:11.5px}
+.why .ok{color:var(--go)}
+.why .bad{color:var(--nogo)}
+.why .bad-list li{color:var(--ink)}
 .maplibregl-ctrl-attrib{font-size:10px}
 .statrow{display:flex;gap:16px;flex-wrap:wrap;font-size:12.5px}
 .kv td:first-child{color:var(--muted)}

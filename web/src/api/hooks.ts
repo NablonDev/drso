@@ -6,7 +6,7 @@ import {
   type UseMutationOptions,
 } from "@tanstack/react-query";
 import { ApiError, api, errorText } from "./client";
-import type { BufferItem, DemCoverage, RouteProfile, ImageryCatalog, ModelStatus, NearestPoint, NearestResult, WithinHit,
+import type { BufferItem, TowerWhy, DemCoverage, RouteProfile, ImageryCatalog, ModelStatus, NearestPoint, NearestResult, WithinHit,
   AppConfig,
   BandInfo,
   CompareResponse,
@@ -168,6 +168,17 @@ export function useBuffers(runId: string | undefined, key: string, body: { route
     queryFn: () => api<GeoJSON.FeatureCollection>(`/api/runs/${encodeURIComponent(runId!)}/buffers`, { method: "POST", json: body }),
     enabled: enabled && Boolean(runId && body && body.items.length && body.route.length > 1),
     staleTime: Infinity,
+  });
+}
+
+/** The straight-line test for one angle tower; polls while the solve's rule checker loads. */
+export function useTowerWhy(sid: number | null | undefined, routeId: number, towerNo: number, enabled = true) {
+  return useQuery({
+    queryKey: ["tower-why", sid ?? 0, routeId, towerNo] as const,
+    queryFn: () => api<TowerWhy>(`/api/solves/${sid}/routes/${routeId}/towers/${towerNo}/why`),
+    enabled: enabled && Boolean(sid),
+    staleTime: Infinity,
+    refetchInterval: (q) => (q.state.data?.preparing ? 5000 : false),
   });
 }
 
