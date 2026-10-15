@@ -6,7 +6,7 @@ import {
   type UseMutationOptions,
 } from "@tanstack/react-query";
 import { ApiError, api, errorText } from "./client";
-import type { DemCoverage, RouteProfile, ImageryCatalog, ModelStatus, NearestPoint, NearestResult,
+import type { DemCoverage, RouteProfile, ImageryCatalog, ModelStatus, NearestPoint, NearestResult, WithinHit,
   AppConfig,
   BandInfo,
   CompareResponse,
@@ -146,6 +146,16 @@ export function useNearest(runId: string | undefined, key: string, points: Neare
     queryKey: ["nearest", runId ?? "", key] as const,
     queryFn: () => api<{ results: (NearestResult | null)[] }>(`/api/runs/${encodeURIComponent(runId!)}/nearest`, { method: "POST", json: { points } }),
     enabled: enabled && Boolean(runId) && Boolean(points && points.length),
+    staleTime: Infinity,
+  });
+}
+
+/** Which points lie within radius_m of a feature of a run layer (statutory checks per tower). */
+export function useWithin(runId: string | undefined, key: string, body: { layer: string; radius_m: number | null; points: Pt[]; classes?: string[] } | null) {
+  return useQuery({
+    queryKey: ["within", runId ?? "", key, body?.layer ?? "", body?.radius_m ?? 0] as const,
+    queryFn: () => api<{ hits: WithinHit[] }>(`/api/runs/${encodeURIComponent(runId!)}/within`, { method: "POST", json: body }),
+    enabled: Boolean(runId && body && body.radius_m && body.points.length),
     staleTime: Infinity,
   });
 }

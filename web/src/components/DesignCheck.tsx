@@ -4,7 +4,7 @@ import { num } from "../lib/format";
 import { ruleRows, STATUS_COLOUR, STATUS_LABEL, type Design, type Flag } from "../lib/design";
 
 type Tab = "towers" | "crossings" | "sections" | "rules";
-type Filter = "all" | "angle" | "flagged" | "crossing";
+type Filter = "all" | "angle" | "flagged" | "crossing" | "statutory";
 
 /**
  * What a route designer checks before accepting an alignment (15 Oct 2026): the limits in force,
@@ -12,8 +12,10 @@ type Filter = "all" | "angle" | "flagged" | "crossing";
  * rule's angle / span / tower-distance / null-point limits, and the section intervals.
  * Click a row to fly there on the map.
  */
-export default function DesignCheck({ route, d, onFly, rules, fired }: {
+export default function DesignCheck({ route, d, onFly, rules, fired, statutory }: {
   route: Route; d: Design; onFly: (lon: number, lat: number) => void; rules?: RulesResponse; fired?: Record<string, number>;
+  /** statutory notes by tower number (airport NOC, pipeline footing, building setback) */
+  statutory?: Map<number, string[]>;
 }) {
   const [tab, setTab] = useState<Tab>("crossings");
   const [filter, setFilter] = useState<Filter>("all");
@@ -32,9 +34,11 @@ export default function DesignCheck({ route, d, onFly, rules, fired }: {
       case "angle": return d.towers.filter((r) => r.t.angle_point || r.t.type === "G");
       case "flagged": return d.towers.filter((r) => r.flags.length);
       case "crossing": return d.towers.filter((r) => r.crossing);
+      case "statutory": return d.towers.filter((r) => statutory?.get(r.t.no)?.length);
       default: return d.towers;
     }
-  }, [d.towers, filter]);
+  }, [d.towers, filter, statutory]);
+  const nStat = d.towers.filter((r) => statutory?.get(r.t.no)?.length).length;
   const bands = L.bands.map(([k, v]) => `${k} ≤${v}°`).join(", ");
 
   return (
@@ -68,7 +72,7 @@ export default function DesignCheck({ route, d, onFly, rules, fired }: {
       {tab === "towers" ? (
         <>
           <div className="row" style={{ gap: 4, padding: "8px 15px 0" }}>
-            {([["all", "All"], ["angle", "Angle towers"], ["crossing", "Crossing towers"], ["flagged", "Flagged"]] as [Filter, string][]).map(([k, lbl]) => (
+            {([["all", "All"], ["angle", "Angle towers"], ["crossing", "Crossing towers"], ["flagged", "Flagged"], ["statutory", `Statutory (${nStat})`]] as [Filter, string][]).map(([k, lbl]) => (
               <button key={k} className="mini" aria-pressed={filter === k} style={filter === k ? { borderColor: "var(--accent-line)", color: "var(--accent-ink)" } : undefined} onClick={() => setFilter(k)}>{lbl}</button>
             ))}
           </div>
@@ -77,7 +81,7 @@ export default function DesignCheck({ route, d, onFly, rules, fired }: {
               <thead>
                 <tr>
                   <th className="r">No</th><th>Type</th><th className="r">Deflection</th><th className="r">Span back</th><th className="r">Span ahead</th>
-                  <th className="r">Wind span</th><th className="r">Ext.</th><th className="r">Since anchor</th><th>Notes</th>
+                  <th className="r">Wind span</th><th className="r">Ext.</th><th className="r">Since anchor</th><th>Statutory</th><th>Notes</th>
                 </tr>
               </thead>
               <tbody>
@@ -94,6 +98,7 @@ export default function DesignCheck({ route, d, onFly, rules, fired }: {
                       <td className="r mono">{isG || r.wind === null ? "—" : <span className={`${r.windLimit !== null && r.wind > r.windLimit + 1e-3 ? "warn" : ""} ${bind(r.binding, "wind")}`}>{num(r.wind, 0)}{r.windLimit !== null ? <span className="lim">/ {r.windLimit}</span> : null}</span>}</td>
                       <td className="r mono">{t.extension_m ? `+${num(t.extension_m, 0)}` : "—"}</td>
                       <td className="r mono">{t.no === 0 ? "—" : <span className={bind(r.binding, "section")}>{num(r.runKm, 2)} km<span className="lim">{r.runSpans} sp</span></span>}</td>
+                      <td>{(statutory?.get(t.no) ?? []).map((x) => <span key={x} className="fl" style={{ color: "var(--locked, var(--ink-2))" }}>{x}</span>)}</td>
                       <td>
                         {t.reasons.length ? <span className="fl" style={{ color: "var(--muted)" }}>{t.reasons.map((x) => x.replace(/[_:]/g, " ")).join(", ")}</span> : null}
                         <Flags flags={r.flags} />
@@ -104,7 +109,7 @@ export default function DesignCheck({ route, d, onFly, rules, fired }: {
               </tbody>
             </table>
           </div>
-          <div className="foot">Wind span = mean of the two adjacent spans against the TSD limit for the type and extension. Weight-span and adjacent-span-sum checks are the engine's (notes). Span ahead notes: crossing / hilly = allowed over the design span for that reason; approach = inside the approach section at a gantry. Since anchor = chainage and spans since the last gantry or tension tower. <span className="bind">Underlined</span> = at its limit, no slack.</div>
+          <div className="foot">Wind span = mean of the two adjacent spans against the TSD limit for the type and extension. Weight-span and adjacent-span-sum checks are the engine's (notes). Span ahead notes: crossing / hilly = allowed over the design span for that reason; approach = inside the approach section at a gantry. Since anchor = chainage and spans since the last gantry or tension tower. Statutory = airport NOC radius, pipeline footing and building setback, measured from the tower to the stored features. <span className="bind">Underlined</span> = at its limit, no slack.</div>
         </>
       ) : null}
 

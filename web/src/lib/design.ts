@@ -423,3 +423,23 @@ export function spanNotesOf(rows: TowerRow[]): Map<number, string> {
   for (const r of rows) if (r.aheadNote) m.set(r.t.no, r.aheadNote);
   return m;
 }
+
+
+// ---- statutory checks per tower (phase 2): what to ask the API, from the rules
+export interface StatutoryCheck {
+  key: string;
+  layer: string;
+  classes?: string[];
+  radius_m: number | null;
+  label: (name: string | null) => string;
+}
+
+export function statutoryChecks(rules: RulesResponse | undefined): StatutoryCheck[] {
+  const noc = ruleParams(rules, "airport_noc"), pipe = ruleParams(rules, "pipeline_footing"), bld = ruleParams(rules, "buildings");
+  const nocKm = pnum(noc, "radius_km");
+  return [
+    { key: "noc", layer: "aviation", classes: ["airport"], radius_m: nocKm !== null ? nocKm * 1000 : null, label: (n) => `NOC · ${n ?? "airport"} within ${nocKm} km` },
+    { key: "pipeline", layer: "pipelines", radius_m: pnum(pipe, "setback_m"), label: () => `pipeline footing within ${pnum(pipe, "setback_m")} m` },
+    { key: "building", layer: "buildings", radius_m: pnum(bld, "tower_setback_m"), label: () => `building within ${pnum(bld, "tower_setback_m")} m` },
+  ];
+}

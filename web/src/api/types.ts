@@ -607,6 +607,13 @@ export interface NearestResult {
   distance_m: number;
 }
 
+export interface WithinHit {
+  i: number;
+  id: number;
+  name: string | null;
+  class: string | null;
+}
+
 export interface DemCoverage {
   needed: string[];
   present: string[];

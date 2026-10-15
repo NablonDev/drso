@@ -3,14 +3,14 @@ import { useNavigate } from "react-router-dom";
 import maplibregl from "maplibre-gl";
 import type { GeoJSONSource } from "maplibre-gl";
 import { useRunCtx } from "../App";
-import { useCompare, useLayers, useRules, useSolve } from "../api/hooks";
+import { useCompare, useLayers, useRules, useSolve, useWithin } from "../api/hooks";
 import type { RunDetail, Solve } from "../api/types";
 import CopyDialog from "../components/CopyDialog";
 import TowerLayer from "../components/map/TowerLayer";
 import CrossingLayer from "../components/map/CrossingLayer";
 import BendLayer, { BEND_COLOUR } from "../components/map/BendLayer";
 import DesignCheck from "../components/DesignCheck";
-import { designOf, spanNotesOf, STATUS_COLOUR } from "../lib/design";
+import { designOf, spanNotesOf, STATUS_COLOUR, statutoryChecks } from "../lib/design";
 import {
   bboxOf,
   DEFAULT_ON,
@@ -85,6 +85,28 @@ function Body({ s }: { s: Solve }) {
   const rulesQ = useRules(run.id);
   const design = useMemo(() => (sel ? designOf(sel, rulesQ.data, s.manifest, run.kv) : null), [sel, rulesQ.data, s.manifest, run.kv]);
   const spanNotes = useMemo(() => (design ? spanNotesOf(design.towers) : undefined), [design]);
+  // statutory checks per tower (phase 2): airport NOC radius, pipeline footing, building setback
+  const checks = useMemo(() => statutoryChecks(rulesQ.data), [rulesQ.data]);
+  const towerPts = useMemo(() => (sel ? sel.towers.map((t) => ({ lon: t.lon, lat: t.lat })) : []), [sel]);
+  const wKey = `${s.id}-${sel?.id ?? 0}`;
+  const wNoc = useWithin(run.id, wKey, rulesQ.data ? { ...checks[0], points: towerPts } : null);
+  const wPipe = useWithin(run.id, wKey, rulesQ.data ? { ...checks[1], points: towerPts } : null);
+  const wBld = useWithin(run.id, wKey, rulesQ.data ? { ...checks[2], points: towerPts } : null);
+  const statutory = useMemo(() => {
+    const m = new Map<number, string[]>();
+    if (!sel) return m;
+    ([[checks[0], wNoc.data], [checks[1], wPipe.data], [checks[2], wBld.data]] as const).forEach(([chk, res]) => {
+      const seen = new Set<number>();
+      for (const h of res?.hits ?? []) {
+        if (seen.has(h.i)) continue;
+        seen.add(h.i);
+        const no = sel.towers[h.i]?.no;
+        if (no === undefined) continue;
+        m.set(no, [...(m.get(no) ?? []), chk.label(h.name)]);
+      }
+    });
+    return m;
+  }, [sel, checks, wNoc.data, wPipe.data, wBld.data]);
   const flyTo = (lon: number, lat: number) => map?.flyTo({ center: [lon, lat], zoom: Math.max(map.getZoom(), 15.5), duration: 700 });
 
   useEffect(() => {
@@ -505,7 +527,7 @@ function Body({ s }: { s: Solve }) {
             <Kpi k="Forest" v={num(sel.stats.forest_ha, 1)} unit="ha" />
             <Kpi k="Cost" v={crore(sel.cost.total, { unit: false, digits: 1 })} unit="₹Cr" />
           </div>
-          {design ? <DesignCheck route={sel} d={design} onFly={flyTo} rules={rulesQ.data} fired={(s.result as { rules_fired?: Record<string, number> }).rules_fired} /> : null}
+          {design ? <DesignCheck route={sel} d={design} onFly={flyTo} rules={rulesQ.data} fired={(s.result as { rules_fired?: Record<string, number> }).rules_fired} statutory={statutory} /> : null}
           <CompareTable s={s} selId={sel.id} select={select} />
           <RevisionCard run={run} cmp={cmp} selId={sel.id} prevOn={t.prev} togglePrev={() => tog("prev")} />
           <div className="actions">
