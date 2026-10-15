@@ -30,6 +30,7 @@ export function CrossingPopup({ r }: { r: CrossingRow }) {
           <tr><td>Deviation</td><td className="mono">{num(r.a.deflection_deg, 1)}° / {num(r.b.deflection_deg, 1)}°{r.maxDev !== null ? <span className="lim"> max {r.maxDev}°</span> : null}</td></tr>
           {r.span.min_clearance_m !== null ? <tr><td>Clearance</td><td className="mono">{num(r.span.min_clearance_m, 1)} m</td></tr> : null}
           {c.width_m ? <tr><td>Width</td><td className="mono">{num(c.width_m, 0)} m{c.major ? " · major" : ""}</td></tr> : null}
+          {r.binding.length ? <tr><td>At limit</td><td className="bind">{r.binding.join(", ")}</td></tr> : null}
           {r.issues.length ? (
             <tr><td>Notes</td><td>{r.issues.map((f, i) => <span key={i} className={`fl ${f.kind}`}>{f.text}</span>)}</td></tr>
           ) : null}

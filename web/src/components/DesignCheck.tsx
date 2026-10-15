@@ -21,6 +21,7 @@ export default function DesignCheck({ route, d, onFly }: { route: Route; d: Desi
   const nRel = d.crossings.filter((r) => r.status === "relaxed").length;
   const nSecBad = d.sections.filter((s) => !s.ok).length;
   const longest = d.sections.length ? Math.max(...d.sections.map((s) => s.km)) : 0;
+  const nBind = d.crossings.reduce((n, r) => n + r.binding.length, 0) + d.towers.reduce((n, r) => n + r.binding.length, 0);
   const rows = useMemo(() => {
     switch (filter) {
       case "angle": return d.towers.filter((r) => r.t.angle_point || r.t.type === "G");
@@ -39,6 +40,7 @@ export default function DesignCheck({ route, d, onFly }: { route: Route; d: Desi
           {nFlag ? <span className="warn">{nFlag} tower{nFlag > 1 ? "s" : ""} flagged</span> : "no tower flagged"} ·{" "}
           {d.crossings.length} crossings{nViol ? <>, <span className="bad">{nViol} in violation</span></> : null}{nRel ? `, ${nRel} relaxed` : ""} ·{" "}
           {d.sections.length} sections{nSecBad ? <>, <span className="bad">{nSecBad} over the interval</span></> : `, longest ${num(longest, 1)} km`}
+          {nBind ? <> · <span className="bind" title="values with no slack against their limit">{nBind} at a limit</span></> : null}
         </span>
         <div className="dctabs" role="tablist">
           {(["crossings", "towers", "sections"] as Tab[]).map((k) => (
@@ -81,12 +83,12 @@ export default function DesignCheck({ route, d, onFly }: { route: Route; d: Desi
                     <tr key={t.no} className="pick" onClick={() => onFly(t.lon, t.lat)} tabIndex={0} onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && onFly(t.lon, t.lat)}>
                       <td className="r mono">{t.no}</td>
                       <td className="mono">{isG ? "Gantry" : t.type}{r.anchor && !isG ? <span className="lim">anchor</span> : null}</td>
-                      <td className="r mono">{isG ? "—" : `${num(t.deflection_deg, 1)}°${t.turn && t.turn !== "-" ? ` ${t.turn}` : ""}`}</td>
+                      <td className="r mono">{isG ? "—" : <span className={bind(r.binding, "band")} title={r.binding.includes("band") ? "at the top of its type band" : undefined}>{num(t.deflection_deg, 1)}°{t.turn && t.turn !== "-" ? ` ${t.turn}` : ""}</span>}</td>
                       <td className="r mono">{r.back === null ? "—" : num(r.back, 0)}</td>
                       <td className="r mono">{r.ahead === null ? "—" : num(r.ahead, 0)}</td>
-                      <td className="r mono">{isG || r.wind === null ? "—" : <span className={r.windLimit !== null && r.wind > r.windLimit + 1e-3 ? "warn" : ""}>{num(r.wind, 0)}{r.windLimit !== null ? <span className="lim">/ {r.windLimit}</span> : null}</span>}</td>
+                      <td className="r mono">{isG || r.wind === null ? "—" : <span className={`${r.windLimit !== null && r.wind > r.windLimit + 1e-3 ? "warn" : ""} ${bind(r.binding, "wind")}`}>{num(r.wind, 0)}{r.windLimit !== null ? <span className="lim">/ {r.windLimit}</span> : null}</span>}</td>
                       <td className="r mono">{t.extension_m ? `+${num(t.extension_m, 0)}` : "—"}</td>
-                      <td className="r mono">{t.no === 0 ? "—" : <>{num(r.runKm, 2)} km<span className="lim">{r.runSpans} sp</span></>}</td>
+                      <td className="r mono">{t.no === 0 ? "—" : <span className={bind(r.binding, "section")}>{num(r.runKm, 2)} km<span className="lim">{r.runSpans} sp</span></span>}</td>
                       <td>
                         {t.reasons.length ? <span className="fl" style={{ color: "var(--muted)" }}>{t.reasons.map((x) => x.replace(/[_:]/g, " ")).join(", ")}</span> : null}
                         <Flags flags={r.flags} />
@@ -97,7 +99,7 @@ export default function DesignCheck({ route, d, onFly }: { route: Route; d: Desi
               </tbody>
             </table>
           </div>
-          <div className="foot">Wind span = mean of the two adjacent spans against the TSD limit for the type and extension. Weight-span and adjacent-span-sum checks are the engine's (notes). Since anchor = chainage and spans since the last gantry or tension tower.</div>
+          <div className="foot">Wind span = mean of the two adjacent spans against the TSD limit for the type and extension. Weight-span and adjacent-span-sum checks are the engine's (notes). Since anchor = chainage and spans since the last gantry or tension tower. <span className="bind">Underlined</span> = at its limit, no slack.</div>
         </>
       ) : null}
 
@@ -120,11 +122,11 @@ export default function DesignCheck({ route, d, onFly }: { route: Route; d: Desi
                       <td className="r mono">{num(r.km, 2)}</td>
                       <td>{c.name}{c.major ? <span className="lim">major</span> : null}</td>
                       <td className="mono">{r.a.no} {r.a.type} → {r.b.no} {r.b.type}{c.min_type && c.min_type !== "A" ? <span className="lim">min {c.min_type}</span> : null}</td>
-                      <td className="r mono"><span className={cls(r.issues, "angle")}>{num(c.angle_deg, 0)}°</span><span className="lim">{rng(r.angleAllowed, "°")}</span></td>
-                      <td className="r mono"><span className={cls(r.issues, "span")}>{num(c.span_m, 0)}</span>{r.spanMax !== null ? <span className="lim">≤ {r.spanMax}</span> : null}</td>
-                      <td className="r mono"><span className={cls(r.issues, "tower", "warn")}>{num(c.side_a_m, 0)} / {num(c.side_b_m, 0)}</span>{r.sideWindow ? <span className="lim">{rng(r.sideWindow)}</span> : null}</td>
-                      <td className="r mono">{typeof c.null_offset_pct === "number" ? <><span className={cls(r.issues, "null")}>{num(c.null_offset_pct, 1)}%</span><span className="lim">±{r.nullPref}/{r.nullAllowed}</span></> : "—"}</td>
-                      <td className="r mono"><span className={cls(r.issues, "deflects")}>{num(r.a.deflection_deg, 0)}° / {num(r.b.deflection_deg, 0)}°</span>{r.maxDev !== null ? <span className="lim">≤ {r.maxDev}°</span> : null}</td>
+                      <td className="r mono"><span className={`${cls(r.issues, "angle")} ${bind(r.binding, "angle")}`}>{num(c.angle_deg, 0)}°</span><span className="lim">{rng(r.angleAllowed, "°")}</span></td>
+                      <td className="r mono"><span className={`${cls(r.issues, "span")} ${bind(r.binding, "span")}`}>{num(c.span_m, 0)}</span>{r.spanMax !== null ? <span className="lim">≤ {r.spanMax}</span> : null}</td>
+                      <td className="r mono"><span className={`${cls(r.issues, "tower", "warn")} ${bind(r.binding, "side")}`}>{num(c.side_a_m, 0)} / {num(c.side_b_m, 0)}</span>{r.sideWindow ? <span className="lim">{rng(r.sideWindow)}</span> : null}</td>
+                      <td className="r mono">{typeof c.null_offset_pct === "number" ? <><span className={`${cls(r.issues, "null")} ${bind(r.binding, "null")}`}>{num(c.null_offset_pct, 1)}%</span><span className="lim">±{r.nullPref}/{r.nullAllowed}</span></> : "—"}</td>
+                      <td className="r mono"><span className={`${cls(r.issues, "deflects")} ${bind(r.binding, "deviation")}`}>{num(r.a.deflection_deg, 0)}° / {num(r.b.deflection_deg, 0)}°</span>{r.maxDev !== null ? <span className="lim">≤ {r.maxDev}°</span> : null}</td>
                       <td className="r mono">{r.span.min_clearance_m === null ? "—" : <span className={cls(r.issues, "clearance", "warn")}>{num(r.span.min_clearance_m, 1)} m</span>}</td>
                       <td><span className="dot" style={{ background: STATUS_COLOUR[r.status] }} />{STATUS_LABEL[r.status]}{r.issues.length ? <Flags flags={r.issues} /> : null}</td>
                     </tr>
@@ -134,7 +136,7 @@ export default function DesignCheck({ route, d, onFly }: { route: Route; d: Desi
               </tbody>
             </table>
           </div>
-          <div className="foot">Limits in grey come from the crossing's rule. Null point = distance of the crossing from the mid-span of the crossed line, as a share of that span. Preferred = at 90° and the null point; relaxed = allowed at the rule's penalty; violation = outside what the rule allows.</div>
+          <div className="foot">Limits in grey come from the crossing's rule. Null point = distance of the crossing from the mid-span of the crossed line, as a share of that span. Preferred = at 90° and the null point; relaxed = allowed at the rule's penalty; violation = outside what the rule allows. <span className="bind">Underlined</span> = at its limit: the crossing cannot move without breaking the rule.</div>
         </>
       ) : null}
 
@@ -150,7 +152,7 @@ export default function DesignCheck({ route, d, onFly }: { route: Route; d: Desi
                   <tr key={s.n} className="pick" onClick={() => onFly((s.from.lon + s.to.lon) / 2, (s.from.lat + s.to.lat) / 2)}>
                     <td className="r mono">{s.n}</td>
                     <td className="mono">{s.from.no} {s.from.type} → {s.to.no} {s.to.type}<span className="lim">km {num(s.from.chainage_km, 1)} – {num(s.to.chainage_km, 1)}</span></td>
-                    <td className="r mono"><span className={s.limitKm !== null && s.km > s.limitKm ? "bad" : ""}>{num(s.km, 2)} km</span>{s.limitKm !== null ? <span className="lim">≤ {s.limitKm}</span> : null}</td>
+                    <td className="r mono"><span className={`${s.limitKm !== null && s.km > s.limitKm ? "bad" : ""} ${s.binding ? "bind" : ""}`}>{num(s.km, 2)} km</span>{s.limitKm !== null ? <span className="lim">≤ {s.limitKm}</span> : null}</td>
                     <td className="r mono"><span className={s.limitSpans !== null && s.spans > s.limitSpans ? "bad" : ""}>{s.spans}</span>{s.limitSpans !== null ? <span className="lim">≤ {s.limitSpans}</span> : null}</td>
                     <td>{s.hilly ? "Hilly" : "Plain"}</td>
                     <td>{s.ok ? <span className="ok">Within interval</span> : <span className="bad">Over the interval</span>}</td>
@@ -165,6 +167,8 @@ export default function DesignCheck({ route, d, onFly }: { route: Route; d: Desi
     </div>
   );
 }
+
+const bind = (b: string[], key: string) => (b.includes(key) ? "bind" : "");
 
 function cls(issues: Flag[], word: string, fallback: "bad" | "warn" = "bad"): string {
   const hit = issues.filter((f) => f.text.startsWith(word));

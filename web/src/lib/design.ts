@@ -95,6 +95,9 @@ export interface Flag {
   text: string;
 }
 
+/** a value within this much of its limit counts as binding: the route has no room there */
+const NEAR = { deg: 2, m: 10, sideM: 3, pct: 2, windM: 5, frac: 0.95 };
+
 export interface TowerRow {
   t: Tower;
   back: number | null;
@@ -107,6 +110,8 @@ export interface TowerRow {
   anchor: boolean;
   flags: Flag[];
   crossing: boolean;
+  /** which values sit at their limit: wind, band, section */
+  binding: string[];
 }
 
 const nice = (s: string) => s.replace(/_/g, " ");
@@ -150,10 +155,18 @@ export function towerRows(route: Route, lim: Limits): TowerRow[] {
       flags.push({ kind: "warn", text: `wind span ${wind.toFixed(0)} m over ${wl} m` });
     if (t.type !== "G" && lim.maxDevDeg !== null && t.deflection_deg > lim.maxDevDeg + 1e-6)
       flags.push({ kind: "bad", text: `deflection ${t.deflection_deg.toFixed(0)}° over ${lim.maxDevDeg}°` });
+    const binding: string[] = [];
+    if (t.type !== "G" && wind !== null && wl !== null && wind >= wl - NEAR.windM) binding.push("wind");
+    // deflection just under the top of its type band: a nudge would need the next tower type
+    const band = lim.bands.find(([k]) => k === t.type);
+    if (band && t.deflection_deg >= band[1] - NEAR.deg && t.deflection_deg > 0) binding.push("band");
+    const runKm = t.chainage_km - T[last].chainage_km, runSpans = i - last;
+    if (anchor && i > 0 && ((lim.sectionKm !== null && runKm >= lim.sectionKm * NEAR.frac) || (lim.sectionSpans !== null && runSpans >= lim.sectionSpans))) binding.push("section");
     out.push({
       t, back, ahead, wind, windLimit: wl,
-      runKm: t.chainage_km - T[last].chainage_km, runSpans: i - last, anchor, flags,
+      runKm, runSpans, anchor, flags,
       crossing: Boolean(spanBy.get(t.no)?.crossings.length) || (i > 0 && Boolean(spanBy.get(T[i - 1].no)?.crossings.length)),
+      binding,
     });
     if (anchor) last = i;
   }
@@ -170,6 +183,7 @@ export interface SectionRow {
   limitKm: number | null;
   limitSpans: number | null;
   ok: boolean;
+  binding: boolean;
 }
 
 export function sectionRows(route: Route, lim: Limits): SectionRow[] {
@@ -186,6 +200,7 @@ export function sectionRows(route: Route, lim: Limits): SectionRow[] {
     out.push({
       n: out.length + 1, from: T[last], to: T[i], km, spans, hilly, limitKm, limitSpans,
       ok: (limitKm === null || km <= limitKm + 1e-6) && (limitSpans === null || spans <= limitSpans),
+      binding: (limitKm !== null && km >= limitKm * NEAR.frac) || (limitSpans !== null && spans >= limitSpans),
     });
     last = i;
   }
@@ -209,6 +224,8 @@ export interface CrossingRow {
   maxDev: number | null;
   status: Status;
   issues: Flag[];
+  /** which values sit at their limit: angle, span, side, null, deviation */
+  binding: string[];
 }
 
 export function crossingRows(route: Route, rules: RulesResponse | undefined, lim: Limits): CrossingRow[] {
@@ -266,7 +283,13 @@ export function crossingRows(route: Route, rules: RulesResponse | undefined, lim
         issues.push({ kind: "warn", text: `clearance ${span.min_clearance_m} m under ${lim.clearanceM} m, verify on the profile` });
       if (c.violation && !issues.some((x) => x.kind === "bad")) issues.push({ kind: "bad", text: nice(c.violation) });
       const status: Status = issues.some((x) => x.kind === "bad") ? "violation" : issues.length ? "relaxed" : "ok";
-      out.push({ key: `${route.id}-${span.a}-${j}`, span, c, a, b, km: a.chainage_km + along / 1000, lonlat, angleAllowed, anglePref, spanMax, sideWindow, nullPref, nullAllowed, maxDev, status, issues });
+      const binding: string[] = [];
+      if (angleAllowed && (deg <= angleAllowed[0] + NEAR.deg || deg >= angleAllowed[1] - NEAR.deg)) binding.push("angle");
+      if (spanMax !== null && L >= spanMax - NEAR.m) binding.push("span");
+      if (sideWindow && [c.side_a_m, c.side_b_m].some((d) => d <= sideWindow[0] + NEAR.sideM || d >= sideWindow[1] - NEAR.sideM)) binding.push("side");
+      if (hasNull && nullAllowed !== null && (c.null_offset_pct as number) >= nullAllowed - NEAR.pct) binding.push("null");
+      if (maxDev !== null && [a, b].some((t) => t.type !== "G" && t.deflection_deg >= maxDev - NEAR.deg)) binding.push("deviation");
+      out.push({ key: `${route.id}-${span.a}-${j}`, span, c, a, b, km: a.chainage_km + along / 1000, lonlat, angleAllowed, anglePref, spanMax, sideWindow, nullPref, nullAllowed, maxDev, status, issues, binding });
     });
   }
   return out;
