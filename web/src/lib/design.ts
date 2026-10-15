@@ -171,8 +171,9 @@ export function towerRows(route: Route, lim: Limits): TowerRow[] {
     }
     if (t.type !== "G" && wind !== null && wl !== null && wind >= wl - NEAR.windM) binding.push("wind");
     // deflection just under the top of its type band: a nudge would need the next tower type
+    // (not for A: a suspension tower drifting up to 2° is normal spotting, not a constraint the route is pressing on)
     const band = lim.bands.find(([k]) => k === t.type);
-    if (band && t.deflection_deg >= band[1] - NEAR.deg && t.deflection_deg > 0) binding.push("band");
+    if (band && t.type !== "A" && t.deflection_deg >= band[1] - NEAR.deg && t.deflection_deg > 0) binding.push("band");
     const runKm = t.chainage_km - T[last].chainage_km, runSpans = i - last;
     if (anchor && i > 0 && ((lim.sectionKm !== null && runKm >= lim.sectionKm * NEAR.frac) || (lim.sectionSpans !== null && runSpans >= lim.sectionSpans))) binding.push("section");
     out.push({
