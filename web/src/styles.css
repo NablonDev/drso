@@ -510,6 +510,7 @@ button.link{padding:0;background:none;border:0;font:inherit;color:var(--accent-i
 
 /* route map: maximised map (Esc restores) */
 .mapcanvas.maxed{position:fixed;inset:env(safe-area-inset-top,0px) 0 env(safe-area-inset-bottom,0px) 0;height:auto;z-index:60;border-radius:0;border:0}
+.mapmaxtools{position:absolute;left:50%;bottom:14px;transform:translateX(-50%);z-index:7;margin:0;padding:5px;background:var(--surface);border:1px solid var(--rule);border-radius:8px;box-shadow:0 1px 6px rgba(0,0,0,.18);max-width:calc(100% - 24px);justify-content:center}
 .mapexit{position:absolute;top:12px;right:12px;z-index:7;background:var(--surface);border:1px solid var(--rule);border-radius:6px;padding:6px 11px;font-size:12px;color:var(--ink)}
 /* route map: hover tooltip over layer features */
 .hovertip .maplibregl-popup-content{padding:7px 10px;border-radius:6px;background:var(--surface);color:var(--ink);box-shadow:0 2px 10px rgba(0,0,0,.25);font-size:12px;line-height:1.35}

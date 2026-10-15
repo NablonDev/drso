@@ -358,6 +358,16 @@ function Body({ s }: { s: Solve }) {
   const withFeat = (s.manifest.sources ?? []).filter((x) => x.features > 0 && x.confidence !== null);
   const meanConf = withFeat.length ? withFeat.reduce((a, x) => a + (x.confidence ?? 0), 0) / withFeat.length : null;
   const tog = (k: keyof Toggles) => setT((x) => ({ ...x, [k]: !x[k] }));
+  // the overlay toggles, shown in the control row and again inside the maximised map (15 Oct 2026)
+  const overlayBtns: { k: keyof Toggles; label: string; title?: string; off?: boolean }[] = [
+    { k: "towers", label: "Towers", off: !feasible },
+    { k: "angles", label: "Angles", off: !feasible || !t.towers, title: "Deflection arcs at the angle towers (from z14)" },
+    { k: "spans", label: "Spans", off: !feasible || !t.towers, title: "Span length at the midpoint of every span (from z14.5)" },
+    { k: "crossings", label: "Crossings", off: !feasible, title: "Where the route crosses a feature, coloured by how the crossing stands against its rule; click one for the metrics" },
+    { k: "bends", label: "Why bends", off: !feasible, title: "A tie from each bend to the feature it reacts to, with the distance and the rule's setback (from z13)" },
+    { k: "beeline", label: "Bee-line" },
+    { k: "hills", label: "Hills", off: !hillFC, title: hillFC ? "Hill ground the search avoids (relief + slope from the DEM)" : "This solve has no hill layer" },
+  ];
   const nWord = ["No", "One", "Two", "Three", "Four"][routes.length] ?? String(routes.length);
 
   return (
@@ -384,19 +394,10 @@ function Body({ s }: { s: Solve }) {
       <div className="withnotes" style={{ gridTemplateColumns: "minmax(0,1fr) 288px" }}>
         <div>
           <div className="maptools">
-            <button aria-pressed={t.towers} onClick={() => tog("towers")} disabled={!feasible}>Towers</button>
-            <button aria-pressed={t.angles} onClick={() => tog("angles")} disabled={!feasible || !t.towers} data-testid="toggle-angles"
-              title="Deflection on each angle tower's label (from z14)">Angles</button>
-            <button aria-pressed={t.spans} onClick={() => tog("spans")} disabled={!feasible || !t.towers} data-testid="toggle-spans"
-              title="Span length at the midpoint of every span (from z14.5)">Spans</button>
-            <button aria-pressed={t.crossings} onClick={() => tog("crossings")} disabled={!feasible} data-testid="toggle-crossings"
-              title="Where the route crosses a feature, coloured by how the crossing stands against its rule; click one for the metrics">Crossings</button>
-            <button aria-pressed={t.bends} onClick={() => tog("bends")} disabled={!feasible} data-testid="toggle-bends"
-              title="A tie from each bend to the feature it reacts to, with the distance and the rule's setback (from z13)">Why bends</button>
-            <button aria-pressed={t.beeline} onClick={() => tog("beeline")}>Bee-line</button>
+            {overlayBtns.map((b) => (
+              <button key={b.k} aria-pressed={t[b.k]} onClick={() => tog(b.k)} disabled={b.off} data-testid={`toggle-${b.k}`} title={b.title}>{b.label}</button>
+            ))}
             <button aria-pressed={t.lowconf} onClick={() => tog("lowconf")}>Low-confidence</button>
-            <button aria-pressed={t.hills} onClick={() => tog("hills")} disabled={!hillFC}
-              title={hillFC ? "Hill ground the search avoids (relief + slope from the DEM)" : "This solve has no hill layer"}>Hills</button>
             <button aria-pressed={t.prev} onClick={() => tog("prev")} disabled={!cmp?.parent_routes?.length}
               title={cmp?.parent_routes?.length ? undefined : "No solved previous revision"}>
               Previous revision
@@ -416,7 +417,14 @@ function Body({ s }: { s: Solve }) {
             <TerrainControl map={map} runId={run.id} />
             {feasible && sel ? <TowerMoveTool map={map} sid={s.id} runId={run.id} route={sel} active={moveMode} onExit={() => setMoveMode(false)} /> : null}
             {maxed ? (
-              <button className="mapexit" onClick={() => setMaxed(false)} data-testid="map-restore">Exit full screen · Esc</button>
+              <>
+                <button className="mapexit" onClick={() => setMaxed(false)} data-testid="map-restore">Exit full screen · Esc</button>
+                <div className="maptools mapmaxtools" data-testid="max-tools">
+                  {overlayBtns.map((b) => (
+                    <button key={b.k} aria-pressed={t[b.k]} onClick={() => tog(b.k)} disabled={b.off} data-testid={`max-toggle-${b.k}`} title={b.title}>{b.label}</button>
+                  ))}
+                </div>
+              </>
             ) : null}
             {!map ? <div className="mapnote"><Loading text="Loading imagery…" /></div> : null}
           </div>
