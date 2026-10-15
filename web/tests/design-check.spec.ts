@@ -28,8 +28,8 @@ test("design check lists crossings, towers and sections against the limits", asy
   await expect(srows.first()).toContainText("km");
 
   // map toggles
-  for (const id of ["toggle-angles", "toggle-crossings"]) await expect(page.getByTestId(id)).toHaveAttribute("aria-pressed", "true");
-  await expect(page.getByTestId("toggle-spans")).toHaveAttribute("aria-pressed", "false");
+  await expect(page.getByTestId("toggle-crossings")).toHaveAttribute("aria-pressed", "true");
+  for (const id of ["toggle-angles", "toggle-spans", "toggle-bends"]) await expect(page.getByTestId(id)).toHaveAttribute("aria-pressed", "false");
   await page.getByTestId("toggle-spans").click();
   await expect(page.getByTestId("toggle-spans")).toHaveAttribute("aria-pressed", "true");
   await page.getByTestId("toggle-crossings").click();

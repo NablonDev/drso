@@ -70,7 +70,7 @@ function Body({ s }: { s: Solve }) {
   const loadTowers = useTowers((x) => x.load);
   const focus = useUi((x) => x.focus);
   const setFocus = useUi((x) => x.setFocus);
-  const [t, setT] = useState<Toggles>({ towers: true, angles: true, spans: false, crossings: true, bends: true, beeline: false, lowconf: false, prev: false, hills: false });
+  const [t, setT] = useState<Toggles>({ towers: true, angles: false, spans: false, crossings: true, bends: false, beeline: false, lowconf: false, prev: false, hills: false });
   // every run layer can be shown under the routes (6 Oct 2026); starts as on Review the layers
   const [on, setOn] = useState<Record<string, boolean>>(() => Object.fromEntries(LAYER_ORDER.map((k) => [k, DEFAULT_ON.has(k)])));
   const [widen, setWiden] = useState(false);
