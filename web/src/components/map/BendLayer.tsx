@@ -60,7 +60,9 @@ export default function BendLayer({ map, runId, sid, route, rules, visible }: {
   map: maplibregl.Map | null; runId: string; sid: number; route: Route; rules: RulesResponse | undefined; visible: boolean;
 }) {
   const bends = useMemo(() => bendsOf(route, rules), [route, rules]);
-  const points = useMemo<NearestPoint[]>(() => bends.map((b) => ({ layer: b.layer, lon: b.tower.lon, lat: b.tower.lat, within_m: 3000 })), [bends]);
+  // a crossing's feature is at the span; an avoided feature can be kilometres off (the detour round a
+  // sanctuary bends the line 5 km from its boundary), so those look further
+  const points = useMemo<NearestPoint[]>(() => bends.map((b) => ({ layer: b.layer, lon: b.tower.lon, lat: b.tower.lat, within_m: b.kind === "cross" ? 3000 : 10000 })), [bends]);
   const q = useNearest(runId, `${sid}-${route.id}`, points, visible);
   const ties = useMemo(() => {
     const res = q.data?.results ?? [];

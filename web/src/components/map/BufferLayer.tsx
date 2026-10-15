@@ -54,7 +54,7 @@ export default function BufferLayer({ map, runId, sid, route, rules, bends, buff
   const line = useMemo(() => thin(route.geometry), [route.geometry]);
   // the bends' features: same request as BendLayer, served from the cache
   const bendList = useMemo(() => bendsOf(route, rules), [route, rules]);
-  const points = useMemo<NearestPoint[]>(() => bendList.map((b) => ({ layer: b.layer, lon: b.tower.lon, lat: b.tower.lat, within_m: 3000 })), [bendList]);
+  const points = useMemo<NearestPoint[]>(() => bendList.map((b) => ({ layer: b.layer, lon: b.tower.lon, lat: b.tower.lat, within_m: b.kind === "cross" ? 3000 : 10000 })), [bendList]);
   const near = useNearest(runId, key, points, bends);
   const setbackItems = useMemo<BufferItem[]>(() => {
     const by = new Map<string, BufferItem>();
