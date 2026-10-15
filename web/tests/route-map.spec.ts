@@ -15,7 +15,7 @@ test("route map renders the map canvas and four routes in the comparison table",
   // selecting a row selects the route card too
   await rows.nth(2).click();
   await expect(rows.nth(2)).toHaveClass(/selrow/);
-  await expect(page.getByTestId("route-cards").locator(".routecard").nth(2)).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByTestId("route-cards").locator(".routecard").nth(2)).toHaveAttribute("data-selected", "true");
   // every run layer can be shown under the routes
   const lp = page.getByTestId("route-layers");
   await expect(lp.locator(".lrow").first()).toBeVisible();

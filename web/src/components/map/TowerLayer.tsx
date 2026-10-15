@@ -10,6 +10,8 @@ import { num } from "../../lib/format";
 const SRC = "towers";
 const CIRCLE = "towers-circle";
 const LABEL_MIN_ZOOM = 13.5;
+const ANGLE_MIN_ZOOM = 14;      // deflection on the angle-tower labels (15 Oct 2026)
+const SPAN_MIN_ZOOM = 14.5;     // span length at the midpoint of each span
 const MAX_LABELS = 220;
 
 export function TowerPopup({ t }: { t: StoredTower }) {
@@ -47,11 +49,17 @@ export default function TowerLayer({
   routes,
   editable = false,
   before,
+  angles = false,
+  spans = false,
 }: {
   map: maplibregl.Map | null;
   routes: number[];
   editable?: boolean;
   before?: string;
+  /** deflection on the angle-tower labels, e.g. "12 · C1 · 29° R" */
+  angles?: boolean;
+  /** span length at the midpoint of every span */
+  spans?: boolean;
 }) {
   const byRoute = useTowers((s) => s.byRoute);
   const moveTower = useTowers((s) => s.moveTower);
@@ -200,17 +208,35 @@ export default function TowerLayer({
         return;
       }
       const b = map.getBounds();
+      const z = map.getZoom();
+      const withAngle = angles && z >= ANGLE_MIN_ZOOM;
+      const withSpan = spans && z >= SPAN_MIN_ZOOM;
       const out: { fid: string; x: number; y: number; text: string; cls: string }[] = [];
-      for (const t of towers) {
-        if (!b.contains([t.lon, t.lat])) continue;
-        const p = map.project([t.lon, t.lat]);
-        out.push({
-          fid: t.fid,
-          x: p.x,
-          y: p.y,
-          text: t.type === "G" ? "Gantry" : `${t.no} · ${t.type}`,
-          cls: t.type === "G" ? "g" : t.angle_point ? "ang" : "",
-        });
+      for (let i = 0; i < towers.length; i++) {
+        const t = towers[i];
+        const inView = b.contains([t.lon, t.lat]);
+        if (inView) {
+          const p = map.project([t.lon, t.lat]);
+          const ang = withAngle && t.type !== "G" && (t.angle_point || t.deflection_deg >= 2)
+            ? ` · ${t.deflection_deg.toFixed(t.deflection_deg < 10 ? 1 : 0)}°${t.turn && t.turn !== "-" ? ` ${t.turn}` : ""}`
+            : "";
+          out.push({
+            fid: t.fid,
+            x: p.x,
+            y: p.y,
+            text: t.type === "G" ? "Gantry" : `${t.no} · ${t.type}${ang}`,
+            cls: t.type === "G" ? "g" : t.angle_point ? "ang" : "",
+          });
+        }
+        // the span ahead, labelled at its midpoint when either end is in view
+        const n = towers[i + 1];
+        if (withSpan && n && n.route === t.route && n.no === t.no + 1 && (inView || b.contains([n.lon, n.lat]))) {
+          const len = t.span_ahead_m;
+          if (len) {
+            const m = map.project([(t.lon + n.lon) / 2, (t.lat + n.lat) / 2]);
+            out.push({ fid: `${t.fid}-sp`, x: m.x, y: m.y, text: `${len.toFixed(0)} m`, cls: "sp" });
+          }
+        }
         if (out.length >= MAX_LABELS) break;
       }
       setLabels(out);
@@ -226,7 +252,7 @@ export default function TowerLayer({
       map.off("move", schedule);
       map.off("resize", schedule);
     };
-  }, [map, towers]);
+  }, [map, towers, angles, spans]);
 
   useEffect(() => () => {
     popupRef.current?.remove();

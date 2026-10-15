@@ -433,11 +433,40 @@ export interface Tower {
   offset_m?: number;
 }
 
+/** One feature a span crosses, as the spotting reports it (crossing preferences of 13 Oct 2026 included). */
+export interface SpanCrossing {
+  name: string;
+  rule: string;
+  major: boolean;
+  span_m: number;
+  cost_rs: number;
+  min_type: string;
+  /** distance from the crossed feature to tower a / b, perpendicular (m) */
+  side_a_m: number;
+  side_b_m: number;
+  /** distance from tower a / b to the crossing point along the span (m) */
+  along_a_m?: number;
+  along_b_m?: number;
+  angle_deg: number;
+  max_dev_deg?: number | null;
+  geom_crossed: boolean | null;
+  angle_preferred: boolean;
+  long_span?: boolean;
+  width_m?: number;
+  /** power lines: where the two crossing towers may stand from the crossed conductor */
+  side_window_m?: [number, number];
+  side_relaxed_m?: number;
+  /** power lines: distance of the crossing from the null point of the crossed span, % of that span */
+  null_offset_pct?: number;
+  point_preferred?: boolean;
+  violation?: string;
+}
+
 export interface Span {
   a: number;
   b: number;
   length_m: number;
-  crossings: unknown[];
+  crossings: SpanCrossing[];
   min_clearance_m: number | null;
 }
 

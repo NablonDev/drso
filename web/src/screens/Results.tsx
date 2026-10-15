@@ -3,10 +3,13 @@ import { useNavigate } from "react-router-dom";
 import maplibregl from "maplibre-gl";
 import type { GeoJSONSource } from "maplibre-gl";
 import { useRunCtx } from "../App";
-import { useCompare, useLayers, useSolve } from "../api/hooks";
+import { useCompare, useLayers, useRules, useSolve } from "../api/hooks";
 import type { RunDetail, Solve } from "../api/types";
 import CopyDialog from "../components/CopyDialog";
 import TowerLayer from "../components/map/TowerLayer";
+import CrossingLayer from "../components/map/CrossingLayer";
+import DesignCheck from "../components/DesignCheck";
+import { designOf, STATUS_COLOUR } from "../lib/design";
 import {
   bboxOf,
   DEFAULT_ON,
@@ -34,7 +37,7 @@ import { useUi } from "../store/ui";
 import { useSelectedRoute } from "../store/selection";
 import { useStartSolve } from "./Solve";
 
-type Toggles = { towers: boolean; beeline: boolean; lowconf: boolean; prev: boolean; hills: boolean };
+type Toggles = { towers: boolean; angles: boolean; spans: boolean; crossings: boolean; beeline: boolean; lowconf: boolean; prev: boolean; hills: boolean };
 
 export default function Results() {
   const run = useRunCtx();
@@ -66,7 +69,7 @@ function Body({ s }: { s: Solve }) {
   const loadTowers = useTowers((x) => x.load);
   const focus = useUi((x) => x.focus);
   const setFocus = useUi((x) => x.setFocus);
-  const [t, setT] = useState<Toggles>({ towers: true, beeline: false, lowconf: false, prev: false, hills: false });
+  const [t, setT] = useState<Toggles>({ towers: true, angles: true, spans: false, crossings: true, beeline: false, lowconf: false, prev: false, hills: false });
   // every run layer can be shown under the routes (6 Oct 2026); starts as on Review the layers
   const [on, setOn] = useState<Record<string, boolean>>(() => Object.fromEntries(LAYER_ORDER.map((k) => [k, DEFAULT_ON.has(k)])));
   const [widen, setWiden] = useState(false);
@@ -77,6 +80,10 @@ function Body({ s }: { s: Solve }) {
   const routes = s.result.routes;
   const feasible = s.result.feasible && routes.length > 0;
   const sel = routes.find((r) => r.id === selId) ?? routes[0];
+  // design check of the selected route (15 Oct 2026): towers, sections and crossings against the rules
+  const rulesQ = useRules(run.id);
+  const design = useMemo(() => (sel ? designOf(sel, rulesQ.data, s.manifest, run.kv) : null), [sel, rulesQ.data, s.manifest, run.kv]);
+  const flyTo = (lon: number, lat: number) => map?.flyTo({ center: [lon, lat], zoom: Math.max(map.getZoom(), 15.5), duration: 700 });
 
   useEffect(() => {
     loadTowers(s.id, routes);
@@ -354,6 +361,12 @@ function Body({ s }: { s: Solve }) {
         <div>
           <div className="maptools">
             <button aria-pressed={t.towers} onClick={() => tog("towers")} disabled={!feasible}>Towers</button>
+            <button aria-pressed={t.angles} onClick={() => tog("angles")} disabled={!feasible || !t.towers} data-testid="toggle-angles"
+              title="Deflection on each angle tower's label (from z14)">Angles</button>
+            <button aria-pressed={t.spans} onClick={() => tog("spans")} disabled={!feasible || !t.towers} data-testid="toggle-spans"
+              title="Span length at the midpoint of every span (from z14.5)">Spans</button>
+            <button aria-pressed={t.crossings} onClick={() => tog("crossings")} disabled={!feasible} data-testid="toggle-crossings"
+              title="Where the route crosses a feature, coloured by how the crossing stands against its rule; click one for the metrics">Crossings</button>
             <button aria-pressed={t.beeline} onClick={() => tog("beeline")}>Bee-line</button>
             <button aria-pressed={t.lowconf} onClick={() => tog("lowconf")}>Low-confidence</button>
             <button aria-pressed={t.hills} onClick={() => tog("hills")} disabled={!hillFC}
@@ -381,7 +394,8 @@ function Body({ s }: { s: Solve }) {
             ) : null}
             {!map ? <div className="mapnote"><Loading text="Loading imagery…" /></div> : null}
           </div>
-          {(t.towers || moveMode) && feasible && !hidden.includes(sel.id) ? <TowerLayer map={map} routes={[sel.id]} editable={moveMode} /> : null}
+          {(t.towers || moveMode) && feasible && !hidden.includes(sel.id) ? <TowerLayer map={map} routes={[sel.id]} editable={moveMode} angles={t.angles} spans={t.spans} /> : null}
+          {feasible && design ? <CrossingLayer map={map} rows={design.crossings} visible={t.crossings && !hidden.includes(sel.id)} /> : null}
           <ScaleBar map={map} />
           <CeilingNote ceiling={ceiling} />
           {feasible && sel ? <RouteProfile sid={s.id} route={sel} map={map} enabled={!maxed} /> : null}
@@ -401,11 +415,18 @@ function Body({ s }: { s: Solve }) {
             {hwM > 0 ? <div><i style={{ background: routeColour(sel?.id ?? 1), opacity: 0.4, height: 8 }} />Right of way ±{num(hwM, 1)} m</div> : null}
             <div><i style={{ background: "#D69A4E", borderRadius: "50%", width: 8, height: 8 }} />Angle tower</div>
             <div><i style={{ background: "#fff", border: "1px solid #14202A", borderRadius: "50%", width: 8, height: 8 }} />Suspension tower</div>
+            {t.crossings ? (
+              <div>
+                <i style={{ background: STATUS_COLOUR.ok, borderRadius: "50%", width: 8, height: 8 }} />
+                <i style={{ background: STATUS_COLOUR.relaxed, borderRadius: "50%", width: 8, height: 8, marginLeft: -2 }} />
+                <i style={{ background: STATUS_COLOUR.violation, borderRadius: "50%", width: 8, height: 8, marginLeft: -2 }} />Crossing: preferred / relaxed / violation
+              </div>
+            ) : null}
             <div><i style={{ background: "repeating-linear-gradient(90deg,var(--ink-2) 0 4px,transparent 4px 7px)" }} />Bee-line / band</div>
           </div>
           <div className="row" style={{ marginTop: 8, gap: 8 }}>
             <span className="hint" style={{ margin: 0, flex: 1 }}>
-              Click a route to select it, a tower for its details. Tower labels appear from z14.
+              Click a route to select it, a tower or a crossing for its details. Tower labels appear from z14, deflections and span lengths a little closer in.
             </span>
             <button className="mini" onClick={() => nav(`/runs/${run.id}/layers`)}>Inspect layers at 0.5 m</button>
           </div>
@@ -472,6 +493,7 @@ function Body({ s }: { s: Solve }) {
             <Kpi k="Forest" v={num(sel.stats.forest_ha, 1)} unit="ha" />
             <Kpi k="Cost" v={crore(sel.cost.total, { unit: false, digits: 1 })} unit="₹Cr" />
           </div>
+          {design ? <DesignCheck route={sel} d={design} onFly={flyTo} /> : null}
           <CompareTable s={s} selId={sel.id} select={select} />
           <RevisionCard run={run} cmp={cmp} selId={sel.id} prevOn={t.prev} togglePrev={() => tog("prev")} />
           <div className="actions">
