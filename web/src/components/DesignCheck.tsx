@@ -13,15 +13,16 @@ type Filter = "all" | "angle" | "flagged" | "crossing" | "statutory";
  * rule's angle / span / tower-distance / null-point limits, and the section intervals.
  * Click a row to fly there on the map.
  */
-export default function DesignCheck({ route, d, onFly, rules, fired, statutory }: {
+export default function DesignCheck({ route, d, onFly, rules, fired, sources, statutory }: {
   route: Route; d: Design; onFly: (lon: number, lat: number) => void; rules?: RulesResponse; fired?: Record<string, number>;
+  sources?: { layer: string; features: number }[];
   /** statutory notes by tower number (airport NOC, pipeline footing, building setback) */
   statutory?: Map<number, string[]>;
 }) {
   const [tab, setTab] = useState<Tab>("crossings");
   const [filter, setFilter] = useState<Filter>("all");
   const [allRules, setAllRules] = useState(false);
-  const ruleList = useMemo(() => ruleRows(route, rules, fired), [route, rules, fired]);
+  const ruleList = useMemo(() => ruleRows(route, rules, fired, sources), [route, rules, fired, sources]);
   const nTouched = ruleList.filter((r) => r.touched).length;
   const L = d.limits;
   const nFlag = d.towers.filter((r) => r.flags.length).length;
@@ -160,7 +161,7 @@ export default function DesignCheck({ route, d, onFly, rules, fired, statutory }
           <div className="scroll tw" style={{ marginTop: 8 }}>
             <table data-testid="dc-rules">
               <thead>
-                <tr><th>Rule</th><th>Group</th><th>Treatment</th><th className="r">In band</th><th>On this route</th><th>Changed</th></tr>
+                <tr><th>Rule</th><th>Group</th><th>Treatment</th><th className="r">Features in band</th><th>On this route</th><th>Changed</th></tr>
               </thead>
               <tbody>
                 {ruleList.filter((r) => allRules || r.touched).map((r) => {
@@ -175,8 +176,8 @@ export default function DesignCheck({ route, d, onFly, rules, fired, statutory }
                       <td>{r.name}<span className="lim">{r.id}</span></td>
                       <td style={{ fontSize: 11.5 }}>{r.group}</td>
                       <td>{r.treatment}</td>
-                      <td className="r mono">{r.inBand ? r.inBand.toLocaleString("en-IN") : "—"}</td>
-                      <td>{bits.length ? <span className={r.violated ? "bad" : ""}>{bits.join(" · ")}</span> : <span className="hint" style={{ margin: 0 }}>{r.inBand ? "kept clear" : r.enabled ? "nothing in the band" : "off"}</span>}</td>
+                      <td className="r mono">{r.inBand === null ? <span className="lim">no layer</span> : r.inBand ? r.inBand.toLocaleString("en-IN") : "0"}</td>
+                      <td>{bits.length ? <span className={r.violated ? "bad" : ""}>{bits.join(" · ")}</span> : <span className="hint" style={{ margin: 0 }}>{!r.enabled ? "off" : r.applied ? "kept clear" : r.inBand === null ? "applied to the geometry" : r.inBand ? "no effect" : "nothing in the band"}</span>}</td>
                       <td>{r.changed ? <span className="pill p-chg">changed</span> : ""}</td>
                     </tr>
                   );
@@ -184,7 +185,7 @@ export default function DesignCheck({ route, d, onFly, rules, fired, statutory }
               </tbody>
             </table>
           </div>
-          <div className="foot">In band = features of the rule's layer the compile priced or blocked. On this route = what the rule did to the alignment: crossings, bends made for it, a detour, violations the spotting could not repair. "Kept clear" = features were there and the route stayed outside their buffer.</div>
+          <div className="foot">Features in band = what the extraction found for the rule's layer. On this route = what the rule did to the alignment: crossings, bends made for it, a detour, violations the spotting could not repair. "Kept clear" = the compile built a buffer or cost from it and the route stayed outside.</div>
         </>
       ) : null}
 

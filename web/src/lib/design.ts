@@ -387,8 +387,10 @@ export interface RuleRow {
   treatment: string;
   enabled: boolean;
   changed: boolean;
-  /** features of the rule's layer the compile saw in the band */
-  inBand: number;
+  /** features of the rule's layer extracted in the band (the manifest's source counts) */
+  inBand: number | null;
+  /** the compile built a mask or a cost from this rule (the solver's rules_fired) */
+  applied: boolean;
   crossed: number;
   turned: number;
   detour: boolean;
@@ -398,7 +400,9 @@ export interface RuleRow {
 
 const GROUP_TREATMENT: Record<string, string> = { lock: "Statutory", nogo: "No-Go", cross: "Crossing", gng: "Land class", geo: "Geometry" };
 
-export function ruleRows(route: Route, rules: RulesResponse | undefined, fired: Record<string, number> | undefined): RuleRow[] {
+export function ruleRows(route: Route, rules: RulesResponse | undefined, fired: Record<string, number> | undefined, sources: { layer: string; features: number }[] | undefined): RuleRow[] {
+  const featuresBy = new Map<string, number>();
+  for (const x of sources ?? []) featuresBy.set(x.layer, (featuresBy.get(x.layer) ?? 0) + x.features);
   const turned = new Map<string, number>();
   const violated = new Map<string, number>();
   const detourLayers = new Set<string>();
@@ -420,9 +424,10 @@ export function ruleRows(route: Route, rules: RulesResponse | undefined, fired: 
       const t = turned.get(r.id) ?? 0, v = violated.get(r.id) ?? 0;
       const detour = Boolean(r.layer && detourLayers.has(r.layer));
       out.push({ id: r.id, name: r.name, group: g.title, treatment: r.enabled ? treatment : "Off", enabled: r.enabled, changed: r.n_changed > 0,
-        inBand: fired?.[r.id] ?? 0, crossed, turned: t, detour, violated: v, touched: crossed > 0 || t > 0 || detour || v > 0 });
+        inBand: r.layer ? featuresBy.get(r.layer) ?? null : null, applied: (fired?.[r.id] ?? 0) > 0,
+        crossed, turned: t, detour, violated: v, touched: crossed > 0 || t > 0 || detour || v > 0 });
     }
-  return out.sort((a, b) => Number(b.touched) - Number(a.touched) || b.inBand - a.inBand || a.name.localeCompare(b.name));
+  return out.sort((a, b) => Number(b.touched) - Number(a.touched) || Number(b.applied) - Number(a.applied) || (b.inBand ?? -1) - (a.inBand ?? -1) || a.name.localeCompare(b.name));
 }
 
 
