@@ -1,6 +1,7 @@
 """Beeline route planner — HTTP API (FastAPI). Serves the React build too when present."""
 from __future__ import annotations
 
+import json
 import logging
 import re
 import shutil
