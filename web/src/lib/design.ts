@@ -244,8 +244,10 @@ export function crossingRows(route: Route, rules: RulesResponse | undefined, lim
       const f = Math.max(0, Math.min(1, along / Math.max(1, L)));
       const lonlat: LonLat = [a.lon + f * (b.lon - a.lon), a.lat + f * (b.lat - a.lat)];
       const av = pval(ps, "angle_deg");
+      const minAngle = pnum(ps, "min_angle_deg");       // pipelines: one minimum, symmetric about 90°
       const angleAllowed: [number, number] | null = Array.isArray(av) ? [av[0], av[1]]
-        : typeof av === "number" ? [av - lim.singleAngleTolDeg, av + lim.singleAngleTolDeg] : null;
+        : typeof av === "number" ? [av - lim.singleAngleTolDeg, av + lim.singleAngleTolDeg]
+        : minAngle !== null ? [minAngle, 180 - minAngle] : null;
       const pa = pnum(ps, "preferred_angle_deg"), pt = pnum(ps, "preferred_angle_tol_deg");
       const anglePref: [number, number] | null = pa !== null && pt !== null && angleAllowed ? [pa - pt, pa + pt] : null;
       const spanMax = pnum(ps, "max_span_m");
