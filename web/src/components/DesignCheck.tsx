@@ -1,9 +1,9 @@
 import { useMemo, useState } from "react";
-import type { Route } from "../api/types";
+import type { Route, RulesResponse } from "../api/types";
 import { num } from "../lib/format";
-import { STATUS_COLOUR, STATUS_LABEL, type Design, type Flag } from "../lib/design";
+import { ruleRows, STATUS_COLOUR, STATUS_LABEL, type Design, type Flag } from "../lib/design";
 
-type Tab = "towers" | "crossings" | "sections";
+type Tab = "towers" | "crossings" | "sections" | "rules";
 type Filter = "all" | "angle" | "flagged" | "crossing";
 
 /**
@@ -12,9 +12,14 @@ type Filter = "all" | "angle" | "flagged" | "crossing";
  * rule's angle / span / tower-distance / null-point limits, and the section intervals.
  * Click a row to fly there on the map.
  */
-export default function DesignCheck({ route, d, onFly }: { route: Route; d: Design; onFly: (lon: number, lat: number) => void }) {
+export default function DesignCheck({ route, d, onFly, rules, fired }: {
+  route: Route; d: Design; onFly: (lon: number, lat: number) => void; rules?: RulesResponse; fired?: Record<string, number>;
+}) {
   const [tab, setTab] = useState<Tab>("crossings");
   const [filter, setFilter] = useState<Filter>("all");
+  const [allRules, setAllRules] = useState(false);
+  const ruleList = useMemo(() => ruleRows(route, rules, fired), [route, rules, fired]);
+  const nTouched = ruleList.filter((r) => r.touched).length;
   const L = d.limits;
   const nFlag = d.towers.filter((r) => r.flags.length).length;
   const nViol = d.crossings.filter((r) => r.status === "violation").length;
@@ -43,9 +48,9 @@ export default function DesignCheck({ route, d, onFly }: { route: Route; d: Desi
           {nBind ? <> · <span className="bind" title="values with no slack against their limit">{nBind} at a limit</span></> : null}
         </span>
         <div className="dctabs" role="tablist">
-          {(["crossings", "towers", "sections"] as Tab[]).map((k) => (
+          {(["crossings", "towers", "sections", "rules"] as Tab[]).map((k) => (
             <button key={k} role="tab" aria-pressed={tab === k} onClick={() => setTab(k)} data-testid={`dc-tab-${k}`}>
-              {k === "towers" ? `Towers (${d.towers.length})` : k === "crossings" ? `Crossings (${d.crossings.length})` : `Sections (${d.sections.length})`}
+              {k === "towers" ? `Towers (${d.towers.length})` : k === "crossings" ? `Crossings (${d.crossings.length})` : k === "sections" ? `Sections (${d.sections.length})` : `Rules (${nTouched} of ${ruleList.length})`}
             </button>
           ))}
         </div>
@@ -137,6 +142,43 @@ export default function DesignCheck({ route, d, onFly }: { route: Route; d: Desi
             </table>
           </div>
           <div className="foot">Limits in grey come from the crossing's rule. Null point = distance of the crossing from the mid-span of the crossed line, as a share of that span. Preferred = at 90° and the null point; relaxed = allowed at the rule's penalty; violation = outside what the rule allows. <span className="bind">Underlined</span> = at its limit: the crossing cannot move without breaking the rule.</div>
+        </>
+      ) : null}
+
+      {tab === "rules" ? (
+        <>
+          <div className="row" style={{ gap: 4, padding: "8px 15px 0" }}>
+            <button className="mini" aria-pressed={!allRules} style={!allRules ? { borderColor: "var(--accent-line)", color: "var(--accent-ink)" } : undefined} onClick={() => setAllRules(false)}>Shaped this route</button>
+            <button className="mini" aria-pressed={allRules} style={allRules ? { borderColor: "var(--accent-line)", color: "var(--accent-ink)" } : undefined} onClick={() => setAllRules(true)}>All rules loaded</button>
+          </div>
+          <div className="scroll tw" style={{ marginTop: 8 }}>
+            <table data-testid="dc-rules">
+              <thead>
+                <tr><th>Rule</th><th>Group</th><th>Treatment</th><th className="r">In band</th><th>On this route</th><th>Changed</th></tr>
+              </thead>
+              <tbody>
+                {ruleList.filter((r) => allRules || r.touched).map((r) => {
+                  const bits = [
+                    r.crossed ? `crossed ${r.crossed}×` : null,
+                    r.turned ? `bent the line ${r.turned}×` : null,
+                    r.detour ? "detour" : null,
+                    r.violated ? `${r.violated} violation${r.violated > 1 ? "s" : ""}` : null,
+                  ].filter(Boolean);
+                  return (
+                    <tr key={r.id} className={r.enabled ? "" : "loff"}>
+                      <td>{r.name}<span className="lim">{r.id}</span></td>
+                      <td style={{ fontSize: 11.5 }}>{r.group}</td>
+                      <td>{r.treatment}</td>
+                      <td className="r mono">{r.inBand ? r.inBand.toLocaleString("en-IN") : "—"}</td>
+                      <td>{bits.length ? <span className={r.violated ? "bad" : ""}>{bits.join(" · ")}</span> : <span className="hint" style={{ margin: 0 }}>{r.inBand ? "kept clear" : r.enabled ? "nothing in the band" : "off"}</span>}</td>
+                      <td>{r.changed ? <span className="pill p-chg">changed</span> : ""}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <div className="foot">In band = features of the rule's layer the compile priced or blocked. On this route = what the rule did to the alignment: crossings, bends made for it, a detour, violations the spotting could not repair. "Kept clear" = features were there and the route stayed outside their buffer.</div>
         </>
       ) : null}
 

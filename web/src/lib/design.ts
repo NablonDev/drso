@@ -358,3 +358,49 @@ export function governSpans(route: Route, lim: Limits, lengthM: number): GovernS
   }
   return out;
 }
+
+// ---- every rule the solver loaded, and what it did to this route (phase 2, 15 Oct 2026)
+export interface RuleRow {
+  id: string;
+  name: string;
+  group: string;
+  treatment: string;
+  enabled: boolean;
+  changed: boolean;
+  /** features of the rule's layer the compile saw in the band */
+  inBand: number;
+  crossed: number;
+  turned: number;
+  detour: boolean;
+  violated: number;
+  touched: boolean;
+}
+
+const GROUP_TREATMENT: Record<string, string> = { lock: "Statutory", nogo: "No-Go", cross: "Crossing", gng: "Land class", geo: "Geometry" };
+
+export function ruleRows(route: Route, rules: RulesResponse | undefined, fired: Record<string, number> | undefined): RuleRow[] {
+  const turned = new Map<string, number>();
+  const violated = new Map<string, number>();
+  const detourLayers = new Set<string>();
+  for (const e of route.events) {
+    const d = (e.data ?? {}) as { rule_id?: string; code?: string };
+    if ((e.type === "TURN_TO_AVOID" || e.type === "TURN_TO_CROSS" || e.type === "TURN_TO_KEEP_CLEAR") && d.rule_id) turned.set(d.rule_id, (turned.get(d.rule_id) ?? 0) + 1);
+    if (e.type === "VIOLATION" && d.code) {
+      const rid = d.code.split(":")[1];
+      if (rid) violated.set(rid, (violated.get(rid) ?? 0) + 1);
+    }
+    if (e.type === "DETOUR" && e.source?.layer) detourLayers.add(e.source.layer);
+  }
+  const out: RuleRow[] = [];
+  for (const g of rules?.groups ?? [])
+    for (const r of g.rules) {
+      const tp = r.params.find((p) => p.key === "treatment");
+      const treatment = typeof tp?.value === "string" ? tp.value : GROUP_TREATMENT[g.key] ?? g.title;
+      const crossed = route.stats.crossings?.[r.id] ?? 0;
+      const t = turned.get(r.id) ?? 0, v = violated.get(r.id) ?? 0;
+      const detour = Boolean(r.layer && detourLayers.has(r.layer));
+      out.push({ id: r.id, name: r.name, group: g.title, treatment: r.enabled ? treatment : "Off", enabled: r.enabled, changed: r.n_changed > 0,
+        inBand: fired?.[r.id] ?? 0, crossed, turned: t, detour, violated: v, touched: crossed > 0 || t > 0 || detour || v > 0 });
+    }
+  return out.sort((a, b) => Number(b.touched) - Number(a.touched) || b.inBand - a.inBand || a.name.localeCompare(b.name));
+}

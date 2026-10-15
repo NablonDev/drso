@@ -504,7 +504,7 @@ function Body({ s }: { s: Solve }) {
             <Kpi k="Forest" v={num(sel.stats.forest_ha, 1)} unit="ha" />
             <Kpi k="Cost" v={crore(sel.cost.total, { unit: false, digits: 1 })} unit="₹Cr" />
           </div>
-          {design ? <DesignCheck route={sel} d={design} onFly={flyTo} /> : null}
+          {design ? <DesignCheck route={sel} d={design} onFly={flyTo} rules={rulesQ.data} fired={(s.result as { rules_fired?: Record<string, number> }).rules_fired} /> : null}
           <CompareTable s={s} selId={sel.id} select={select} />
           <RevisionCard run={run} cmp={cmp} selId={sel.id} prevOn={t.prev} togglePrev={() => tog("prev")} />
           <div className="actions">
