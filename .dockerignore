@@ -6,5 +6,4 @@ web/test-results
 web/playwright-report
 **/__pycache__
 .git
-*.html
 deploy/.env

@@ -4,7 +4,7 @@ without a voltage tag (voltage inferred from a parallel tagged line, else 400 kV
 osm_power.infer_untagged), with their towers. Additive: what is already stored (incl. the AOI refresh
 of 9 Oct) is left as it is; a way or a (voltage, tower) already in the store is not added again.
 
-    python scripts/add_dropped_power_lines.py [--pbf data/bucket/osm/india-power.osm.pbf]
+    python scripts/ingest/add_dropped_power_lines.py [--pbf data/bucket/osm/india-power.osm.pbf]
 """
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ import argparse
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import osmium  # noqa: E402
 

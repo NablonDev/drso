@@ -1,4 +1,4 @@
-// Shapes of the Beeline API responses, written from web/fixtures and beeline_api/app.py.
+// Shapes of the Beeline API responses, written from beeline_api/app.py (see /api/openapi.json).
 
 export type RunStatus = "draft" | "extracting" | "review" | "solving" | "complete" | "blocked" | "failed";
 export type Circuit = "dc"; // double circuit only

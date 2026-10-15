@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """Ingest the Indian Railways package (Vivek, 14 Oct 2026): ir_raw.gpkg → two reference layers.
 
-    python scripts/ingest_ir_railway.py "<LULC output>/transfers/railway/ir_raw.gpkg"
+    python scripts/ingest/ingest_ir_railway.py "<LULC output>/transfers/railway/ir_raw.gpkg"
 
   ir_track          → rail             (class railway; replaces the OSM dev extract as the current version)
   ir_platform_poly  → rail_platforms   (class platform, plus class platform_crossing_zone: each platform's
@@ -17,7 +17,7 @@ import math
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import geopandas as gpd  # noqa: E402
 import pyogrio  # noqa: E402

@@ -1,6 +1,6 @@
 """Post-processing of the Stage B probability raster into gated substation polygons.
 
-Provenance (verbatim copies in original/, sha256 in original/SHA256SUMS):
+Provenance (source scripts and sha256 in lulc_models/PROVENANCE.md):
   polygonise      sA04_score.polygonise L44-81 (p >= thresh, first-pass size filter on mercator
                   pixel area, dissolve/explode, EPSG:7755 area recheck). Parameterised only.
   OSM match       sA06_layers.py L41-46 (detection intersects an OSM substation geometry).

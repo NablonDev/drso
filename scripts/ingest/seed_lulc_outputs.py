@@ -11,7 +11,7 @@ Bhuj–Lakadia and Gujarat-minus-Kachchh runs do not re-run the models. Sources 
   substations    corridor  /mnt/cog-data/vivek/stageA/AESL_SUBSTATIONS_FINAL.gpkg
   wind_turbines  corridor  per-scene Exp-G diagnostics, OSM-confirmed (TP) detections only
 
-    python scripts/seed_lulc_outputs.py [--only village_roads plotted ...]
+    python scripts/ingest/seed_lulc_outputs.py [--only village_roads plotted ...]
 """
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ import sys
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import geopandas as gpd  # noqa: E402
 import mercantile  # noqa: E402

@@ -15,7 +15,7 @@
   dams         Dams - lines + Dams - points
 Not used: Hydraulic structures (no matching layer). Coverage of every layer: the Gujarat boundary.
 
-Usage: python scripts/ingest_water_master.py <path to gujarat_water_master.gpkg or .zip> [--version ...]
+Usage: python scripts/ingest/ingest_water_master.py <path to gujarat_water_master.gpkg or .zip> [--version ...]
 """
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ import tempfile
 import zipfile
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 import geopandas as gpd  # noqa: E402

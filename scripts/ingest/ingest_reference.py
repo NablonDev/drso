@@ -2,7 +2,7 @@
 """Ingest one statewide gpkg into the reference store.
 
 Example:
-  python scripts/ingest_reference.py forest "LULC output/Forest Areas/gj_forest_delivery.gpkg" \
+  python scripts/ingest/ingest_reference.py forest "LULC output/Forest Areas/gj_forest_delivery.gpkg" \
       --const-class reserve_forest --name-field NAME --version 2026-10-05 \
       --source "Forest Dept / SOI" --source-date 2026-09-01 --coverage-file gujarat_boundary.geojson
 
@@ -16,7 +16,7 @@ import argparse
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import geopandas as gpd  # noqa: E402
 import pyogrio  # noqa: E402

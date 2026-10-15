@@ -10,7 +10,9 @@ beeline_api/      FastAPI app, GPU worker, extraction, solve job, exports, image
 beeline_engine/   route solver (pure Python: NumPy/SciPy/Shapely + PyTorch on GPU)
 config/           layers.yaml, rules.yaml (31 rules), costs.yaml (8 categories), engine.yaml
 deploy/           Dockerfile, docker-compose.yml, environment.yml, .env.example
-scripts/          ingest_reference.py, ingest_all.py, build_dev_reference.py, benchmark.py, dev_up.sh
+scripts/          dev_up.sh, install_models.py, benchmark.py, independent_check.py
+scripts/ingest/   reference-store loaders: ingest_all.py, ingest_reference.py, per-package ingests, seeds
+docs/             route_research.md (solver research note)
 tests/            test_engine.py (synthetic, incl. brute-force optimality), test_api.py, e2e_api.py
 ```
 
@@ -28,9 +30,9 @@ tests/            test_engine.py (synthetic, incl. brute-force optimality), test
    `config/reference_manifest.yaml` from the example, then:
    ```
    docker compose run --rm -v /srv/beeline/incoming:/srv/beeline/incoming api \
-       python scripts/ingest_all.py config/reference_manifest.yaml --dry-run   # check classes
+       python scripts/ingest/ingest_all.py config/reference_manifest.yaml --dry-run   # check classes
    docker compose run --rm -v /srv/beeline/incoming:/srv/beeline/incoming api \
-       python scripts/ingest_all.py config/reference_manifest.yaml
+       python scripts/ingest/ingest_all.py config/reference_manifest.yaml
    ```
    Layers land in `<bucket>/reference/gujarat/<layer>/<version>/` with provenance and coverage.
    Pipelines come from `transfers/pipelines/India_Oil_Gas_Pipelines_v3.gpkg`, existing network
@@ -57,7 +59,7 @@ tests/            test_engine.py (synthetic, incl. brute-force optimality), test
    For the demo, the HERE bridges / tunnels, Mappls elevated / underground roads and Google-derived
    flyovers are added too (centrelines widened to class-default deck widths). They are licence-
    restricted: every feature carries `provider` + `licence`, and the manifest marks those entries
-   `licence_restricted: true` — re-ingest with `scripts/ingest_all.py ... --only bridges --no-restricted`
+   `licence_restricted: true` — re-ingest with `scripts/ingest/ingest_all.py ... --only bridges --no-restricted`
    before any real delivery.
    Rule "Bridges" (No-Go group) keeps towers off and conductors from crossing any deck; both
    buffers start at 0 m. Mostly OSM-derived: ODbL share-alike applies to a delivered extract.
@@ -144,7 +146,7 @@ solve on GPU, exports, copy, re-solve, compare), native PostGIS vector tiles, SP
 **Water layers (8).** Pond, River, Lake, Canal, Reservoir, Nalla (empty until a source exists), Wet Land
 and Other water come from the Gujarat water-bodies package (NWIA 2019 + OSM + GatiShakti):
 
-    python scripts/ingest_water_features.py "<incoming>/transfers/water_features/gujarat_water_bodies_by_type.zip"
+    python scripts/ingest/ingest_water_master.py "<incoming>/transfers/water_features/gujarat_water_master.zip"
 
 Rules: River and Canal crossing rules; Reservoir 150 m bank buffer (rule 35); Wet Land treated as Marshy
 land; every Other-water body No-Go (rule 36, switchable) — note this includes the Rann mud flats and the
@@ -209,5 +211,5 @@ python -m pytest -q tests/test_engine.py tests/test_api.py
 python tests/e2e_api.py           # against the running stack
 cd web && npm run dev             # UI dev server on :5173 proxying /api
 ```
-The dev reference store (`data/bucket/reference_dev`) is built by `scripts/build_dev_reference.py`
+The dev reference store (`data/bucket/reference_dev`) is built by `scripts/ingest/build_dev_reference.py`
 from local files + OSM for the Bhuj–Lakadia AOI only. It is test data, never production.

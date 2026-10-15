@@ -8,3 +8,4 @@ web/dist/
 *.egg-info/
 .env
 web/tsconfig.tsbuildinfo
+*.pdf

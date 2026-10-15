@@ -11,7 +11,7 @@ import sys
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 assert "reference_dev" in os.environ.get("BEELINE_REFERENCE_DIR", ""), "set BEELINE_REFERENCE_DIR=.../reference_dev"
 
 import geopandas as gpd  # noqa: E402
@@ -168,7 +168,7 @@ def main():
         return "pond"
     put("water", wl, "OSM waterways and water polygons", cls_series=wl["tags"].map(water_cls), conf=0.9)
     # forest, protected areas and wetlands: real statewide layers from the forest delivery
-    # (scripts/ingest_forest.py); no OSM stand-ins (6 Oct 2026)
+    # (scripts/ingest/ingest_forest_5cat.py); no OSM stand-ins (6 Oct 2026)
     pl = osm_gdf(f'way["man_made"="pipeline"]{b};', polygons=False)
     put("pipelines", pl, "OSM man_made=pipeline", cls_series=pl["tags"].map(
         lambda t: "oil_pipeline" if t.get("substance") in ("oil", "crude") else "gas_pipeline"), conf=0.8)

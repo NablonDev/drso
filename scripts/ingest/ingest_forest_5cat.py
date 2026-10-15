@@ -1,19 +1,16 @@
 #!/usr/bin/env python
-"""Ingest the forest package into five reference layers (Vivek, 6 Oct 2026).
+"""Ingest the second forest package (Vivek, 13 Oct 2026): the five layers of 6 Oct updated, plus the
+eco-sensitive zones as a new reference layer.
 
-    python scripts/ingest_forest.py "<LULC output>/transfers/Forests/gj_forest_delivery.gpkg"
+    python scripts/ingest/ingest_forest_5cat.py "<LULC output>/transfers/Forests/gj_forest_5cat.gpkg"
 
-Package layers -> Beeline layers (no generic forest / protected layer)
-  reserve_forest            -> reserve_forest      Reserved Forest, IFA 1927 s.20 (39,711)
-  forest_protected_area     -> forest_in_pa        Reserved Forest inside a NP / WLS (2,586)
-  national_park             -> national_park       WLPA 1972 s.35 (4)
-  wls_conservation_reserve  -> wildlife_sanctuary  WLPA 1972 s.18/26A (24; no conservation reserve)
-  social_forest             -> social_forest       FSI 2023 cover within 100 m of road / rail / canal (23,101)
-Not ingested: _supplementary_pa_fill (OSM gap-fills, ~1 km accuracy; the package keeps them out of its
-headline layers) and _gap_protected_forest_IFA_s29 (empty).
-Kept attributes: designation, statute, section, area_ha, chosen_source, positional_accuracy_m, licence,
-plus density_class / sf_class / nearest_corridor for social forest. The package's text confidence
-(legal / derived) is kept as `source_confidence`.
+Package layers -> Beeline layers
+  reserve_forest            -> reserve_forest       Reserved Forest, IFA 1927 s.20
+  forest_protected_area     -> forest_in_pa         Reserved Forest inside a NP / WLS
+  national_park             -> national_park        WLPA 1972 s.35
+  wls_conservation_reserve  -> wildlife_sanctuary   WLPA 1972 s.18/26A
+  social_forest             -> social_forest        FSI 2023 cover within 100 m of road / rail / canal
+  eco_sensitive_zone        -> eco_sensitive_zone   ESZ notifications (new, No-Go like the parks and sanctuaries)
 """
 from __future__ import annotations
 
@@ -21,7 +18,7 @@ import argparse
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import geopandas as gpd  # noqa: E402
 import pyogrio  # noqa: E402
@@ -29,9 +26,10 @@ import shapely  # noqa: E402
 
 from beeline_api import reference  # noqa: E402
 
-VERSION = "forest-delivery-2026-10-05"
-KEEP = ["designation", "statute", "section", "area_ha", "chosen_source", "positional_accuracy_m", "licence",
-        "density_class", "sf_class", "nearest_corridor"]
+VERSION = "forest-5cat-2026-10-13"
+KEEP = ["designation", "statute", "section", "ifa_section", "wlpa_section", "notification_ref", "notification_status",
+        "protected_area_name", "pa_class", "area_ha", "chosen_source", "positional_accuracy_m", "licence",
+        "density_class", "sf_class", "nearest_corridor", "district", "taluka", "village", "esz_total_km2", "is_overlay"]
 # (package layer, beeline key, class, id prefix, layer confidence)
 MAP = [
     ("reserve_forest", "reserve_forest", "reserve_forest", "rf", 0.90),
@@ -39,6 +37,7 @@ MAP = [
     ("national_park", "national_park", "national_park", "np", 0.95),
     ("wls_conservation_reserve", "wildlife_sanctuary", "wildlife_sanctuary", "wls", 0.95),
     ("social_forest", "social_forest", "social_forest", "sf", 0.70),
+    ("eco_sensitive_zone", "eco_sensitive_zone", "eco_sensitive_zone", "esz", 0.90),
 ]
 
 
@@ -50,6 +49,8 @@ def _layer(gpkg, layer, cls, prefix):
                      for x in g.geometry.values]
     g = g[~g.geometry.is_empty].reset_index(drop=True)
     name = g["name"].where(g["name"].astype(str).str.strip().ne(""), None) if "name" in g else None
+    if name is None and "protected_area_name" in g:
+        name = g["protected_area_name"].where(g["protected_area_name"].astype(str).str.strip().ne(""), None)
     return gpd.GeoDataFrame({"class": cls, "name": name, "confidence": None,
                              "src_id": [f"{prefix}-{i}" for i in range(len(g))],
                              "source_confidence": g.get("confidence"),
@@ -59,16 +60,16 @@ def _layer(gpkg, layer, cls, prefix):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("package", help="gj_forest_delivery.gpkg")
+    ap.add_argument("package", help="gj_forest_5cat.gpkg")
     a = ap.parse_args()
     src = Path(a.package)
     for layer, key, cls, prefix, conf in MAP:
         g = _layer(src, layer, cls, prefix)
-        prov = {"source": f"Gujarat forest delivery ({src.name}, layer {layer})",
-                "source_date": "2026-10-05", "confidence": conf,
-                "note": "legal boundaries (BharatMaps RFA / GatiShakti), ~30 m positional accuracy"
-                        if key != "social_forest" else
-                        "derived: FSI 2023 forest cover within 100 m of road / rail / canal, outside PAs; ~46 m"}
+        prov = {"source": f"Gujarat forest package 2 ({src.name}, layer {layer})",
+                "source_date": "2026-10-13", "confidence": conf,
+                "note": {"social_forest": "derived: FSI 2023 forest cover within 100 m of road / rail / canal, outside PAs",
+                         "eco_sensitive_zone": "ESZ notifications round the parks and sanctuaries (the collar outside the PA)"}
+                .get(key, "legal boundaries (BharatMaps RFA / GatiShakti / State Forest Dept)")}
         out = reference.write_version(key, g, VERSION, prov, coverage=shapely.box(*g.total_bounds))
         print(f"{key:20s} {len(g):7d}  -> {out}", flush=True)
 

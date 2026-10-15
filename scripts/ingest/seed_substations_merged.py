@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """Replace the stored substation output with the statewide merged file (Vivek, 13 Oct 2026).
 
-    python scripts/seed_substations_merged.py /mnt/cog-data/devesh/sub_merge/Gujarat_Substations_FINAL_merged.gpkg
+    python scripts/ingest/seed_substations_merged.py /mnt/cog-data/devesh/sub_merge/Gujarat_Substations_FINAL_merged.gpkg
 
 The file holds every detected / OSM-matched substation polygon in Gujarat (7,420) with the model's
 confidence, review flag, voltage and source. Coverage: the extent of the features (statewide), so every
@@ -13,7 +13,7 @@ import argparse
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import geopandas as gpd  # noqa: E402
 import numpy as np  # noqa: E402

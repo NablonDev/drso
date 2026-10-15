@@ -9,7 +9,8 @@ violations.csv, crossings_compare.csv and run_meta.json to out_dir (default data
 Rule parameters (setbacks, windows, side distances) are copied from config/rules.yaml as of 14 Oct 2026 — keep in step.
 """
 import sys, json, math, csv, collections
-sys.path.insert(0, '/mnt/cog-data/vivek/production_route')
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import numpy as np
 import geopandas as gpd
 import shapely

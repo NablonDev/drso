@@ -1,5 +1,5 @@
 """Plotted-land geometry pipeline (chord variant), copied from /mnt/cog-data/guj/pl/code/pl_pipeline_guj.py
-(verbatim copy in original/).  roads -> snap joins (exact coords) -> blocks -> blue anchors -> rectangle edge
+(sha256 in lulc_models/PROVENANCE.md).  roads -> snap joins (exact coords) -> blocks -> blue anchors -> rectangle edge
 extensions -> [idealised OMBB lines] -> dead-end extensions -> comb end caps -> U-caps -> rectangles
 (rule + context) -> H2 clustering (module rule).
 

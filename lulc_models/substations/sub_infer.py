@@ -1,7 +1,7 @@
 """Stage B substation segmentation on Esri Wayback z18 MBTiles, restricted to an AOI.
 
-Copied from /mnt/drso-data/solar_lora/scripts/07_infer_corridor.py (original/07_infer_corridor.py,
-sha256 in original/SHA256SUMS), which produced /mnt/cog-data/vivek/stageA/corridor_sub_prob_stageB.tif
+Copied from /mnt/drso-data/solar_lora/scripts/07_infer_corridor.py (sha256 in
+lulc_models/PROVENANCE.md), which produced /mnt/cog-data/vivek/stageA/corridor_sub_prob_stageB.tif
 with --ckpt .../stageB/lightning_logs/version_0/checkpoints/epoch22.ckpt. Kept identical:
 
   - 3072 px blocks with 128 px overlap on a grid ANCHORED AT THE MBTILES RASTER ORIGIN, visited in
