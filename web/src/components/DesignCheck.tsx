@@ -90,7 +90,7 @@ export default function DesignCheck({ route, d, onFly, rules, fired }: {
                       <td className="mono">{isG ? "Gantry" : t.type}{r.anchor && !isG ? <span className="lim">anchor</span> : null}</td>
                       <td className="r mono">{isG ? "—" : <span className={bind(r.binding, "band")} title={r.binding.includes("band") ? "at the top of its type band" : undefined}>{num(t.deflection_deg, 1)}°{t.turn && t.turn !== "-" ? ` ${t.turn}` : ""}</span>}</td>
                       <td className="r mono">{r.back === null ? "—" : num(r.back, 0)}</td>
-                      <td className="r mono">{r.ahead === null ? "—" : num(r.ahead, 0)}</td>
+                      <td className="r mono">{r.ahead === null ? "—" : <>{num(r.ahead, 0)}{r.aheadNote ? <span className={`lim ${r.aheadNote === "over design" ? "warn" : ""}`}>{r.aheadNote}</span> : null}</>}</td>
                       <td className="r mono">{isG || r.wind === null ? "—" : <span className={`${r.windLimit !== null && r.wind > r.windLimit + 1e-3 ? "warn" : ""} ${bind(r.binding, "wind")}`}>{num(r.wind, 0)}{r.windLimit !== null ? <span className="lim">/ {r.windLimit}</span> : null}</span>}</td>
                       <td className="r mono">{t.extension_m ? `+${num(t.extension_m, 0)}` : "—"}</td>
                       <td className="r mono">{t.no === 0 ? "—" : <span className={bind(r.binding, "section")}>{num(r.runKm, 2)} km<span className="lim">{r.runSpans} sp</span></span>}</td>
@@ -104,7 +104,7 @@ export default function DesignCheck({ route, d, onFly, rules, fired }: {
               </tbody>
             </table>
           </div>
-          <div className="foot">Wind span = mean of the two adjacent spans against the TSD limit for the type and extension. Weight-span and adjacent-span-sum checks are the engine's (notes). Since anchor = chainage and spans since the last gantry or tension tower. <span className="bind">Underlined</span> = at its limit, no slack.</div>
+          <div className="foot">Wind span = mean of the two adjacent spans against the TSD limit for the type and extension. Weight-span and adjacent-span-sum checks are the engine's (notes). Span ahead notes: crossing / hilly = allowed over the design span for that reason; approach = inside the approach section at a gantry. Since anchor = chainage and spans since the last gantry or tension tower. <span className="bind">Underlined</span> = at its limit, no slack.</div>
         </>
       ) : null}
 

@@ -10,7 +10,7 @@ import TowerLayer from "../components/map/TowerLayer";
 import CrossingLayer from "../components/map/CrossingLayer";
 import BendLayer, { BEND_COLOUR } from "../components/map/BendLayer";
 import DesignCheck from "../components/DesignCheck";
-import { designOf, STATUS_COLOUR } from "../lib/design";
+import { designOf, spanNotesOf, STATUS_COLOUR } from "../lib/design";
 import {
   bboxOf,
   DEFAULT_ON,
@@ -84,6 +84,7 @@ function Body({ s }: { s: Solve }) {
   // design check of the selected route (15 Oct 2026): towers, sections and crossings against the rules
   const rulesQ = useRules(run.id);
   const design = useMemo(() => (sel ? designOf(sel, rulesQ.data, s.manifest, run.kv) : null), [sel, rulesQ.data, s.manifest, run.kv]);
+  const spanNotes = useMemo(() => (design ? spanNotesOf(design.towers) : undefined), [design]);
   const flyTo = (lon: number, lat: number) => map?.flyTo({ center: [lon, lat], zoom: Math.max(map.getZoom(), 15.5), duration: 700 });
 
   useEffect(() => {
@@ -397,7 +398,7 @@ function Body({ s }: { s: Solve }) {
             ) : null}
             {!map ? <div className="mapnote"><Loading text="Loading imagery…" /></div> : null}
           </div>
-          {(t.towers || moveMode) && feasible && !hidden.includes(sel.id) ? <TowerLayer map={map} routes={[sel.id]} editable={moveMode} angles={t.angles} spans={t.spans} /> : null}
+          {(t.towers || moveMode) && feasible && !hidden.includes(sel.id) ? <TowerLayer map={map} routes={[sel.id]} editable={moveMode} angles={t.angles} spans={t.spans} spanNotes={spanNotes} /> : null}
           {feasible && design ? <CrossingLayer map={map} rows={design.crossings} visible={t.crossings && !hidden.includes(sel.id)} /> : null}
           {feasible && sel ? <BendLayer map={map} runId={run.id} sid={s.id} route={sel} rules={rulesQ.data} visible={t.bends && !hidden.includes(sel.id)} /> : null}
           <ScaleBar map={map} />

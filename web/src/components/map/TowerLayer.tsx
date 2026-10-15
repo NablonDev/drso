@@ -53,6 +53,7 @@ export default function TowerLayer({
   before,
   angles = false,
   spans = false,
+  spanNotes,
 }: {
   map: maplibregl.Map | null;
   routes: number[];
@@ -62,6 +63,8 @@ export default function TowerLayer({
   angles?: boolean;
   /** span length at the midpoint of every span */
   spans?: boolean;
+  /** why a span is allowed its length (crossing / hilly / approach), by the tower it leaves */
+  spanNotes?: Map<number, string>;
 }) {
   const byRoute = useTowers((s) => s.byRoute);
   const moveTower = useTowers((s) => s.moveTower);
@@ -250,7 +253,8 @@ export default function TowerLayer({
           const len = t.span_ahead_m;
           if (len) {
             const m = map.project([(t.lon + n.lon) / 2, (t.lat + n.lat) / 2]);
-            out.push({ fid: `${t.fid}-sp`, x: m.x, y: m.y, text: `${len.toFixed(0)} m`, cls: "sp" });
+            const note = spanNotes?.get(t.no);
+            out.push({ fid: `${t.fid}-sp`, x: m.x, y: m.y, text: `${len.toFixed(0)} m${note ? ` · ${note}` : ""}`, cls: "sp" });
           }
         }
         if (out.length >= MAX_LABELS) break;
@@ -269,7 +273,7 @@ export default function TowerLayer({
       map.off("move", schedule);
       map.off("resize", schedule);
     };
-  }, [map, towers, angles, spans]);
+  }, [map, towers, angles, spans, spanNotes]);
 
   useEffect(() => () => {
     popupRef.current?.remove();

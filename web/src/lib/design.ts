@@ -115,6 +115,8 @@ export interface TowerRow {
   crossing: boolean;
   /** which values sit at their limit: wind, band, section */
   binding: string[];
+  /** why the span ahead is allowed its length: crossing, hilly, approach, or over design span */
+  aheadNote: string | null;
 }
 
 const nice = (s: string) => s.replace(/_/g, " ");
@@ -159,6 +161,14 @@ export function towerRows(route: Route, lim: Limits): TowerRow[] {
     if (t.type !== "G" && lim.maxDevDeg !== null && t.deflection_deg > lim.maxDevDeg + 1e-6)
       flags.push({ kind: "bad", text: `deflection ${t.deflection_deg.toFixed(0)}° over ${lim.maxDevDeg}°` });
     const binding: string[] = [];
+    let aheadNote: string | null = null;
+    const sp = spanBy.get(t.no), next = T[i + 1];
+    if (sp && next) {
+      if (lim.designSpanM !== null && sp.length_m > lim.designSpanM + 0.5)
+        aheadNote = sp.crossings.length ? "crossing" : t.reasons.includes("hilly") || next.reasons.includes("hilly") ? "hilly" : "over design";
+      else if (lim.approachM !== null && (t.chainage_km * 1000 < lim.approachM || next.chainage_km * 1000 > route.stats.length_km * 1000 - lim.approachM))
+        aheadNote = "approach";
+    }
     if (t.type !== "G" && wind !== null && wl !== null && wind >= wl - NEAR.windM) binding.push("wind");
     // deflection just under the top of its type band: a nudge would need the next tower type
     const band = lim.bands.find(([k]) => k === t.type);
@@ -170,6 +180,7 @@ export function towerRows(route: Route, lim: Limits): TowerRow[] {
       runKm, runSpans, anchor, flags,
       crossing: Boolean(spanBy.get(t.no)?.crossings.length) || (i > 0 && Boolean(spanBy.get(T[i - 1].no)?.crossings.length)),
       binding,
+      aheadNote,
     });
     if (anchor) last = i;
   }
@@ -403,4 +414,12 @@ export function ruleRows(route: Route, rules: RulesResponse | undefined, fired: 
         inBand: fired?.[r.id] ?? 0, crossed, turned: t, detour, violated: v, touched: crossed > 0 || t > 0 || detour || v > 0 });
     }
   return out.sort((a, b) => Number(b.touched) - Number(a.touched) || b.inBand - a.inBand || a.name.localeCompare(b.name));
+}
+
+
+/** span notes by the tower the span leaves, for the map's span labels */
+export function spanNotesOf(rows: TowerRow[]): Map<number, string> {
+  const m = new Map<number, string>();
+  for (const r of rows) if (r.aheadNote) m.set(r.t.no, r.aheadNote);
+  return m;
 }
