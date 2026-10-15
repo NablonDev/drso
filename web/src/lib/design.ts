@@ -25,6 +25,8 @@ export interface Limits {
   maxDevDeg: number | null;
   deadEndDevDeg: number | null;
   gantryMinSpanM: number | null;
+  /** approach section at each gantry (CEA Schedule VII) */
+  approachM: number | null;
   /** tower type by deflection: [type, up to °] */
   bands: [string, number][];
   singleAngleTolDeg: number;
@@ -75,6 +77,7 @@ export function limitsOf(rules: RulesResponse | undefined, manifest: unknown, kv
     maxDevDeg: pnum(ruleParams(rules, "max_deviation"), "limit_deg"),
     deadEndDevDeg: pnum(sub, "dead_end_max_dev_deg"),
     gantryMinSpanM: pnum(sub, "gantry_min_span_m"),
+    approachM: pnum(ruleParams(rules, "approach_section"), "length_m"),
     bands,
     singleAngleTolDeg: eng.crossings?.single_angle_tolerance_deg ?? 15,
   };
@@ -309,3 +312,47 @@ export function designOf(route: Route, rules: RulesResponse | undefined, manifes
 
 export const STATUS_COLOUR: Record<Status, string> = { ok: "#1F9E8E", relaxed: "#7A5AD8", violation: "#D7263D" };
 export const STATUS_LABEL: Record<Status, string> = { ok: "Preferred", relaxed: "Relaxed", violation: "Violation" };
+
+// ---- governing constraint per stretch of the route (the ribbon under the profile, 15 Oct 2026)
+export type Govern = "crossing" | "long" | "approach" | "hilly" | "bend" | "free";
+export const GOVERN_COLOUR: Record<Govern, string> = {
+  crossing: "#1F9E8E", long: "#7A5AD8", approach: "#4C78A8", hilly: "#C08A4B", bend: "#D69A4E", free: "transparent",
+};
+export const GOVERN_LABEL: Record<Govern, string> = {
+  crossing: "crossing span", long: "long span (crossing allowance)", approach: "approach section", hilly: "hilly ground", bend: "bend for a feature", free: "no constraint binding",
+};
+
+export interface GovernSpan {
+  a: number;
+  b: number;
+  from_m: number;
+  to_m: number;
+  kind: Govern;
+  what: string;
+}
+
+/** What governs each span, highest priority first: crossing, long span, approach section, hilly, a bend
+ *  the engine made for a feature, else free. */
+export function governSpans(route: Route, lim: Limits, lengthM: number): GovernSpan[] {
+  const byNo = new Map(route.towers.map((t) => [t.no, t]));
+  const bendAt = new Map<number, string>();
+  for (const e of route.events) {
+    if (e.type !== "TURN_TO_AVOID" && e.type !== "TURN_TO_CROSS" && e.type !== "TURN_TO_KEEP_CLEAR") continue;
+    const d = (e.data ?? {}) as { tower?: number; feature?: string };
+    if (d.tower !== undefined && !bendAt.has(d.tower)) bendAt.set(d.tower, d.feature ?? "a feature");
+  }
+  const out: GovernSpan[] = [];
+  for (const s of route.spans) {
+    const a = byNo.get(s.a), b = byNo.get(s.b);
+    if (!a || !b) continue;
+    const from = a.chainage_km * 1000, to = b.chainage_km * 1000;
+    let kind: Govern = "free", what = "";
+    if (s.crossings.length) { kind = "crossing"; what = s.crossings.map((c) => c.name).join(", "); }
+    else if (lim.designSpanM !== null && s.length_m > lim.designSpanM + 0.5) { kind = "long"; what = `${s.length_m.toFixed(0)} m over the ${lim.designSpanM} m design span`; }
+    else if (lim.approachM !== null && (from < lim.approachM || to > lengthM - lim.approachM)) { kind = "approach"; what = `within ${lim.approachM / 1000} km of a gantry`; }
+    else if ([a, b].some((t) => t.reasons.includes("hilly"))) { kind = "hilly"; what = "hilly design span"; }
+    else if (bendAt.has(s.a) || bendAt.has(s.b)) { kind = "bend"; what = bendAt.get(s.a) ?? bendAt.get(s.b) ?? ""; }
+    out.push({ a: s.a, b: s.b, from_m: from, to_m: to, kind, what });
+  }
+  return out;
+}

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type maplibregl from "maplibre-gl";
 import { useRouteProfile } from "../api/hooks";
 import type { Route } from "../api/types";
+import { GOVERN_COLOUR, GOVERN_LABEL, governSpans, type Govern, type Limits } from "../lib/design";
 import { Loading } from "./ui";
 
 const W = 1100, H = 240, PAD = { l: 44, r: 12, t: 10, b: 26 };
@@ -11,10 +12,14 @@ const W = 1100, H = 240, PAD = { l: 44, r: 12, t: 10, b: 26 };
  * their attachment height (extensions included), the conductor sag per span and the clearance line.
  * Hover shows chainage / ground / nearest tower and marks the spot on the map; drag selects a window.
  */
-export default function RouteProfile({ sid, route, map, enabled }: { sid: number; route: Route; map: maplibregl.Map | null; enabled: boolean }) {
+export default function RouteProfile({ sid, route, map, enabled, limits }: { sid: number; route: Route; map: maplibregl.Map | null; enabled: boolean; limits?: Limits | null }) {
   const q = useRouteProfile(sid, route.id, enabled);
   const [win, setWin] = useState<[number, number] | null>(null);
   const [hover, setHover] = useState<number | null>(null);
+  // what governs each stretch (15 Oct 2026): a ribbon under the profile
+  const govern = useMemo(() => (limits ? governSpans(route, limits, route.stats.length_km * 1000) : []), [route, limits]);
+  const governAt = (x: number) => govern.find((g) => x >= g.from_m && x <= g.to_m) ?? null;
+  const governKinds = useMemo(() => (["crossing", "long", "approach", "hilly", "bend"] as Govern[]).filter((k) => govern.some((g) => g.kind === k)), [govern]);
   const drag = useRef<number | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const p = q.data;
@@ -140,6 +145,29 @@ export default function RouteProfile({ sid, route, map, enabled }: { sid: number
           {hover !== null ? <line className="pf-cursor" x1={v.sx(hover)} x2={v.sx(hover)} y1={PAD.t} y2={H - PAD.b} /> : null}
         </svg>
       ) : <div className="cb hint">No ground data in this window.</div>}
+      {v && govern.length ? (
+        <div className="ribbon" data-testid="govern-ribbon">
+          <svg viewBox={`0 0 ${W} 14`} className="ribbon-svg" preserveAspectRatio="none" onMouseMove={onMove} onMouseLeave={() => setHover(null)} onMouseDown={onDown} onMouseUp={onUp}>
+            <rect x={PAD.l} y={2} width={W - PAD.l - PAD.r} height={10} className="rb-base" />
+            {govern.map((g) => {
+              if (g.kind === "free" || g.to_m < v.x0 || g.from_m > v.x1) return null;
+              const x0 = v.sx(Math.max(g.from_m, v.x0)), x1 = v.sx(Math.min(g.to_m, v.x1));
+              return <rect key={`${g.a}-${g.b}`} x={x0} y={2} width={Math.max(1, x1 - x0)} height={10} fill={GOVERN_COLOUR[g.kind]} />;
+            })}
+          </svg>
+          <div className="ribbon-key">
+            {hover !== null && governAt(hover) ? (
+              <span><b>{GOVERN_LABEL[governAt(hover)!.kind]}</b>{governAt(hover)!.what ? ` · ${governAt(hover)!.what}` : ""} · span {governAt(hover)!.a}→{governAt(hover)!.b}</span>
+            ) : (
+              <>
+                <span className="hint" style={{ margin: 0 }}>Governing:</span>
+                {governKinds.map((k) => <span key={k}><i style={{ background: GOVERN_COLOUR[k] }} />{GOVERN_LABEL[k]}</span>)}
+                <span><i style={{ background: "var(--rule)" }} />free</span>
+              </>
+            )}
+          </div>
+        </div>
+      ) : null}
       <div className="profile-foot mono">
         {hover !== null && nearTower ? (
           <>km {(hover / 1000).toFixed(2)} · ground {groundAt(hover) ?? "—"} m · nearest tower #{nearTower.no} {nearTower.type}{nearTower.extension_m ? ` +${nearTower.extension_m} m` : ""} at km {(nearTower.chainage_m / 1000).toFixed(2)}</>

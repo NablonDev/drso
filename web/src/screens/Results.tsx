@@ -402,7 +402,7 @@ function Body({ s }: { s: Solve }) {
           {feasible && sel ? <BendLayer map={map} runId={run.id} sid={s.id} route={sel} rules={rulesQ.data} visible={t.bends && !hidden.includes(sel.id)} /> : null}
           <ScaleBar map={map} />
           <CeilingNote ceiling={ceiling} />
-          {feasible && sel ? <RouteProfile sid={s.id} route={sel} map={map} enabled={!maxed} /> : null}
+          {feasible && sel ? <RouteProfile sid={s.id} route={sel} map={map} enabled={!maxed} limits={design?.limits} /> : null}
           {tiles.error && wantTiles ? (
             <div className="note n-stop" style={{ marginTop: 8 }} role="alert" data-testid="tile-error">
               <div style={{ flex: 1 }}>
