@@ -8,6 +8,7 @@ import type { RunDetail, Solve } from "../api/types";
 import CopyDialog from "../components/CopyDialog";
 import TowerLayer from "../components/map/TowerLayer";
 import CrossingLayer from "../components/map/CrossingLayer";
+import BendLayer, { BEND_COLOUR } from "../components/map/BendLayer";
 import DesignCheck from "../components/DesignCheck";
 import { designOf, STATUS_COLOUR } from "../lib/design";
 import {
@@ -37,7 +38,7 @@ import { useUi } from "../store/ui";
 import { useSelectedRoute } from "../store/selection";
 import { useStartSolve } from "./Solve";
 
-type Toggles = { towers: boolean; angles: boolean; spans: boolean; crossings: boolean; beeline: boolean; lowconf: boolean; prev: boolean; hills: boolean };
+type Toggles = { towers: boolean; angles: boolean; spans: boolean; crossings: boolean; bends: boolean; beeline: boolean; lowconf: boolean; prev: boolean; hills: boolean };
 
 export default function Results() {
   const run = useRunCtx();
@@ -69,7 +70,7 @@ function Body({ s }: { s: Solve }) {
   const loadTowers = useTowers((x) => x.load);
   const focus = useUi((x) => x.focus);
   const setFocus = useUi((x) => x.setFocus);
-  const [t, setT] = useState<Toggles>({ towers: true, angles: true, spans: false, crossings: true, beeline: false, lowconf: false, prev: false, hills: false });
+  const [t, setT] = useState<Toggles>({ towers: true, angles: true, spans: false, crossings: true, bends: true, beeline: false, lowconf: false, prev: false, hills: false });
   // every run layer can be shown under the routes (6 Oct 2026); starts as on Review the layers
   const [on, setOn] = useState<Record<string, boolean>>(() => Object.fromEntries(LAYER_ORDER.map((k) => [k, DEFAULT_ON.has(k)])));
   const [widen, setWiden] = useState(false);
@@ -367,6 +368,8 @@ function Body({ s }: { s: Solve }) {
               title="Span length at the midpoint of every span (from z14.5)">Spans</button>
             <button aria-pressed={t.crossings} onClick={() => tog("crossings")} disabled={!feasible} data-testid="toggle-crossings"
               title="Where the route crosses a feature, coloured by how the crossing stands against its rule; click one for the metrics">Crossings</button>
+            <button aria-pressed={t.bends} onClick={() => tog("bends")} disabled={!feasible} data-testid="toggle-bends"
+              title="A tie from each bend to the feature it reacts to, with the distance and the rule's setback (from z13)">Why bends</button>
             <button aria-pressed={t.beeline} onClick={() => tog("beeline")}>Bee-line</button>
             <button aria-pressed={t.lowconf} onClick={() => tog("lowconf")}>Low-confidence</button>
             <button aria-pressed={t.hills} onClick={() => tog("hills")} disabled={!hillFC}
@@ -396,6 +399,7 @@ function Body({ s }: { s: Solve }) {
           </div>
           {(t.towers || moveMode) && feasible && !hidden.includes(sel.id) ? <TowerLayer map={map} routes={[sel.id]} editable={moveMode} angles={t.angles} spans={t.spans} /> : null}
           {feasible && design ? <CrossingLayer map={map} rows={design.crossings} visible={t.crossings && !hidden.includes(sel.id)} /> : null}
+          {feasible && sel ? <BendLayer map={map} runId={run.id} sid={s.id} route={sel} rules={rulesQ.data} visible={t.bends && !hidden.includes(sel.id)} /> : null}
           <ScaleBar map={map} />
           <CeilingNote ceiling={ceiling} />
           {feasible && sel ? <RouteProfile sid={s.id} route={sel} map={map} enabled={!maxed} /> : null}
@@ -415,6 +419,13 @@ function Body({ s }: { s: Solve }) {
             {hwM > 0 ? <div><i style={{ background: routeColour(sel?.id ?? 1), opacity: 0.4, height: 8 }} />Right of way ±{num(hwM, 1)} m</div> : null}
             <div><i style={{ background: "#D69A4E", borderRadius: "50%", width: 8, height: 8 }} />Angle tower</div>
             <div><i style={{ background: "#fff", border: "1px solid #14202A", borderRadius: "50%", width: 8, height: 8 }} />Suspension tower</div>
+            {t.bends ? (
+              <div>
+                <i style={{ background: BEND_COLOUR.avoid }} />
+                <i style={{ background: BEND_COLOUR.cross, marginLeft: -2 }} />
+                <i style={{ background: BEND_COLOUR.clear, marginLeft: -2 }} />Bend: avoids / crosses / keeps clear
+              </div>
+            ) : null}
             {t.crossings ? (
               <div>
                 <i style={{ background: STATUS_COLOUR.ok, borderRadius: "50%", width: 8, height: 8 }} />

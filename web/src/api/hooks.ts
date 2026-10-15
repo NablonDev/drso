@@ -6,7 +6,7 @@ import {
   type UseMutationOptions,
 } from "@tanstack/react-query";
 import { ApiError, api, errorText } from "./client";
-import type { DemCoverage, RouteProfile, ImageryCatalog, ModelStatus,
+import type { DemCoverage, RouteProfile, ImageryCatalog, ModelStatus, NearestPoint, NearestResult,
   AppConfig,
   BandInfo,
   CompareResponse,
@@ -136,6 +136,16 @@ export function useDemCoverage(runId: string | undefined) {
     queryKey: ["dem-coverage", runId],
     queryFn: () => api<DemCoverage>(`/api/runs/${encodeURIComponent(runId!)}/dem`),
     enabled: Boolean(runId),
+    staleTime: Infinity,
+  });
+}
+
+/** Closest feature of a run layer to each point (one request per route; cached for the session). */
+export function useNearest(runId: string | undefined, key: string, points: NearestPoint[] | null, enabled = true) {
+  return useQuery({
+    queryKey: ["nearest", runId ?? "", key] as const,
+    queryFn: () => api<{ results: (NearestResult | null)[] }>(`/api/runs/${encodeURIComponent(runId!)}/nearest`, { method: "POST", json: { points } }),
+    enabled: enabled && Boolean(runId) && Boolean(points && points.length),
     staleTime: Infinity,
   });
 }

@@ -591,6 +591,22 @@ export interface Manifest {
   [k: string]: unknown;
 }
 
+export interface NearestPoint {
+  layer: string;
+  lon: number;
+  lat: number;
+  within_m?: number;
+}
+
+export interface NearestResult {
+  id: number;
+  name: string | null;
+  class: string | null;
+  lon: number;
+  lat: number;
+  distance_m: number;
+}
+
 export interface DemCoverage {
   needed: string[];
   present: string[];

@@ -985,6 +985,43 @@ def feature(run_id: str, fid: int):
     return {k: (v.isoformat() if hasattr(v, "isoformat") else v) for k, v in f.items()}
 
 
+class NearestPoint(BaseModel):
+    layer: str
+    lon: float
+    lat: float
+    within_m: float = 3000
+
+
+class NearestRequest(BaseModel):
+    points: list[NearestPoint]
+
+
+@app.post("/api/runs/{run_id}/nearest")
+def nearest(run_id: str, body: NearestRequest):
+    """For each point, the closest feature of that run layer within within_m: the feature, the closest
+    point on it and the distance. The route map ties each bend to the feature it reacts to (15 Oct 2026).
+    Null where nothing is within reach."""
+    _run(run_id)
+    out = []
+    with db.conn() as c:
+        for q in body.points[:400]:
+            # the point inlined as a constant so the GiST index serves both the box filter and the KNN order
+            deg = q.within_m / 111320.0 * 1.2
+            pt = "ST_SetSRID(ST_MakePoint(%s, %s), 4326)"
+            r = c.execute(f"""
+              select f.id, f.name, f.class, ST_X(ST_ClosestPoint(f.geom, {pt})) as lon, ST_Y(ST_ClosestPoint(f.geom, {pt})) as lat,
+                     ST_Distance(f.geom::geography, {pt}::geography) as distance_m
+              from features f join run_layers rl on rl.layer_version_id = f.layer_version_id
+              where rl.run_id = %s and rl.layer_key = %s and f.geom && ST_Expand({pt}, %s)
+              order by f.geom <-> {pt} limit 1""",
+                          (q.lon, q.lat, q.lon, q.lat, q.lon, q.lat, run_id, q.layer, q.lon, q.lat, deg, q.lon, q.lat)).fetchone()
+            if r and float(r["distance_m"]) > q.within_m:
+                r = None
+            out.append(None if not r else {"id": r["id"], "name": r["name"], "class": r["class"], "lon": r["lon"], "lat": r["lat"],
+                                           "distance_m": round(float(r["distance_m"]), 1)})
+    return {"results": out}
+
+
 _MVT_NATIVE: bool | None = None   # PostGIS built with protobuf-c? decided on first tile
 # Left out of tiles below z12: too many small features to see or to encode at overview scale (a z9
 # tile of a ±25 km band held 79k village-road segments: 50 s, 2.8 MB). The map style hides them

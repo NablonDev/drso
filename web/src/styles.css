@@ -445,6 +445,9 @@ textarea{width:100%;padding:8px 10px;border:1px solid var(--rule);border-radius:
 .maplabels span.x{transform:translate(-50%,60%);background:rgba(31,158,142,.92)}
 .maplabels span.x.rel{background:rgba(122,90,216,.92)}
 .maplabels span.x.bad{background:rgba(215,38,61,.92)}
+.maplabels span.bend{transform:translate(-50%,-50%);font-weight:400;font-size:9.5px;background:rgba(224,90,78,.9)}
+.maplabels span.bend.cross{background:rgba(31,158,142,.9)}
+.maplabels span.bend.clear{background:rgba(214,154,78,.92);color:#1b1b1b}
 .maplabels span.arc{transform:translate(-50%,-50%);background:rgba(156,92,20,.92);font-size:10.5px}
 .maparcs{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:3;overflow:visible}
 .maparcs path{fill:none;stroke-linecap:round}
