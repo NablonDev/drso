@@ -1,6 +1,7 @@
 """Beeline route planner — HTTP API (FastAPI). Serves the React build too when present."""
 from __future__ import annotations
 
+import json
 import logging
 import re
 import shutil
@@ -506,7 +507,7 @@ def _display_rules(r: dict) -> dict:
                 params.append({"key": p["key"], "label": p["label"], "type": p["type"], "unit": p.get("unit"),
                                "options": p.get("options"), "default": d, "value": v, "changed": v != d,
                                "best_guess": bool(p.get("best_guess"))})
-            items.append({"id": rule["id"], "name": rule["name"], "note": rule.get("note"), "layer": rule.get("layer"),
+            items.append({"id": rule["id"], "name": rule["name"], "note": rule.get("note"), "layer": rule.get("layer"), "classes": rule.get("classes"),
                           "params": params, "enabled": o.get("enabled", True), "reason": o.get("reason"),
                           "rev": o.get("rev"), "n_changed": sum(1 for p in params if p["changed"])})
         groups.append({"key": g["key"], "title": g["title"], "desc": g["desc"], "statutory": bool(g.get("statutory")),
@@ -1020,6 +1021,51 @@ def nearest(run_id: str, body: NearestRequest):
             out.append(None if not r else {"id": r["id"], "name": r["name"], "class": r["class"], "lon": r["lon"], "lat": r["lat"],
                                            "distance_m": round(float(r["distance_m"]), 1)})
     return {"results": out}
+
+
+class BufferItem(BaseModel):
+    kind: str
+    layer: str
+    buffer_m: float
+    classes: list[str] | None = None
+    ids: list[int] | None = None
+    near_m: float = 1000
+    limit: int = 400
+
+
+class BuffersRequest(BaseModel):
+    route: list[list[float]]
+    items: list[BufferItem]
+
+
+@app.post("/api/runs/{run_id}/buffers")
+def buffers(run_id: str, body: BuffersRequest):
+    """Features of a run layer near the route, each buffered by buffer_m (0 = the feature itself), as GeoJSON:
+    the setback a bend kept outside, the parallel-run band along a road or canal, a no-crossing zone
+    (15 Oct 2026). One item per rule; features within near_m of the route line, at most `limit` each."""
+    _run(run_id)
+    if len(body.route) < 2:
+        raise HTTPException(400, "route needs at least two points")
+    line = json.dumps({"type": "LineString", "coordinates": [[float(x), float(y)] for x, y in body.route]})
+    feats = []
+    with db.conn() as c:
+        for it in body.items[:30]:
+            rows = c.execute("""
+              with r as (select ST_SetSRID(ST_GeomFromGeoJSON(%s), 4326) as g)
+              select f.id, f.name, f.class,
+                     ST_AsGeoJSON(ST_SimplifyPreserveTopology(
+                       case when %s > 0 then ST_Buffer(f.geom::geography, %s)::geometry else f.geom end, 0.00003), 6)::json as geom
+              from features f join run_layers rl on rl.layer_version_id = f.layer_version_id, r
+              where rl.run_id = %s and rl.layer_key = %s
+                and (%s::text[] is null or f.class = any(%s::text[]))
+                and (%s::bigint[] is null or f.id = any(%s::bigint[]))
+                and f.geom && ST_Expand(r.g, %s) and ST_DWithin(f.geom::geography, r.g::geography, %s)
+              limit %s""", (line, it.buffer_m, it.buffer_m, run_id, it.layer, it.classes, it.classes, it.ids, it.ids,
+                            it.near_m / 111320.0 * 1.2, it.near_m, max(1, min(it.limit, 1000)))).fetchall()
+            for r in rows:
+                feats.append({"type": "Feature", "geometry": r["geom"],
+                              "properties": {"kind": it.kind, "layer": it.layer, "id": r["id"], "name": r["name"], "class": r["class"], "buffer_m": it.buffer_m}})
+    return {"type": "FeatureCollection", "features": feats}
 
 
 _MVT_NATIVE: bool | None = None   # PostGIS built with protobuf-c? decided on first tile
