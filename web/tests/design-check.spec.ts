@@ -22,6 +22,11 @@ test("design check lists crossings, towers and sections against the limits", asy
   await page.getByRole("button", { name: "Angle towers" }).click();
   await expect(trows.nth(1)).toContainText("°");
 
+  await page.getByTestId("dc-tab-rules").click();
+  const rrows = page.getByTestId("dc-rules").locator("tbody tr");
+  expect(await rrows.count()).toBeGreaterThan(0);
+  await expect(page.getByTestId("dc-rules")).toContainText("Crossing");
+
   await page.getByTestId("dc-tab-sections").click();
   const srows = page.getByTestId("dc-sections").locator("tbody tr");
   expect(await srows.count()).toBeGreaterThan(0);
