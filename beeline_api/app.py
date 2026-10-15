@@ -1295,4 +1295,6 @@ if DIST.exists():
         f = DIST / path
         if path and f.is_file():
             return FileResponse(f)
-        return FileResponse(DIST / "index.html")
+        # the shell must be revalidated on every load, or a browser keeps an old bundle after a rebuild
+        # (hashed assets under /assets stay cacheable)
+        return FileResponse(DIST / "index.html", headers={"Cache-Control": "no-cache"})
