@@ -442,9 +442,15 @@ textarea{width:100%;padding:8px 10px;border:1px solid var(--rule);border-radius:
 .maplabels span.ang{background:#9C5C14}
 .maplabels span.g{background:#14202A}
 .maplabels span.sp{transform:translate(-50%,35%);background:rgba(255,255,255,.86);color:var(--ink-2);font-weight:400;font-size:9.5px;padding:0 3px}
-.maplabels span.x{transform:translate(-50%,60%);background:rgba(59,115,80,.9)}
-.maplabels span.x.rel{background:rgba(158,104,17,.92)}
-.maplabels span.x.bad{background:rgba(163,58,49,.92)}
+.maplabels span.x{transform:translate(-50%,60%);background:rgba(31,158,142,.92)}
+.maplabels span.x.rel{background:rgba(122,90,216,.92)}
+.maplabels span.x.bad{background:rgba(215,38,61,.92)}
+.maplabels span.arc{transform:translate(-50%,-50%);background:rgba(156,92,20,.92);font-size:10.5px}
+.maparcs{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:3;overflow:visible}
+.maparcs path{fill:none;stroke-linecap:round}
+.maparcs .case{stroke:rgba(20,32,42,.7);stroke-width:3.2}
+.maparcs .arc{stroke:#FFD166;stroke-width:1.6}
+.maparcs .ext{stroke:#FFD166;stroke-width:1.4;stroke-dasharray:4 3}
 /* design check (15 Oct 2026) */
 .dc .chips{display:flex;flex-wrap:wrap;gap:6px;padding:9px 15px;border-bottom:1px solid var(--rule-2)}
 .dc .chip{font-size:11.5px;padding:2px 9px;border:1px solid var(--rule);border-radius:999px;color:var(--ink-2);white-space:nowrap}

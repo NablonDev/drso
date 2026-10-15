@@ -10,7 +10,9 @@ import { num } from "../../lib/format";
 const SRC = "towers";
 const CIRCLE = "towers-circle";
 const LABEL_MIN_ZOOM = 13.5;
-const ANGLE_MIN_ZOOM = 14;      // deflection on the angle-tower labels (15 Oct 2026)
+const ANGLE_MIN_ZOOM = 14;      // deflection arcs at the angle towers (15 Oct 2026)
+const ARC_PX = 30;              // arc radius on screen, shrunk on short spans
+const ARC_MIN_PX = 11;          // below this the arc is unreadable: the angle goes on the tower label instead
 const SPAN_MIN_ZOOM = 14.5;     // span length at the midpoint of each span
 const MAX_LABELS = 220;
 
@@ -69,6 +71,9 @@ export default function TowerLayer({
   const [popup, setPopup] = useState<{ t: StoredTower; el: HTMLDivElement } | null>(null);
   const popupRef = useRef<maplibregl.Popup | null>(null);
   const [labels, setLabels] = useState<{ fid: string; x: number; y: number; text: string; cls: string }[]>([]);
+  // deflection arcs in screen space (SVG over the map): extension of the incoming line, the arc to the
+  // outgoing span, the angle at the arc's bisector
+  const [arcs, setArcs] = useState<{ fid: string; ext: string; arc: string }[]>([]);
 
   // source + layers, once per map
   useEffect(() => {
@@ -205,6 +210,7 @@ export default function TowerLayer({
       raf = 0;
       if (map.getZoom() < LABEL_MIN_ZOOM || !towers.length) {
         setLabels((l) => (l.length ? [] : l));
+        setArcs((l) => (l.length ? [] : l));
         return;
       }
       const b = map.getBounds();
@@ -212,14 +218,24 @@ export default function TowerLayer({
       const withAngle = angles && z >= ANGLE_MIN_ZOOM;
       const withSpan = spans && z >= SPAN_MIN_ZOOM;
       const out: { fid: string; x: number; y: number; text: string; cls: string }[] = [];
+      const arcOut: { fid: string; ext: string; arc: string }[] = [];
       for (let i = 0; i < towers.length; i++) {
         const t = towers[i];
         const inView = b.contains([t.lon, t.lat]);
         if (inView) {
           const p = map.project([t.lon, t.lat]);
-          const ang = withAngle && t.type !== "G" && (t.angle_point || t.deflection_deg >= 2)
-            ? ` · ${t.deflection_deg.toFixed(t.deflection_deg < 10 ? 1 : 0)}°${t.turn && t.turn !== "-" ? ` ${t.turn}` : ""}`
-            : "";
+          const degTxt = `${t.deflection_deg.toFixed(t.deflection_deg < 10 ? 1 : 0)}°${t.turn && t.turn !== "-" ? ` ${t.turn}` : ""}`;
+          let ang = "";
+          if (withAngle && t.type !== "G" && (t.angle_point || t.deflection_deg >= 2)) {
+            const prev = towers[i - 1], next = towers[i + 1];
+            const arc = prev && next && prev.route === t.route && next.route === t.route && prev.no === t.no - 1 && next.no === t.no + 1
+              ? arcAt(p, map.project([prev.lon, prev.lat]), map.project([next.lon, next.lat]))
+              : null;
+            if (arc) {
+              arcOut.push({ fid: t.fid, ext: arc.ext, arc: arc.arc });
+              out.push({ fid: `${t.fid}-arc`, x: arc.lx, y: arc.ly, text: degTxt, cls: "arc" });
+            } else ang = ` · ${degTxt}`;
+          }
           out.push({
             fid: t.fid,
             x: p.x,
@@ -240,6 +256,7 @@ export default function TowerLayer({
         if (out.length >= MAX_LABELS) break;
       }
       setLabels(out);
+      setArcs(arcOut);
     };
     const schedule = () => {
       if (!raf) raf = requestAnimationFrame(compute);
@@ -261,6 +278,21 @@ export default function TowerLayer({
   const container = map?.getContainer();
   return (
     <>
+      {container && arcs.length
+        ? createPortal(
+            <svg className="maparcs" aria-hidden>
+              {arcs.map((a) => (
+                <g key={a.fid}>
+                  <path className="case" d={a.ext} />
+                  <path className="case" d={a.arc} />
+                  <path className="ext" d={a.ext} />
+                  <path className="arc" d={a.arc} />
+                </g>
+              ))}
+            </svg>,
+            container,
+          )
+        : null}
       {container && labels.length
         ? createPortal(
             <div className="maplabels" aria-hidden>
@@ -276,4 +308,28 @@ export default function TowerLayer({
       {popup ? createPortal(<TowerPopup t={popup.t} />, popup.el) : null}
     </>
   );
+}
+
+/**
+ * The deflection at a tower drawn in screen space: the incoming span's line carried on past the tower
+ * (dashed) and an arc from that line round to the outgoing span, the angle label on the arc's bisector.
+ * Returns null when the spans are too short on screen for the arc to read.
+ */
+function arcAt(p: { x: number; y: number }, pIn: { x: number; y: number }, pOut: { x: number; y: number }) {
+  const dIn = { x: p.x - pIn.x, y: p.y - pIn.y }, dOut = { x: pOut.x - p.x, y: pOut.y - p.y };
+  const lIn = Math.hypot(dIn.x, dIn.y), lOut = Math.hypot(dOut.x, dOut.y);
+  if (lIn < 1 || lOut < 1) return null;
+  const r = Math.min(ARC_PX, 0.4 * Math.min(lIn, lOut));
+  if (r < ARC_MIN_PX) return null;
+  const uIn = { x: dIn.x / lIn, y: dIn.y / lIn }, uOut = { x: dOut.x / lOut, y: dOut.y / lOut };
+  const a0 = { x: p.x + uIn.x * r, y: p.y + uIn.y * r };
+  const a1 = { x: p.x + uOut.x * r, y: p.y + uOut.y * r };
+  const cross = uIn.x * uOut.y - uIn.y * uOut.x;        // screen y points down: >0 = clockwise on screen
+  const sweep = cross > 0 ? 1 : 0;
+  const ext = `M${p.x.toFixed(1)},${p.y.toFixed(1)} L${(p.x + uIn.x * r * 1.6).toFixed(1)},${(p.y + uIn.y * r * 1.6).toFixed(1)}`;
+  const arc = `M${a0.x.toFixed(1)},${a0.y.toFixed(1)} A${r.toFixed(1)},${r.toFixed(1)} 0 0 ${sweep} ${a1.x.toFixed(1)},${a1.y.toFixed(1)}`;
+  let bx = uIn.x + uOut.x, by = uIn.y + uOut.y;
+  const bl = Math.hypot(bx, by) || 1;
+  bx /= bl; by /= bl;
+  return { ext, arc, lx: p.x + bx * (r + 16), ly: p.y + by * (r + 16) };
 }

@@ -284,5 +284,5 @@ export function designOf(route: Route, rules: RulesResponse | undefined, manifes
   return { limits, towers: towerRows(route, limits), sections: sectionRows(route, limits), crossings: crossingRows(route, rules, limits) };
 }
 
-export const STATUS_COLOUR: Record<Status, string> = { ok: "#3B7350", relaxed: "#9E6811", violation: "#A33A31" };
+export const STATUS_COLOUR: Record<Status, string> = { ok: "#1F9E8E", relaxed: "#7A5AD8", violation: "#D7263D" };
 export const STATUS_LABEL: Record<Status, string> = { ok: "Preferred", relaxed: "Relaxed", violation: "Violation" };
