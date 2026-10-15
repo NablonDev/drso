@@ -68,6 +68,7 @@ function Body({ s }: { s: Solve }) {
   const cmp = useCompare(run.id, run.latest_solve_id, Boolean(run.parent_id)).data;
   const [selId, select] = useSelectedRoute(run, s);
   const loadTowers = useTowers((x) => x.load);
+  const pendingMoves = useTowers((x) => (selId ? (x.byRoute[selId] ?? []).filter((t) => t.moved).length : 0));
   const focus = useUi((x) => x.focus);
   const setFocus = useUi((x) => x.setFocus);
   const [t, setT] = useState<Toggles>({ towers: true, angles: false, spans: false, crossings: true, bends: false, beeline: false, lowconf: false, prev: false, hills: false });
@@ -535,7 +536,7 @@ function Body({ s }: { s: Solve }) {
             <Kpi k="Forest" v={num(sel.stats.forest_ha, 1)} unit="ha" />
             <Kpi k="Cost" v={crore(sel.cost.total, { unit: false, digits: 1 })} unit="₹Cr" />
           </div>
-          {design ? <DesignCheck route={sel} d={design} onFly={flyTo} rules={rulesQ.data} fired={(s.result as { rules_fired?: Record<string, number> }).rules_fired} sources={s.manifest.sources} statutory={statutory} /> : null}
+          {design ? <DesignCheck route={sel} d={design} onFly={flyTo} rules={rulesQ.data} fired={(s.result as { rules_fired?: Record<string, number> }).rules_fired} sources={s.manifest.sources} statutory={statutory} pendingMoves={pendingMoves} /> : null}
           <CompareTable s={s} selId={sel.id} select={select} />
           <RevisionCard run={run} cmp={cmp} selId={sel.id} prevOn={t.prev} togglePrev={() => tog("prev")} />
           <div className="actions">

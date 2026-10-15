@@ -18,6 +18,8 @@ export default function DesignCheck({ route, d, onFly, rules, fired, sources, st
   sources?: { layer: string; features: number }[];
   /** statutory notes by tower number (airport NOC, pipeline footing, building setback) */
   statutory?: Map<number, string[]>;
+  /** towers dragged on the map but not yet applied: the figures below are from the saved solve */
+  pendingMoves?: number;
 }) {
   const [tab, setTab] = useState<Tab>("crossings");
   const [filter, setFilter] = useState<Filter>("all");
@@ -61,6 +63,11 @@ export default function DesignCheck({ route, d, onFly, rules, fired, sources, st
           ))}
         </div>
       </div>
+      {pendingMoves ? (
+        <div className="chips" data-testid="dc-pending" style={{ background: "var(--cross-soft)", color: "var(--cross)" }}>
+          <b>{pendingMoves} tower{pendingMoves > 1 ? "s" : ""} moved on the map, not applied.</b> Everything below is from the saved solve; apply the moves and the check recomputes from the new version.
+        </div>
+      ) : null}
       <div className="chips" data-testid="dc-limits">
         <span className="chip">Design span <b>{L.designSpanM ?? "—"} m</b></span>
         <span className="chip">Min span <b>{L.minSpanM ?? "—"} m</b></span>
