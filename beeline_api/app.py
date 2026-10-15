@@ -1068,6 +1068,35 @@ def buffers(run_id: str, body: BuffersRequest):
     return {"type": "FeatureCollection", "features": feats}
 
 
+class WithinRequest(BaseModel):
+    layer: str
+    radius_m: float
+    points: list[Pt]
+    classes: list[str] | None = None
+
+
+@app.post("/api/runs/{run_id}/within")
+def within(run_id: str, body: WithinRequest):
+    """Which of the points lie within radius_m of a feature of that run layer (optionally of the given
+    classes): one hit per point-feature pair. Set-based on the geography index, so a whole route's towers
+    against the airport NOC radius takes well under a second (15 Oct 2026)."""
+    _run(run_id)
+    if not body.points:
+        return {"hits": []}
+    with db.conn() as c:
+        rows = c.execute("""
+          with p as (select ord, ST_SetSRID(ST_MakePoint(lon, lat), 4326) as g
+                     from unnest(%s::float[], %s::float[]) with ordinality as u(lon, lat, ord)),
+               f as (select f.id, f.name, f.class, f.geom from features f
+                     join run_layers rl on rl.layer_version_id = f.layer_version_id
+                     where rl.run_id = %s and rl.layer_key = %s and (%s::text[] is null or f.class = any(%s::text[])))
+          select p.ord - 1 as i, f.id, f.name, f.class
+          from p join f on ST_DWithin(p.g::geography, f.geom::geography, %s)
+          order by p.ord""", ([q.lon for q in body.points], [q.lat for q in body.points], run_id, body.layer,
+                              body.classes, body.classes, body.radius_m)).fetchall()
+    return {"hits": [{"i": r["i"], "id": r["id"], "name": r["name"], "class": r["class"]} for r in rows]}
+
+
 _MVT_NATIVE: bool | None = None   # PostGIS built with protobuf-c? decided on first tile
 # Left out of tiles below z12: too many small features to see or to encode at overview scale (a z9
 # tile of a ±25 km band held 79k village-road segments: 50 s, 2.8 MB). The map style hides them
