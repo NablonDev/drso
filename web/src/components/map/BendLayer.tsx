@@ -132,8 +132,11 @@ export default function BendLayer({ map, runId, sid, route, rules, visible }: {
         const mid: [number, number] = [(bend.tower.lon + n!.lon) / 2, (bend.tower.lat + n!.lat) / 2];
         if (!b.contains(mid) && !b.contains([bend.tower.lon, bend.tower.lat])) continue;
         const p = map.project(mid);
+        // measured: tower to the nearest point of the feature; solver: the clearance the engine logged for the
+        // turn (from the conductor, after the setback), shown when it differs from the measured distance
         const sb = bend.setback !== null ? ` (≥ ${bend.setback} m)` : "";
-        out.push({ key: bend.key, x: p.x, y: p.y, text: `${n!.distance_m.toFixed(0)} m · ${bend.feature}${sb}`, cls: `bend ${bend.kind}` });
+        const solver = bend.clearance > 0 && Math.abs(bend.clearance - n!.distance_m) > 2 ? ` · solver ${bend.clearance.toFixed(0)} m` : "";
+        out.push({ key: bend.key, x: p.x, y: p.y, text: `${n!.distance_m.toFixed(0)} m · ${bend.feature}${sb}${solver}`, cls: `bend ${bend.kind}` });
         if (out.length >= MAX_LABELS) break;
       }
       setLabels(out);
