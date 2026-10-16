@@ -511,11 +511,21 @@ export interface RouteStats {
   approval_items?: { item: string; months: number }[];
 }
 
+// route found ≠ checks passed (16 Oct 2026): the final towers and spans against the rules
+export interface RouteChecks {
+  status: "checks_passed" | "approval_needed" | "checks_failed";
+  towers_failing: number;
+  failing_towers: number[];
+  violations: number;
+  approvals: number;
+}
+
 export interface Route {
   id: number;
   key: string;
   name: string;
   feasible: boolean;
+  checks?: RouteChecks;
   geometry: LonLat[];
   towers: Tower[];
   spans: Span[];

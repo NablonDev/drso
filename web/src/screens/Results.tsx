@@ -4,7 +4,7 @@ import maplibregl from "maplibre-gl";
 import type { GeoJSONSource } from "maplibre-gl";
 import { useRunCtx } from "../App";
 import { useCompare, useLayers, useRules, useSolve, useWithin } from "../api/hooks";
-import type { RunDetail, Solve } from "../api/types";
+import type { Route, RouteChecks, RunDetail, Solve } from "../api/types";
 import CopyDialog from "../components/CopyDialog";
 import TowerLayer from "../components/map/TowerLayer";
 import CrossingLayer from "../components/map/CrossingLayer";
@@ -501,6 +501,7 @@ function Body({ s }: { s: Solve }) {
                             {num(r.stats.length_km, 1)} km · {int(r.stats.towers)} towers · {num(r.stats.forest_ha, 1)} ha forest
                             {r.stats.approval_months ? ` · approvals ~${r.stats.approval_months} months` : ""}
                           </span>
+                          <CheckStatus r={r} />
                         </span>
                         <span className="cost">{crore(r.cost.total, { unit: false, digits: 1 })}<span>₹ Cr</span></span>
                       </button>
@@ -856,4 +857,35 @@ function RouteLayers({ layers, on, setOn }: {
 
 function esc(t: string): string {
   return t.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] ?? c);
+}
+
+// Route found is not checks passed (16 Oct 2026): solves before then carry no `checks`, so derive it from the towers
+function checksOf(r: Route): RouteChecks {
+  if (r.checks) return r.checks;
+  const failing = r.towers.filter((t) => t.violations.length > 0).map((t) => t.no);
+  const approvals = r.stats.approval_items?.length ?? 0;
+  return {
+    status: failing.length ? "checks_failed" : approvals ? "approval_needed" : "checks_passed",
+    towers_failing: failing.length,
+    failing_towers: failing.slice(0, 50),
+    violations: r.towers.reduce((n, t) => n + t.violations.length, 0),
+    approvals,
+  };
+}
+
+function CheckStatus({ r }: { r: Route }) {
+  const c = checksOf(r);
+  const [colour, text] =
+    c.status === "checks_failed"
+      ? [STATUS_COLOUR.violation, `Checks failed: ${c.towers_failing} tower${c.towers_failing === 1 ? "" : "s"} break a rule`]
+      : c.status === "approval_needed"
+        ? [STATUS_COLOUR.relaxed, `Checks passed; ${c.approvals} approval${c.approvals === 1 ? "" : "s"} needed`]
+        : [STATUS_COLOUR.ok, "All checks passed"];
+  return (
+    <span className="sub" data-testid={`checks-${r.id}`} data-status={c.status}
+      title={c.failing_towers.length ? `Towers ${c.failing_towers.join(", ")}` : undefined}>
+      <i style={{ display: "inline-block", width: 7, height: 7, borderRadius: "50%", background: colour, marginRight: 5 }} />
+      {text}
+    </span>
+  );
 }
