@@ -359,10 +359,8 @@ def test_power_line_crossing_window_and_tower_types():
             assert any(x["angle_deg"] < 60 for _, x in cr), (kv, [x["angle_deg"] for _, x in cr])
         for i, _ in cr:
             pair = (types[i], types[i + 1])
-            if kv >= 400:
+            if kv > 66:                     # Vivek, 16 Oct 2026: D both sides above 66 kV (was >= 400 kV)
                 assert all(t in ("D45", "D60") for t in pair), (kv, pair)
-            elif kv >= 132:
-                assert all(t != "A" for t in pair), (kv, pair)
 
 
 def test_band_fully_blocked_is_reported():
@@ -937,8 +935,8 @@ def test_marsh_allows_towers_on_piles():
 
 
 def test_canal_buffers_start_at_its_edge():
-    """Vivek, 10 Oct 2026: canal lines are centrelines of a ~30 m wide canal; the 30 m tower and
-    parallel-conductor buffers start 15 m out, i.e. 45 m from the centreline."""
+    """Vivek, 10 Oct 2026: canal lines are centrelines of a ~30 m wide canal; the 30 m tower buffer starts
+    15 m out, i.e. 45 m from the centreline. 16 Oct 2026: no parallel-conductor buffer any more."""
     f = frame()
     spec = LineSpec(765, "dc")
     rules, costs = resolve_rules(spec), resolve_costs(spec)
@@ -948,11 +946,7 @@ def test_canal_buffers_start_at_its_edge():
     tower = [vr for vr in comp.tower_nogo if vr.rule_id == "canal"]
     assert tower and abs(tower[0].d - 45.0) < 1e-6, [vr.d for vr in tower]
     assert any(vr.hits(Point(c + 40, 0)) for vr in tower) and not any(vr.hits(Point(c + 50, 0)) for vr in tower)
-    par = [pr for pr in comp.parallels if pr.rule_id == "canal"]
-    col, row = f.frame_to_pixel(c + 40, 0)
-    assert par and np.isfinite(par[0].angle[int(row), int(col)])         # within 45 m: parallel check applies
-    col, row = f.frame_to_pixel(c + 70, 0)
-    assert not np.isfinite(par[0].angle[int(row), int(col)])
+    assert not [pr for pr in comp.parallels if pr.rule_id == "canal"]
 
 
 def test_crossing_span_slack_is_removed_by_spotting():
@@ -1240,3 +1234,122 @@ def test_refinement_keeps_a_feasible_route_no_dearer():
     coarse = [x for x in calls if not x[1]]
     assert fine and coarse and fine[0][0] == 25.0
     assert fine[0][2] and fine[0][3] <= coarse[0][3] + 1e-6
+
+
+# ---- rules of 16 Oct 2026 (handoff review) ----------------------------------------------------
+def _comp16(f, layers):
+    spec = LineSpec(765, "dc")
+    rules, costs = resolve_rules(spec), resolve_costs(spec)
+    tc = {t: costs["towers"][t]["price_rs"] for t in TOWER_TYPES}
+    return compile_rules(f, layers, rules, costs, 765, 33.5, 150, 400, tower_cost_rs=tc), rules, costs
+
+
+def test_nalla_is_a_tower_setback_only():
+    """Vivek, 16 Oct 2026: tower centre 40 m from the nalla centreline; no wire buffer, crossing angle, crossing
+    tower type, crossing span or crossing-tower turn limit."""
+    f = frame()
+    c = f.length_m / 2
+    comp, _, _ = _comp16(f, {"nalla": gdf([frame_geom(f, LineString([(c, -2500), (c, 2500)]))], "nalla")})
+    tower = [vr for vr in comp.tower_nogo if vr.rule_id == "nalla"]
+    assert tower and abs(tower[0].d - 40.0) < 1e-6
+    assert any(vr.hits(Point(c + 39, 0)) for vr in tower) and not any(vr.hits(Point(c + 41, 0)) for vr in tower)
+    assert not [cr for cr in comp.crossings if cr.rule_id == "nalla"]
+    assert not [pr for pr in comp.parallels if pr.rule_id == "nalla"]
+    assert not [vr for vr in comp.conductor_nogo if vr.rule_id == "nalla"]
+
+
+def test_river_has_no_parallel_buffer_and_small_reaches_are_canal_like():
+    """Vivek, 16 Oct 2026: no parallel buffer along rivers; a reach narrower than 50 m across the channel is a
+    small river (towers 30 m from the banks, any angle, ordinary types, no turn limit, 400 m span max); the
+    wide reach keeps the river rule (150 m from the banks); exactly 50 m wide stays a river."""
+    f = frame()
+    c = f.length_m / 2
+    wide = box(c - 100, -2500, c + 100, 0)                 # 200 m wide
+    narrow = box(c - 15, 0, c + 15, 2500)                   # 30 m wide
+    fifty = box(c + 3000, -2500, c + 3050, 2500)            # exactly 50 m wide
+    g = gdf([frame_geom(f, wide.union(narrow)), frame_geom(f, fifty)], "river")
+    comp, rules, _ = _comp16(f, {"river": g})
+    assert "small_river" in rules and rules["small_river"].params["max_span_m"] == 400
+    assert not comp.parallels
+    small = [cr for cr in comp.crossings if cr.rule_id == "small_river"]
+    big = [cr for cr in comp.crossings if cr.rule_id == "river"]
+    assert small and big
+    assert all(cr.window is None and cr.min_type == "A" and cr.max_dev_deg is None and not cr.long_span for cr in small)
+    assert all(cr.max_dev_deg == 45 for cr in big)
+    st = [vr for vr in comp.tower_nogo if vr.rule_id == "small_river"]
+    rv = [vr for vr in comp.tower_nogo if vr.rule_id == "river"]
+    assert st and abs(st[0].d - 30.0) < 1e-6 and rv and abs(rv[0].d - 150.0) < 1e-6
+    # beside the narrow reach, 60 m off its bank: only the small-river setback (30 m) applies, it is clear
+    assert not any(vr.hits(Point(c + 75, 1500)) for vr in st + rv)
+    assert any(vr.hits(Point(c + 140, -1500)) for vr in rv)          # beside the wide reach: 150 m holds
+    # the 50 m channel stays a river (150 m from its banks)
+    assert any(vr.hits(Point(c + 3050 + 140, 0)) for vr in rv)
+    assert not any(vr.hits(Point(c + 3050 + 140, 0)) for vr in st)
+
+
+def test_power_crossings_above_66_kv_take_d_towers():
+    """Vivek, 16 Oct 2026: D towers both sides of a crossed line strictly above 66 kV; exactly 66 kV not."""
+    f = frame()
+    c = f.length_m / 2
+    out = {}
+    for kv, layer, rule in ((132, "power", "power_line"), (220, "power", "power_line"), (66, "power_lt", "power_line_lt")):
+        line = frame_geom(f, LineString([(c, -2500), (c, 2500)]))
+        g = gpd.GeoDataFrame({"class": ["power_line"], "name": [None], "attrs": [{"voltage_kv": kv}]}, geometry=[line], crs=4326)
+        comp, _, _ = _comp16(f, {layer: g})
+        out[kv] = {cr.min_type for cr in comp.crossings if cr.rule_id == rule}
+    assert out[132] == {"D45"} and out[220] == {"D45"}, out
+    assert "D45" not in out[66], out
+
+
+def test_sh_crossing_angle_span_and_band():
+    """Vivek, 16 Oct 2026: SH crossed at 60-90°, span never over 400 m; 240-260 m without approval, outside the
+    band an approval record (and a search cost)."""
+    from beeline_engine.spotting import Checker, SpotParams
+    f = frame()
+    c = f.length_m / 2
+    road = frame_geom(f, LineString([(c, -2500), (c, 2500)]))
+    comp, rules, costs = _comp16(f, {"roads": gdf([road], "sh")})
+    cr = [x for x in comp.crossings if x.rule_id == "state_highway"]
+    assert cr and cr[0].window == (60.0, 90.0) and cr[0].max_span_m == 400 and cr[0].span_band == (240.0, 260.0)
+    assert cr[0].band_penalty_rs > 0
+    sp = SpotParams(design_span_m=400, span_max_m=400, min_span_m=100, max_dev_deg=60, type_bands={},
+                    section_km=5, parallel_angle_deg=30, tower_cost_rs={}, ground_clearance_m=18.15,
+                    lowest_attachment_m=32.6, sag_at_design_m=14.278, go_radius_m=150)
+    chk = Checker(comp, sp)
+    ok, items = chk.span_crossings((c - 125, 0.0), (c + 125, 0.0))          # 250 m: in the band
+    it = [x for x in items if x["rule"] == "state_highway"]
+    assert ok and it and "approval" not in it[0]
+    ok, items = chk.span_crossings((c - 150, 0.0), (c + 150, 0.0))          # 300 m: approval record
+    it = [x for x in items if x["rule"] == "state_highway"]
+    assert ok and it and it[0].get("approval") == "span_band"
+    ok, _ = chk.span_crossings((c - 205, 0.0), (c + 205, 0.0))              # 410 m: over the 400 m maximum
+    assert not ok
+
+
+def test_route_reports_its_check_status_and_marsh_has_no_buffer_field():
+    """Handoff A (16 Oct 2026): a found route says whether its final checks passed; marsh carries no buffer field."""
+    r = run_solve(solve_input({}))["routes"][0]
+    assert r["checks"]["status"] in ("checks_passed", "approval_needed", "checks_failed")
+    assert r["checks"]["towers_failing"] == sum(1 for t in r["towers"] if t["violations"])
+    spec = LineSpec(765, "dc")
+    assert "buffer_m" not in resolve_rules(spec)["marsh"].params
+
+
+def test_angle_surcharge_follows_the_turn_not_a_forced_type():
+    """Handoff D (16 Oct 2026): the spotting's angle-point surcharge goes with the turn, as in the search; a D45
+    standing straight (crossing) carries none."""
+    from beeline_engine.spotting import SpotParams, _chain_cost
+    f = frame()
+    spec = LineSpec(765, "dc")
+    comp, rules, costs = _comp16(f, {})
+    tc = {t: costs["towers"][t]["price_rs"] for t in TOWER_TYPES}
+    base = dict(design_span_m=400, span_max_m=400, min_span_m=100, max_dev_deg=60,
+                type_bands={"A": 2, "B1": 15, "C1": 30, "D45": 45, "D60": 60}, section_km=5, parallel_angle_deg=30,
+                tower_cost_rs=tc, ground_clearance_m=18.15, lowest_attachment_m=32.6, sag_at_design_m=14.278,
+                go_radius_m=150)
+    straight = [(1000.0, 0.0), (1400.0, 0.0), (1800.0, 0.0)]
+    bent = [(1000.0, 0.0), (1400.0, 0.0), (1790.0, 90.0)]
+    off = SpotParams(**base)
+    on = SpotParams(**base, angle_point_rs=5e6)
+    assert abs(_chain_cost(comp, on, straight, ["D45"]) - _chain_cost(comp, off, straight, ["D45"])) < 1.0
+    assert abs(_chain_cost(comp, on, bent, ["C1"]) - _chain_cost(comp, off, bent, ["C1"]) - 5e6) < 1.0

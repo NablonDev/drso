@@ -29,7 +29,7 @@ log = logging.getLogger(__name__)
 
 
 POWER_LINE_RULES = ("power_line", "power_line_lt")          # high / low tension (6 Oct 2026)
-CROSSING_RULES = {"railway", "national_highway", "river", "canal", *POWER_LINE_RULES, "pipeline_crossing"}
+CROSSING_RULES = {"railway", "national_highway", "river", "small_river", "canal", *POWER_LINE_RULES, "pipeline_crossing"}
 
 
 class Cancelled(Exception):
@@ -772,6 +772,14 @@ def _approvals(sr, comp, rules) -> None:
         used.append({"layer": it["layer"], "label": label, "months": months})
         items.append({"item": f"Eased by precedent: {label}", "months": months})
     sr.stats["precedent_items"] = used
+    # crossing spans outside a rule's span band (SH 240-260 m, Vivek 16 Oct 2026): allowed with an approval record
+    for s in sr.spans:
+        for c in s.crossings:
+            if c.get("approval") == "span_band":
+                lo, hi = c.get("span_band_m") or (None, None)
+                km = sr.towers[s.a].x / 1000.0
+                items.append({"item": f"{c.get('name') or c.get('rule')} crossing span {s.length_m:.0f} m, outside "
+                                      f"{lo:g}–{hi:g} m (km {km:.1f}) — approval record", "months": 0})
     sr.stats["approval_items"] = items
     sr.stats["approval_months"] = max([i["months"] for i in items], default=0)
 
@@ -1285,8 +1293,14 @@ def _route_json(var, sr, frame, evs, solve_s, spot_s, out, extra_timings: dict |
         })
     spans = [{"a": T[s.a].no, "b": T[s.b].no, "length_m": round(s.length_m, 1), "crossings": s.crossings,
               "min_clearance_m": s.min_clearance_m} for s in sr.spans]
+    # route found ≠ checks passed (handoff A, 16 Oct 2026): the final towers and spans as checked above
+    failing = [t["no"] for t in towers if t["violations"]]
+    approvals = (sr.stats or {}).get("approval_items") or []
+    checks = {"status": "checks_failed" if failing else "approval_needed" if approvals else "checks_passed",
+              "towers_failing": len(failing), "failing_towers": failing[:50],
+              "violations": sum(len(t["violations"]) for t in towers), "approvals": len(approvals)}
     return {
-        "id": var["id"], "key": var["key"], "name": var["name"], "feasible": True,
+        "id": var["id"], "key": var["key"], "name": var["name"], "feasible": True, "checks": checks,
         "geometry": [[t["lon"], t["lat"]] for t in towers],
         "towers": towers, "spans": spans, "cost": {k: round(v, 0) for k, v in sr.cost.items()},
         "stats": sr.stats, "events": evs, "spot_method": sr.method,

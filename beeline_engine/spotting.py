@@ -333,6 +333,13 @@ class Checker:
             if cr.max_span_m is not None and L > cr.max_span_m + 1e-3:
                 ok = False
                 item["violation"] = "span"
+            band = getattr(cr, "span_band", None)
+            if band is not None:
+                # SH (Vivek, 16 Oct 2026): a crossing span outside the band is allowed with an approval record
+                item["span_band_m"] = [band[0], band[1]]
+                if L < band[0] - 1e-3 or L > band[1] + 1e-3:
+                    item["approval"] = "span_band"
+                    item["band_penalty_rs"] = float(getattr(cr, "band_penalty_rs", 0.0) or 0.0)
             side = getattr(cr, "side_m", None)
             if side is not None:
                 lo, hi = side
@@ -368,6 +375,9 @@ class Checker:
         # parallel run and excused a 498 m span); rules without vector features keep the raster's word
         for c in out:
             c["geom_crossed"] = self._rule_intersects(c["rule"], p, q)
+            if c.get("approval") and c["geom_crossed"] is False:
+                c.pop("approval", None)          # a near miss of the raster band is no crossing
+                c.pop("band_penalty_rs", None)
         crossed_rules = {c.get("rule") for c in out if c.get("geom_crossed") is not False}
         for pr in self.c.parallels:
             if getattr(pr, "crossing_exempt", False) and pr.rule_id in crossed_rules:
@@ -529,6 +539,16 @@ def _leg_model(chk: Checker, p, q, sp: SpotParams, design: float, hilly_leg: boo
     steps_a = _ext_steps(sp, "A")
     f = chk.c.frame
     _site: dict = {}
+    # span-band features (SH) the leg crosses: (distance from p, band, penalty) — 16 Oct 2026
+    band_x = []
+    if _band_index(chk.c):
+        leg = LineString([p, q])
+        for (lo, hi), pen, tree, lines in _band_index(chk.c):
+            for j in tree.query(leg):
+                ip = lines[j].intersection(leg)
+                for g in getattr(ip, "geoms", [ip]):
+                    if not g.is_empty:
+                        band_x.append((leg.project(g.centroid if g.geom_type != "Point" else g), lo, hi, pen))
 
     def tower_rs(j):
         if j not in _site:
@@ -541,6 +561,9 @@ def _leg_model(chk: Checker, p, q, sp: SpotParams, design: float, hilly_leg: boo
     def span_rs(i, j):
         L = pos[j] - pos[i]
         c = 0.0
+        for sx, lo, hi, pen in band_x:
+            if pos[i] < sx < pos[j] and not (lo - 1e-3 <= L <= hi + 1e-3):
+                c += pen
         if z is not None:
             hilly_span = sp.hilly_rise_m is not None and abs(z[j] - z[i]) > sp.hilly_rise_m
             if hilly_leg and L > sp.design_span_m + 1e-3 and not hilly_span:
@@ -654,12 +677,18 @@ def _respot_runs(chk: Checker, pts, sp: SpotParams, min_gain_rs: float = 1e5):
         if b - a < 2:
             continue
         cur = _leg_objective(chk, sp, pts[a:b + 1])
+        if any(not chk.tower_ok(pts[k][0], pts[k][1], angle_tower=False) for k in range(a + 1, b)):
+            # a tower of the run fails its exact check (a lattice site the snap could not move, 16 Oct 2026):
+            # any legal re-spot of the run replaces it, whatever it costs
+            cur = float("inf")
         new = _spot_leg(chk, pts[a], pts[b], sp, exact=True)
         if new is None:
             continue
         cost = _leg_objective(chk, sp, [pts[a]] + list(new) + [pts[b]])
         if cost < cur - min_gain_rs:
-            out.append((a, b, list(new), cur - cost))
+            # the current run can price at infinity (its spans fail the programme's own checks): the move is
+            # kept, but its saving is not a number to report (15 Oct 2026: Infinity broke the result JSON)
+            out.append((a, b, list(new), cur - cost if math.isfinite(cur) else 0.0))
     for a, b, new, gain in reversed(out):            # apply from the end: earlier indices stay valid
         trial = pts[:a + 1] + new + pts[b:]
         if _run_legal(chk, sp, trial, a + 1, a + len(new), fixed=set()) if new else True:
@@ -701,12 +730,16 @@ def _chain_cost(comp: Compiled, sp: SpotParams, pts, inner_types) -> float:
     soil extra, base land) + spans (line ₹/m + RoW strip density incl. forest)."""
     f = comp.frame
     c = 0.0
-    for (x, y), t in zip(pts[1:-1], inner_types):
+    for k, ((x, y), t) in enumerate(zip(pts[1:-1], inner_types)):
         px = int(np.clip((x - f.x0) / f.res_m, 0, f.width - 1))
         py = int(np.clip((f.y_top - y) / f.res_m, 0, f.height - 1))
         tc = sp.tower_cost_rs[t] + _tower_site_rs(comp, t, px, py)
-        if t != "A":
-            tc += sp.angle_point_rs
+        if sp.angle_point_rs and t != "A":
+            # the surcharge goes with the turn, as in the search (handoff D, 16 Oct 2026): a tower heavy only
+            # because a crossing, a section point or hill ground forces it carries none
+            d, _ = _deflection(pts[k], pts[k + 1], pts[k + 2])
+            if (tower_type_for(d, sp.type_bands) or "D60") != "A":
+                tc += sp.angle_point_rs
         if comp.hill_tower_rs and comp.hill_area is not None and comp.hill_area[py, px]:
             tc += comp.hill_tower_rs                 # search-only hill surcharge (14 Oct 2026)
         if sp.proximity_tower_discount > 0 and comp.near_existing is not None and comp.near_existing[py, px]:
@@ -730,6 +763,36 @@ def _chain_cost(comp: Compiled, sp: SpotParams, pts, inner_types) -> float:
             row = np.clip(((f.y_top - fy) / f.res_m).astype(int), 0, f.height - 1)
             span_c *= 1.0 - sp.proximity_discount * float(comp.near_existing[row, col].mean())
         c += span_c
+        c += _band_penalty(comp, (x0, y0), (x1, y1), L)
+    return c
+
+
+def _band_index(comp: Compiled):
+    """[(span band, penalty, STRtree, lines)] of the crossing rules with a span band (SH), built once."""
+    idx = comp.__dict__.get("_band_idx")
+    if idx is None:
+        from shapely import STRtree
+        idx = []
+        for cr in comp.crossings:
+            if getattr(cr, "span_band", None) is not None and getattr(cr, "band_penalty_rs", 0.0) > 0 and cr.band_lines:
+                idx.append((cr.span_band, float(cr.band_penalty_rs), STRtree(cr.band_lines), cr.band_lines))
+        comp.__dict__["_band_idx"] = idx
+    return idx
+
+
+def _band_penalty(comp: Compiled, a, b, L: float) -> float:
+    """Search cost of a span that crosses a span-band feature (SH) with a length outside the band (16 Oct 2026)."""
+    idx = _band_index(comp)
+    if not idx:
+        return 0.0
+    c = 0.0
+    seg = None
+    for (lo, hi), pen, tree, lines in idx:
+        if lo - 1e-3 <= L <= hi + 1e-3:
+            continue
+        seg = seg or LineString([a, b])
+        if any(lines[j].intersects(seg) for j in tree.query(seg)):
+            c += pen
     return c
 
 

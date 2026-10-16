@@ -365,15 +365,17 @@ groups:
 
       - id: state_highway
         name: "State highway"
-        note: "Rule_Table 29-30: 80 m tower buffer from the road edge (7 m half-carriageway → 87 m from the centreline), conductor parallel buffer CHW, angle 70–90°; no crossing tower type set (TSD H 'important road crossings' not defined for SH)"
+        note: "Rule_Table 29-30: 80 m tower buffer from the road edge (7 m half-carriageway → 87 m from the centreline), conductor parallel buffer CHW; no crossing tower type set (TSD H 'important road crossings' not defined for SH). Vivek, 16 Oct 2026: crossing angle 60–90° (the smaller angle between line and road); crossing span 240–260 m normally — outside that band it needs an approval record (the search keeps to the band at a penalty) — and never over 400 m"
         layer: roads
         classes: [sh]
         mechanism: crossing
         params:
           - {key: tower_setback_m, label: "Tower setback from the centreline", type: num, unit: m, value: 87}
           - {key: parallel_setback_m, label: "Conductor buffer, parallel run", type: num, unit: m, value: {765: 40.5, 400: 30, 220: 24.5, 132: 20.5}}
-          - {key: angle_deg, label: "Allowed crossing angle", type: rng, unit: "°", value: [70, 110]}
-          - {key: max_span_m, label: "Max crossing span", type: num, unit: m, value: 600}
+          - {key: angle_deg, label: "Allowed crossing angle", type: rng, unit: "°", value: [60, 120]}
+          - {key: max_span_m, label: "Max crossing span", type: num, unit: m, value: 400}
+          - {key: span_band_m, label: "Crossing span without approval (min-max)", type: rng, unit: m, value: [240, 260]}
+          - {key: span_band_penalty_pct, label: "Outside the band: search cost, % of the crossing tower's price (approval record)", type: num, unit: "%", value: 20}
           - {key: tower_type, label: "Crossing tower type", type: sel, value: "A/B/C/D", options: ["A/B/C/D", "B/C/D", "D"]}
           - {key: preferred_angle_deg, label: "Preferred crossing angle", type: num, unit: "°", value: 90}
           - {key: preferred_angle_tol_deg, label: "… tolerance", type: num, unit: "°", value: 5}
@@ -397,12 +399,11 @@ groups:
 
       - id: river
         name: "River"
-        note: "Rule_Table 37-38: 150 m tower and parallel conductor buffer, 90°, major (≥ 600 m wide) D, minor A, B or C; the longest span follows the TSD span tables"
+        note: "Rule_Table 37-38: 150 m tower buffer from the banks, 90°, major (≥ 600 m wide) D, minor A, B or C; the longest span follows the TSD span tables. Vivek, 16 Oct 2026: no parallel conductor buffer; a reach narrower than 50 m (measured across the channel, from the river polygon) is a small river: towers 30 m from its banks, any crossing angle, ordinary tower types, no crossing-tower turn limit, the ordinary span maximum (400 m); exactly 50 m stays a river"
         layer: river
         mechanism: crossing
         params:
           - {key: tower_setback_m, label: "Bank buffer, each side", type: num, unit: m, value: 150}
-          - {key: parallel_setback_m, label: "Conductor buffer, parallel run", type: num, unit: m, value: 150}
           - {key: angle_deg, label: "Allowed crossing angle (±15°)", type: num, unit: "°", value: 90}
           - {key: max_span_m, label: "Max crossing span", type: num, unit: m, value: 600}   # Vivek, 13 Oct 2026: was the 720 m long-span ceiling
           - {key: preferred_angle_deg, label: "Preferred crossing angle", type: num, unit: "°", value: 90}
@@ -411,40 +412,33 @@ groups:
           - {key: major_threshold_m, label: "Major crossing threshold", type: num, unit: m, value: 600}
           - {key: major_tower_type, label: "Major tower type", type: sel, value: "D", options: ["B", "C", "D", "B/C/D"]}
           - {key: tower_type, label: "Minor tower type", type: sel, value: "A/B/C", options: ["A/B/C", "B", "C", "D", "B/C/D"]}
+          # small rivers (Vivek, 16 Oct 2026): any angle, ordinary tower types, no turn limit at the crossing towers
+          - {key: small_width_m, label: "Small river: narrower than", type: num, unit: m, value: 50}
+          - {key: small_tower_setback_m, label: "Small river: tower buffer from the banks", type: num, unit: m, value: 30}
+          - {key: small_max_span_m, label: "Small river: max crossing span", type: num, unit: m, value: 400}
 
       - id: canal
         name: "Canal"
-        note: "Rule_Table 79-80: 30 m from the canal edge for towers and the parallel conductor; A, B or C. The canal lines are centrelines, so a half-width is added first (Vivek, 10 Oct 2026: 15 m each side → 45 m from the centreline)"
+        note: "Rule_Table 79-80: 30 m from the canal edge for towers; A, B or C. The canal lines are centrelines, so a half-width is added first (Vivek, 10 Oct 2026: 15 m each side → 45 m from the centreline). Vivek, 16 Oct 2026: no parallel conductor buffer"
         layer: canal
         mechanism: crossing
         params:
           - {key: half_width_m, label: "Canal half-width (added to the buffers)", type: num, unit: m, value: 15}
           - {key: tower_setback_m, label: "Tower buffer from the canal edge", type: num, unit: m, value: 30}
-          - {key: parallel_setback_m, label: "Conductor buffer from the canal edge", type: num, unit: m, value: 30}
           - {key: angle_deg, label: "Allowed crossing angle", type: sel, value: "Any", options: ["Any", "90°", "75–90°", "80–100°"]}
           - {key: max_span_m, label: "Max crossing span", type: num, unit: m, value: 600}
           - {key: preferred_angle_deg, label: "Preferred crossing angle", type: num, unit: "°", value: 90}
           - {key: preferred_angle_tol_deg, label: "… tolerance", type: num, unit: "°", value: 5}
           - {key: max_dev_adjacent_deg, label: "Max deviation at the two crossing towers", type: num, unit: "°", value: 45}
-          # Vivek, 9 Oct 2026: no angle rule for the canal — the span that crosses it is not a parallel run,
-          # so it may cross at any angle; spans running alongside within the buffer stay blocked
-          - {key: crossing_exempt_from_parallel, label: "Crossing span exempt from the parallel check", type: sel, value: "Yes", options: ["Yes", "No"]}
           - {key: tower_type, label: "Tower type", type: sel, value: "A/B/C", options: ["A", "B", "C", "D", "A/B/C"]}
 
       - id: nalla
         name: "Nalla"
-        note: "Rule_Table 81-82: 30 m from the nalla edge, nalla 20 m wide → 40 m from the centreline, tower and parallel conductor; crossed at any angle, A, B or C (Vivek, 8 Oct 2026)"
+        note: "Vivek, 16 Oct 2026: tower centre at least 40 m from the mapped nalla centreline, nothing else — no wire buffer, crossing angle, crossing tower type, crossing span or crossing-tower turn limit for the nalla; the general line limits still apply (was Rule_Table 81-82 as a crossing rule, 8 Oct 2026)"
         layer: nalla
-        mechanism: crossing
+        mechanism: tower_setback
         params:
-          - {key: tower_setback_m, label: "Tower buffer from the centreline", type: num, unit: m, value: 40}
-          - {key: parallel_setback_m, label: "Conductor buffer from the centreline", type: num, unit: m, value: 40}
-          - {key: angle_deg, label: "Allowed crossing angle", type: sel, value: "Any", options: ["Any", "90°", "75–90°", "80–100°"]}
-          - {key: max_span_m, label: "Max crossing span", type: num, unit: m, value: 600}
-          - {key: preferred_angle_deg, label: "Preferred crossing angle", type: num, unit: "°", value: 90}
-          - {key: preferred_angle_tol_deg, label: "… tolerance", type: num, unit: "°", value: 5}
-          - {key: max_dev_adjacent_deg, label: "Max deviation at the two crossing towers", type: num, unit: "°", value: 45}
-          - {key: tower_type, label: "Tower type", type: sel, value: "A/B/C", options: ["A", "B", "C", "D", "A/B/C"]}
+          - {key: setback_m, label: "Tower centre from the nalla centreline", type: num, unit: m, value: 40}
 
       - id: power_line
         name: "High tension power line"
@@ -484,7 +478,9 @@ groups:
           # it to the full allowance at the edge of the allowed band, so the crossing stays as close to the null point as it can
           - {key: relax_penalty_pct, label: "Search allowance for a non-preferred crossing, % of the crossing tower's price (position: graded from the null point)", type: num, unit: "%", value: 20}
           - {key: tower_type, label: "Tower type", type: sel, value: "B/C/D", options: ["A/B/C/D", "B", "C", "D", "B/C/D"]}
-          - {key: tower_type_400kv, label: "Tower type, lines of 400 kV and above", type: sel, value: "D", options: ["B/C/D", "D"]}
+          # Vivek, 16 Oct 2026: D towers both sides of a crossed line strictly above 66 kV (exactly 66 kV is not); was ≥ 400 kV
+          - {key: hv_tower_type, label: "Tower type, crossed lines above the next value", type: sel, value: "D", options: ["B/C/D", "D"]}
+          - {key: hv_above_kv, label: "… applies to lines strictly above", type: num, unit: kV, value: 66}
           - {key: parallel_setback_m, label: "Conductor buffer, parallel run", type: num, unit: m, value: {765: 33.5, 400: 23, 220: 17.5, 132: 13.5}}
           - {key: max_dev_adjacent_deg, label: "Max deviation at the two crossing towers", type: num, unit: "°", value: 45}
 
@@ -529,7 +525,9 @@ groups:
           # it to the full allowance at the edge of the allowed band, so the crossing stays as close to the null point as it can
           - {key: relax_penalty_pct, label: "Search allowance for a non-preferred crossing, % of the crossing tower's price (position: graded from the null point)", type: num, unit: "%", value: 20}
           - {key: tower_type, label: "Tower type", type: sel, value: "A/B/C/D", options: ["A/B/C/D", "B", "C", "D", "B/C/D"]}
-          - {key: tower_type_400kv, label: "Tower type, lines of 400 kV and above", type: sel, value: "D", options: ["B/C/D", "D"]}
+          # Vivek, 16 Oct 2026: D towers both sides of a crossed line strictly above 66 kV (exactly 66 kV is not); was ≥ 400 kV
+          - {key: hv_tower_type, label: "Tower type, crossed lines above the next value", type: sel, value: "D", options: ["B/C/D", "D"]}
+          - {key: hv_above_kv, label: "… applies to lines strictly above", type: num, unit: kV, value: 66}
           - {key: parallel_setback_m, label: "Conductor buffer, parallel run", type: num, unit: m, value: {765: 33.5, 400: 23, 220: 17.5, 132: 13.5}}
           - {key: max_dev_adjacent_deg, label: "Max deviation at the two crossing towers", type: num, unit: "°", value: 45}
 
@@ -586,7 +584,7 @@ groups:
 
       - id: marsh
         name: "Marshy land"
-        note: "Rule_Table 77-78 had 50 m / last resort. Vivek, 10 Oct 2026: towers allowed on marshy land, on pile foundations (soil multiplier 1.85 through the layer's foundation class) — existing lines run through the soil-map marsh"
+        note: "Rule_Table 77-78 had 50 m / last resort. Vivek, 10 Oct 2026: towers allowed on marshy land, on pile foundations (soil multiplier 1.85 through the layer's foundation class) — existing lines run through the soil-map marsh. 16 Oct 2026: the 50 m buffer field removed (it was never applied while marsh is allowed); the 1.85 is a price assumption, not a pile design"
         layer: lulc
         classes: [marsh]
         also_layers: [marshy_land]
@@ -594,8 +592,6 @@ groups:
         cost_class: barren
         params:
           - {key: treatment, label: "Treatment", type: sel, value: "Allowed", options: ["Allowed", "Last resort", "No-Go"]}
-          - {key: buffer, label: "Buffer", type: sel, value: "Fixed", options: ["Corridor half-width", "Fixed", "None"]}
-          - {key: buffer_m, label: "Buffer", type: num, unit: m, value: 50}
           - {key: last_resort_towers_inside, label: "Last resort: towers inside (piles)", type: sel, value: "Yes", options: ["Yes", "No"]}
 
       - id: salt_pans

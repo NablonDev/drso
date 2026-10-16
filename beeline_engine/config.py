@@ -133,7 +133,27 @@ def resolve_rules(spec: LineSpec, overrides: dict | None = None) -> dict[str, Re
                 also_lulc_classes=r.get("also_lulc_classes"), also_layers=r.get("also_layers"),
                 overridden=changed,
             )
+    _small_river(out)
     return out
+
+
+def _small_river(out: dict) -> None:
+    """Vivek, 16 Oct 2026: a river reach narrower than small_width_m (measured across the channel at the reach)
+    is crossed like a canal — towers small_tower_setback_m from its banks, any angle, ordinary tower types, no
+    turn limit at the crossing towers, the ordinary span maximum, no parallel buffer. Compiled as its own rule
+    over the narrow part of the river polygons; the river rule keeps the rest (exactly the width stays a river)."""
+    rv = out.get("river")
+    if rv is None or not rv.params.get("small_width_m"):
+        return
+    w = float(rv.params["small_width_m"])
+    from dataclasses import replace
+    out["river"] = replace(rv, params={**rv.params, "_width_part": "wide", "_width_m": w})
+    out["small_river"] = replace(
+        rv, id="small_river", name=f"Small river (narrower than {w:g} m)",
+        params={"tower_setback_m": float(rv.params.get("small_tower_setback_m", 30)), "angle_deg": "Any",
+                "max_span_m": float(rv.params.get("small_max_span_m", 400)), "tower_type": "A/B/C/D",
+                "_width_part": "narrow", "_width_m": w},
+        overridden=[k for k in rv.overridden if k.startswith("small_")])
 
 
 def resolve_costs(spec: LineSpec, overrides: dict | None = None) -> dict:

@@ -469,6 +469,12 @@ def _edge_geom(compiled: Compiled, grid: Grid, p: SolverParams, rasters: "_Raste
             E = E + torch.where(crossed, pos_frac * float(cr.penalty_rs), torch.zeros_like(E))
         if side_cost is not None:
             E = E + torch.where(crossed, side_cost, torch.zeros_like(E))
+        if getattr(cr, "span_band", None) is not None and getattr(cr, "band_penalty_rs", 0.0) > 0:
+            # SH crossing span band (Vivek, 16 Oct 2026): outside it needs an approval; the lattice gets the slack
+            blo, bhi = cr.span_band
+            sl = p.crossing_span_slack_m
+            off_band = (length < blo - sl - 1e-3) | (length > bhi + sl + 1e-3)
+            E = E + torch.where(crossed & off_band, torch.full_like(E, float(cr.band_penalty_rs)), torch.zeros_like(E))
         invalid |= crossed & bad
     for pa, (rid, exempt) in zip(rasters.par, rasters.par_meta):
         a = pa[row, col]

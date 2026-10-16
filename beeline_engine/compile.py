@@ -67,6 +67,11 @@ class CrossingRaster:
     band_half_m: float = 0.0                         # half-width of the wire's hit band (angle_nearest within_m)
     max_dev_deg: float | None = None                 # deviation cap at the two crossing towers
     penalty_rs: float = 0.0                          # search cost of a non-preferred crossing
+    # span band (SH, Vivek 16 Oct 2026): a crossing span outside it is allowed with an approval record, at this
+    # search cost; band_lines = the crossed features (frame coords) so the spotting can price spans exactly
+    span_band: tuple[float, float] | None = None
+    band_penalty_rs: float = 0.0
+    band_lines: list | None = None
 
 
 @dataclass
@@ -290,6 +295,57 @@ class _Rasterizer:
                 hi = kv.isna() | (kv >= min_kv)
                 self.layers[key] = g[hi] if at_least else g[~hi]
             self.base_layer[key] = self.base_layer.get(layer, layer)
+        return key
+
+    def width_part(self, layer: str, width_m: float, part: str) -> str:
+        """Key of a copy of polygon `layer` holding only its reaches narrower than width_m ("narrow") or the
+        rest ("wide"), measured across the channel (Vivek, 16 Oct 2026: small rivers). A point is in a wide
+        reach when a disc of that diameter fits inside the polygon round it (morphological opening at just under
+        half the width, so exactly width_m stays wide). Narrow slivers the opening shaves off the corners of a
+        wide reach (smaller than width_m² and touching it) stay wide. Features that are not polygons have no
+        measurable width and stay wide (the full river rule)."""
+        key = f"{layer}|width{'<' if part == 'narrow' else '>='}{width_m:g}"
+        if key in self.layers:
+            return key
+        g = self.layers.get(layer)
+        if g is None or not len(g):
+            self.layers[key] = None
+            self.base_layer[key] = self.base_layer.get(layer, layer)
+            return key
+        import shapely
+        epsg = self.frame.epsg
+        gu = g.to_crs(epsg)
+        r = width_m / 2.0 - 0.01
+        wide_rows, narrow_rows = [], []
+        for i, geom in enumerate(gu.geometry):
+            if geom is None or geom.is_empty or geom.geom_type not in ("Polygon", "MultiPolygon"):
+                wide_rows.append((i, geom))
+                continue
+            opened = geom.buffer(-r).buffer(r).intersection(geom)
+            narrow = geom.difference(opened)
+            keep_n, back = [], []
+            for piece in getattr(narrow, "geoms", [narrow]):
+                if piece.is_empty or piece.area < 1.0:
+                    continue
+                if piece.area < width_m * width_m and piece.distance(opened) < 0.5:
+                    back.append(piece)
+                else:
+                    keep_n.append(piece)
+            wide = shapely.unary_union([opened, *back]) if back else opened
+            if not wide.is_empty:
+                wide_rows.append((i, wide))
+            if keep_n:
+                narrow_rows.append((i, shapely.unary_union(keep_n)))
+        rows = narrow_rows if part == "narrow" else wide_rows
+        if not rows:
+            self.layers[key] = None
+        else:
+            idx = [i for i, _ in rows]
+            sub = gu.iloc[idx].copy()
+            sub = sub.set_geometry(gpd.GeoSeries([gm for _, gm in rows], index=sub.index, crs=epsg))
+            self.layers[key] = sub.to_crs(g.crs)
+        self.base_layer[key] = self.base_layer.get(layer, layer)
+        log.info("width split of %s at %g m: %d wide, %d narrow features", layer, width_m, len(wide_rows), len(narrow_rows))
         return key
 
     def class_subset(self, layer: str, classes: list[str]) -> str:
@@ -765,6 +821,10 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
         if p.get("min_area_m2"):
             from dataclasses import replace as _replace
             r = _replace(r, layer=R.filtered(r.layer, float(p["min_area_m2"])))
+        if p.get("_width_part"):
+            # river / small river (Vivek, 16 Oct 2026): each rule reads its own reaches of the river polygons
+            from dataclasses import replace as _replace
+            r = _replace(r, layer=R.width_part(r.layer, float(p["_width_m"]), p["_width_part"]))
         m = r.mechanism
         if precedent_towers is not None and m in PRECEDENT_MECHANISMS:
             # learn from existing lines: polygons existing towers stand in are opened (9 Oct 2026)
@@ -995,17 +1055,19 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
             parts = [(r.layer, window, base_type, 0.0)]
             if r.id in ("power_line", "power_line_lt"):
                 # crossing-angle window from angle_min_kv (Rule_Table 9: lines ≥ 66 kV); crossing
-                # towers by the crossed line's voltage (TSD B): D at ≥ 400 kV, the rule's type below
+                # towers by the crossed line's voltage: D both sides of a line strictly above hv_above_kv
+                # (Vivek, 16 Oct 2026: > 66 kV, exactly 66 kV not; was ≥ 400 kV, TSD B), the rule's type below
                 akv = float(p["angle_min_kv"]) if p.get("angle_min_kv") is not None and window is not None else None
-                hi_type = forced_min_type(p.get("tower_type_400kv")) if p.get("tower_type_400kv") else None
+                hi_type = forced_min_type(p.get("hv_tower_type")) if p.get("hv_tower_type") else None
+                hi_kv = float(p.get("hv_above_kv", 66)) + 1e-6       # strictly above: by_voltage keeps >= this
                 parts = []
                 above = r.layer
                 if akv is not None:
                     parts.append((R.by_voltage(r.layer, akv, False), None, base_type, 0.0))
                     above = R.by_voltage(r.layer, akv, True)
                 if hi_type is not None:
-                    parts.append((R.by_voltage(above, 400.0, False), window if akv is not None else None, base_type, 0.0))
-                    parts.append((R.by_voltage(above, 400.0, True), window if akv is not None else None,
+                    parts.append((R.by_voltage(above, hi_kv, False), window if akv is not None else None, base_type, 0.0))
+                    parts.append((R.by_voltage(above, hi_kv, True), window if akv is not None else None,
                                   max_type(base_type, hi_type), 0.0))
                 else:
                     parts.append((above, window if akv is not None else None, base_type, 0.0))
@@ -1039,6 +1101,12 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
             mdev = p.get("max_dev_adjacent_deg")
             pen_pct = float(p.get("relax_penalty_pct", 0) or 0) / 100.0
             srp = float(p.get("side_relax_pct_per_25m", 0) or 0) / 100.0
+            band = p.get("span_band_m")
+            band = (float(band[0]), float(band[1])) if isinstance(band, (list, tuple)) and len(band) == 2 else None
+            band_lines = None
+            if band is not None:
+                fg = R.frame_geoms(r.layer, line_classes)
+                band_lines = [g for g in (fg if fg is not None else []) if g is not None and not g.is_empty]
             for x in built:
                 # the 90° preference (and its penalty) only where the angle rule applies: for power lines the
                 # part below angle_min_kv has no window and takes no preference (audit, 14 Oct 2026)
@@ -1060,6 +1128,14 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
                     x.penalty_rs = pen_pct * float(tower_cost_rs.get(x.min_type) or tower_cost_rs.get("D45") or 0.0)
                 if side_m is not None and srp > 0 and tower_cost_rs:
                     x.side_relax_rs_per_m = srp * float(tower_cost_rs.get(x.min_type) or tower_cost_rs.get("D45") or 0.0) / 25.0
+                if band is not None:
+                    # SH crossing span band (Vivek, 16 Oct 2026): outside it = approval record + this search cost,
+                    # a share of the crossing tower's price as for a non-preferred power-line crossing
+                    x.span_band = band
+                    x.band_lines = band_lines
+                    bp = float(p.get("span_band_penalty_pct", 0) or 0) / 100.0
+                    if bp > 0 and tower_cost_rs:
+                        x.band_penalty_rs = bp * float(tower_cost_rs.get(x.min_type) or tower_cost_rs.get("D45") or 0.0)
             cr = built[0]
             for extra in built[1:]:
                 if r.id in angle_tower_rules:

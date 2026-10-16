@@ -6,7 +6,9 @@ Reads the solve result + run layers straight from the database, re-derives every
 config/rules.yaml from the vector geometry (EPSG:32642) and compares with the engine's own flags.
 Nothing here imports beeline_engine; the only shared code is the DB / layer reader. Writes
 violations.csv, crossings_compare.csv and run_meta.json to out_dir (default data/logs/independent_check/<run>_<solve>).
-Rule parameters (setbacks, windows, side distances) are copied from config/rules.yaml as of 14 Oct 2026 — keep in step.
+Rule parameters (setbacks, windows, side distances) are copied from config/rules.yaml as of 16 Oct 2026 — keep in step
+(16 Oct: nalla tower setback only; no parallel buffer for river / canal / nalla; small rivers < 50 m; SH 60-90 deg,
+span <= 400 m, 240-260 m without approval; D towers both sides of crossed lines above 66 kV).
 """
 import sys, json, math, csv, collections
 from pathlib import Path
@@ -73,6 +75,34 @@ for r in L.run_layers(RUN):
         layer_notes.append(f"{r['layer_key']}: {int(bad.sum())} empty geometries dropped")
         g = g[~bad]
     layers[r['layer_key']] = g.reset_index(drop=True)
+# small rivers (16 Oct 2026): reaches narrower than 50 m across the channel are a separate canal-like rule. A point is
+# in a wide reach when a 50 m disc fits in the polygon round it; shaved corner slivers of a wide reach stay wide.
+SMALL_RIVER_W = 50.0
+if layers.get('river') is not None:
+    _wide, _narrow = [], []
+    _r = SMALL_RIVER_W / 2.0 - 0.01
+    for _, row in layers['river'].iterrows():
+        g = row.geometry
+        if g.geom_type not in ('Polygon', 'MultiPolygon'):
+            _wide.append((row, g)); continue
+        op = g.buffer(-_r).buffer(_r).intersection(g)
+        nar, back = [], []
+        for pc in getattr(g.difference(op), 'geoms', [g.difference(op)]):
+            if pc.is_empty or pc.area < 1.0:
+                continue
+            (back if pc.area < SMALL_RIVER_W ** 2 and pc.distance(op) < 0.5 else nar).append(pc)
+        w = unary_union([op, *back]) if back else op
+        if not w.is_empty:
+            _wide.append((row, w))
+        if nar:
+            _narrow.append((row, unary_union(nar)))
+    def _gdf(rows):
+        if not rows:
+            return None
+        df = gpd.GeoDataFrame([r for r, _ in rows], crs=EPSG).reset_index(drop=True)
+        return df.set_geometry(gpd.GeoSeries([gm for _, gm in rows], crs=EPSG))
+    layers['river'], layers['small_river'] = _gdf(_wide), _gdf(_narrow)
+    layer_notes.append(f"river: {len(_narrow)} feature(s) with reaches narrower than {SMALL_RIVER_W:.0f} m -> small_river rule")
 for k in ('defence', 'monuments', 'lulc'):
     if k not in layers:
         layer_notes.append(f"{k}: no layer in this run (rule cannot be checked)")
@@ -172,8 +202,9 @@ TOWER_SETBACKS = [
     ('state_highway', 'roads', ['sh'], 87.0),
     ('bridges', 'bridges', ['road_bridge', 'rail_bridge', 'flyover', 'underpass'], 0.0),
     ('river', 'river', None, 150.0),
+    ('small_river', 'small_river', None, 30.0),   # 16 Oct 2026: 30 m from the banks
     ('canal', 'canal', None, 45.0),          # 30 m from the edge + 15 m half-width
-    ('nalla', 'nalla', None, 40.0),
+    ('nalla', 'nalla', None, 40.0),          # 16 Oct 2026: the only nalla rule
     ('power_line', 'power', ['power_tower'], 72.5),
     ('power_line', 'power', ['power_line'], 80.0),
     ('power_line_lt', 'power_lt', ['power_tower'], 72.5),
@@ -257,9 +288,7 @@ PARALLEL = [
     ('railway', 'rail', None, 'CHW'),
     ('national_highway', 'roads', ['nh'], 320.0),
     ('state_highway', 'roads', ['sh'], 40.5),
-    ('river', 'river', None, 150.0),
-    ('canal', 'canal', None, 45.0),
-    ('nalla', 'nalla', None, 40.0),
+    # 16 Oct 2026: no parallel buffer for river, canal or nalla
     ('power_line', 'power', ['power_line'], 'CHW'),
     ('power_line_lt', 'power_lt', ['power_line'], 'CHW'),
     ('pipeline_crossing', 'pipelines', None, 30.0),
@@ -342,18 +371,21 @@ def min_type_for(rule, kv=None):
         return 'D45'
     if rule == 'national_highway':
         return 'B1'
+    # 16 Oct 2026: D both sides of a crossed line strictly above 66 kV (unknown voltage counts as above)
     if rule == 'power_line':
-        return 'D45' if (kv or 0) >= 400 else 'B1'
+        return 'D45' if kv is None or kv > 66 else 'B1'
     if rule == 'power_line_lt':
-        return 'D45' if (kv or 0) >= 400 else 'A'
+        return 'D45' if kv is None or kv > 66 else 'A'
     return 'A'
 
-LONG_SPAN_RULES = {'river', 'canal', 'nalla', 'national_highway', 'state_highway', 'bridges', 'pipeline_crossing'}
-ANGLE_MIN = {'railway': 80.0, 'national_highway': 80.0, 'state_highway': 70.0, 'bridges': 80.0, 'river': 75.0,
-             'pipeline_crossing': 75.0, 'power_line': 70.0, 'power_line_lt': 70.0, 'canal': None, 'nalla': None}
-SIDE_MIN = {'railway': 86.0, 'national_highway': 92.5, 'state_highway': 87.0, 'river': 150.0, 'canal': 45.0,
-            'nalla': 40.0, 'pipeline_crossing': 30.0}
-MAX_SPAN = {'railway': RAIL_SPAN}
+LONG_SPAN_RULES = {'river', 'canal', 'national_highway', 'bridges', 'pipeline_crossing'}
+ANGLE_MIN = {'railway': 80.0, 'national_highway': 80.0, 'state_highway': 60.0, 'bridges': 80.0, 'river': 75.0,
+             'pipeline_crossing': 75.0, 'power_line': 70.0, 'power_line_lt': 70.0, 'canal': None, 'small_river': None}
+SIDE_MIN = {'railway': 86.0, 'national_highway': 92.5, 'state_highway': 87.0, 'river': 150.0, 'small_river': 30.0,
+            'canal': 45.0, 'pipeline_crossing': 30.0}
+MAX_SPAN = {'railway': RAIL_SPAN, 'state_highway': 400.0, 'small_river': 400.0}
+SH_BAND = (240.0, 260.0)           # 16 Oct 2026: SH crossing span without an approval record
+NO_DEV_LIMIT = {'small_river'}     # no turn limit at the crossing towers
 
 def wire_parts(geom):
     return [g for g in getattr(geom, 'geoms', [geom]) if g.geom_type == 'LineString']
@@ -379,7 +411,7 @@ for si, s in enumerate(S):
     crossed = []    # (rule, dict)
     # --- line features: rail, roads, canal, nalla, pipelines, power lines
     for rule, key, cls in (('railway', 'rail', None), ('national_highway', 'roads', ['nh']), ('state_highway', 'roads', ['sh']),
-                           ('canal', 'canal', None), ('nalla', 'nalla', None), ('pipeline_crossing', 'pipelines', None),
+                           ('canal', 'canal', None), ('pipeline_crossing', 'pipelines', None),
                            ('power_line', 'power', ['power_line']), ('power_line_lt', 'power_lt', ['power_line'])):
         ix = idx(key, cls)
         if ix.tree is None:
@@ -414,7 +446,8 @@ for si, s in enumerate(S):
                             rec['clear_of_tower_m'] = near
                     crossed.append(rec)
     # --- polygon features: river, bridges
-    for rule, key, cls in (('river', 'river', None), ('bridges', 'bridges', ['road_bridge', 'rail_bridge', 'flyover', 'underpass'])):
+    for rule, key, cls in (('river', 'river', None), ('small_river', 'small_river', None),
+                           ('bridges', 'bridges', ['road_bridge', 'rail_bridge', 'flyover', 'underpass'])):
         ix = idx(key, cls)
         if ix.tree is None:
             continue
@@ -544,6 +577,9 @@ for si, s in enumerate(S):
         # span limits by crossing rule
         if rule in MAX_SPAN and Lm > MAX_SPAN[rule] + TOL:
             add('span', a, rule, 'crossing_span', Lm, MAX_SPAN[rule], span=(a, b), feature=tag)
+        if rule == 'state_highway' and not (SH_BAND[0] - TOL <= Lm <= SH_BAND[1] + TOL):
+            add('span', a, rule, 'sh_span_band', Lm, f"{SH_BAND[0]:.0f}-{SH_BAND[1]:.0f}", span=(a, b), feature=tag,
+                severity='approval', note='allowed with an approval record (16 Oct 2026)')
         if rule in ('power_line', 'power_line_lt') and Lm > DESIGN_SPAN + TOL:
             add('span', a, rule, 'crossing_span', Lm, DESIGN_SPAN, span=(a, b), feature=tag, note='power-line crossing span is not a long-span crossing')
         # tower type and deviation at the two crossing towers
@@ -556,7 +592,7 @@ for si, s in enumerate(S):
                 continue
             if RANK[t['type']] < RANK[need]:
                 add('tower', ti, rule, 'crossing_tower_type', t['type'], need, unit='type', span=(a, b), feature=tag)
-            if t['deflection_deg'] > 45.0 + 1e-6 and 0 < ti < N - 1:
+            if rule not in NO_DEV_LIMIT and t['deflection_deg'] > 45.0 + 1e-6 and 0 < ti < N - 1:
                 add('tower', ti, rule, 'crossing_deviation', t['deflection_deg'], 45, unit='deg', span=(a, b), feature=tag)
             if rule == 'bridges' and rec.get('cls') == 'flyover' and t['extension_m'] < 18.0:
                 add('tower', ti, rule, 'flyover_extension', t['extension_m'], 18, span=(a, b), feature=tag)
