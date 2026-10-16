@@ -138,9 +138,39 @@ class Checker:
         self._clear = ~ndimage.binary_dilation(comp.tower_forbidden, iterations=2)
         self._clear_angle = ~ndimage.binary_dilation(comp.angle_forbidden, iterations=2)
         self._verify = os.environ.get("BEELINE_VERIFY_PREFILTER") == "1"
+        # Route-neutral speed-ups (16 Oct 2026; measured on BHU-LAK-0224: identical towers and cost, route building
+        # 1.5x faster): one mask of every crossing / parallel raster, so a span that meets none of them skips the
+        # per-rule sampling; memoised tower, conductor and hilly checks (the leg spotting and the repairs test the same
+        # spots and spans many times over). Results are exactly those of the unmemoised checks.
+        self._any_cross = None
+        if comp.crossings:
+            m = np.zeros(comp.tower_forbidden.shape, bool)
+            for cr in comp.crossings:
+                m |= ~np.isnan(cr.angle)
+            self._any_cross = m
+        self._any_par = None
+        if comp.parallels:
+            m = np.zeros(comp.tower_forbidden.shape, bool)
+            for pr in comp.parallels:
+                m |= ~np.isnan(pr.angle)
+            self._any_par = m
+        self._tower_memo: dict = {}
+        self._cond_memo: dict = {}
+        self._hilly_memo: dict = {}
         # (A combined shortlist STRtree over every rule's buffered features was tried on 11 Oct 2026 and
         # dropped: ~900 k buffers took 500 s to build per compile and the line queries were slower than
         # the per-rule dwithin queries.)
+
+    @property
+    def dem(self):
+        return self.__dict__.get("_dem")
+
+    @dem.setter
+    def dem(self, v):
+        # the hilly memo depends on the DEM: setting it (spot() and EditContext do, right after construction)
+        # clears the memo, so a caller that sets the DEM late still gets the DEM's answer
+        self.__dict__["_dem"] = v
+        self.__dict__.setdefault("_hilly_memo", {}).clear()
 
     def profile(self, p, q, step=30.0):
         """(t in 0..1, ground z) along p->q on the DEM, or None without a DEM."""
@@ -153,6 +183,16 @@ class Checker:
         return t, self.dem.sample(lon, lat), L
 
     def is_hilly(self, p, q) -> bool:
+        key = (round(p[0], 3), round(p[1], 3), round(q[0], 3), round(q[1], 3))
+        hit = self._hilly_memo.get(key)
+        if hit is None:
+            hit = self._is_hilly(p, q)
+            if len(self._hilly_memo) > 1_000_000:
+                self._hilly_memo.clear()
+            self._hilly_memo[key] = hit
+        return hit
+
+    def _is_hilly(self, p, q) -> bool:
         if self.sp.hilly_rise_m is not None:
             # Route_Rules item 3 (8 Oct 2026): the ground rises more than hilly_rise_m between the towers
             if self.dem is None or not self.dem.ok:
@@ -188,6 +228,16 @@ class Checker:
         return self.go.contains(p)
 
     def tower_ok(self, x, y, angle_tower: bool) -> bool:
+        key = (round(float(x), 3), round(float(y), 3), bool(angle_tower))
+        hit = self._tower_memo.get(key)
+        if hit is None:
+            hit = self._tower_ok(x, y, angle_tower)
+            if len(self._tower_memo) > 2_000_000:
+                self._tower_memo.clear()
+            self._tower_memo[key] = hit
+        return hit
+
+    def _tower_ok(self, x, y, angle_tower: bool) -> bool:
         if abs(y) > self.c.frame.half_width_m + 1e-6:
             return False
         p = Point(x, y)
@@ -225,6 +275,16 @@ class Checker:
         return any(geoms[j].intersects(seg) for j in tree.query(seg))
 
     def conductor_ok(self, p, q) -> bool:
+        key = (round(p[0], 3), round(p[1], 3), round(q[0], 3), round(q[1], 3))
+        hit = self._cond_memo.get(key)
+        if hit is None:
+            hit = self._conductor_ok(p, q)
+            if len(self._cond_memo) > 1_000_000:
+                self._cond_memo.clear()
+            self._cond_memo[key] = hit
+        return hit
+
+    def _conductor_ok(self, p, q) -> bool:
         line = LineString([p, q])
         # go zone: crossings of >= 220 kV lines near their towers stay banned (clipped to the zone)
         L0 = self.c.frame.length_m
@@ -238,7 +298,7 @@ class Checker:
                 return True
         return not any(r.hits(line) for r in self.cond_rules)
 
-    def _sample(self, arr, p, q, step=None):
+    def _sample_idx(self, p, q, step=None):
         f = self.c.frame
         L = math.hypot(q[0] - p[0], q[1] - p[1])
         n = max(2, int(math.ceil(L / (step or f.res_m / 2))) + 1)
@@ -247,7 +307,11 @@ class Checker:
         fy = p[1] + t * (q[1] - p[1])
         col = np.clip(((fx - f.x0) / f.res_m).astype(int), 0, f.width - 1)
         row = np.clip(((f.y_top - fy) / f.res_m).astype(int), 0, f.height - 1)
-        return arr[row, col], L / (n - 1)
+        return row, col, L / (n - 1)
+
+    def _sample(self, arr, p, q, step=None):
+        row, col, st = self._sample_idx(p, q, step)
+        return arr[row, col], st
 
     def span_crossings(self, p, q) -> tuple[bool, list[dict]]:
         """(valid, crossings) for one span, by the same rules the solver applied (memoised per span;
@@ -266,8 +330,10 @@ class Checker:
         L = math.hypot(q[0] - p[0], q[1] - p[1])
         head = math.degrees(math.atan2(q[1] - p[1], q[0] - p[0]))
         out, ok = [], True
-        for cr in self.c.crossings:
-            a, step = self._sample(cr.angle, p, q)
+        row_, col_, step_ = self._sample_idx(p, q)               # one sample index for every raster of this span
+        any_cross = self._any_cross is None or bool(self._any_cross[row_, col_].any())
+        for cr in (self.c.crossings if any_cross else ()):
+            a, step = cr.angle[row_, col_], step_
             hit = ~np.isnan(a)
             if not hit.any():
                 continue
@@ -311,7 +377,7 @@ class Checker:
             item["angle_preferred"] = pw is None or acute >= pw[0] - 1e-3
             pm = getattr(cr, "pref_mask", None)
             if pm is not None:
-                mk, _ = self._sample(pm, p, q)
+                mk = pm[row_, col_]
                 item["point_preferred"] = bool(mk[(first + last) // 2])
             no = getattr(cr, "null_offset_wide", None)
             if no is not None:
@@ -323,7 +389,7 @@ class Checker:
                         ok = False
                         item["violation"] = "null_point"
                 else:
-                    ov, _ = self._sample(no, p, q)
+                    ov = no[row_, col_]
                     v = ov[(first + last) // 2]
                     if np.isfinite(v):
                         item["null_offset_pct"] = round(float(v) * 100, 1)   # distance from the null point, % of their span
@@ -355,7 +421,7 @@ class Checker:
                         ok = False
                         item["violation"] = "side"
             if cr.width_raster is not None and cr.major_threshold_m is not None:
-                w, st = self._sample(cr.width_raster, p, q)
+                w, st = cr.width_raster[row_, col_], step_
                 width = float(w.sum()) * st
                 item["width_m"] = round(width, 1)
                 if width >= cr.major_threshold_m:
@@ -379,10 +445,11 @@ class Checker:
                 c.pop("approval", None)          # a near miss of the raster band is no crossing
                 c.pop("band_penalty_rs", None)
         crossed_rules = {c.get("rule") for c in out if c.get("geom_crossed") is not False}
-        for pr in self.c.parallels:
+        any_par = self._any_par is None or bool(self._any_par[row_, col_].any())
+        for pr in (self.c.parallels if any_par else ()):
             if getattr(pr, "crossing_exempt", False) and pr.rule_id in crossed_rules:
                 continue                    # the crossing span itself is not a parallel run (canal)
-            a, _ = self._sample(pr.angle, p, q)
+            a = pr.angle[row_, col_]
             near = ~np.isnan(a)
             if near.any():
                 d = np.abs((head - a[near]) % 180.0)
@@ -1882,7 +1949,9 @@ def _wire_sides(chk, rule_id, p, q):
     # exact distance of each crossing from the null point of the crossed span, as a share of that span
     # (0 = mid-span, 0.5 = at an existing tower); the largest over the wires this span crosses (14 Oct 2026);
     # and the crossing angle at EACH wire (audit, 14 Oct 2026: a span over two 66 kV ways was measured once)
-    pos_of = {id(ln): pos for _, ln, pos in chk._wire_list}
+    pos_of = getattr(chk, "_wire_pos_of", None)
+    if pos_of is None:                     # built once per checker (it was rebuilt on every call)
+        pos_of = chk._wire_pos_of = {id(ln): pos for _, ln, pos in chk._wire_list}
     head = math.degrees(math.atan2(q[1] - p[1], q[0] - p[0]))
     null, acute_min = None, None
     for t_, ln in hits:

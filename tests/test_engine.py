@@ -1353,3 +1353,31 @@ def test_angle_surcharge_follows_the_turn_not_a_forced_type():
     on = SpotParams(**base, angle_point_rs=5e6)
     assert abs(_chain_cost(comp, on, straight, ["D45"]) - _chain_cost(comp, off, straight, ["D45"])) < 1.0
     assert abs(_chain_cost(comp, on, bent, ["C1"]) - _chain_cost(comp, off, bent, ["C1"]) - 5e6) < 1.0
+
+
+def test_checker_dem_set_late_clears_the_hilly_memo():
+    """16 Oct 2026 (route-neutral speed-ups): is_hilly is memoised per span and depends on the DEM; setting
+    chk.dem after a first is_hilly call clears the memo, so the span is judged on the DEM afterwards."""
+    from beeline_engine.spotting import Checker, SpotParams
+    f = frame()
+    spec = LineSpec(765, "dc")
+    rules, costs = resolve_rules(spec), resolve_costs(spec)
+    far = frame_geom(f, box(100, 2000, 120, 2020))
+    comp = compile_rules(f, {"buildings": gdf([far], "building")}, rules, costs, 765, 33.5, 150, 400)
+    sp = SpotParams(design_span_m=400, span_max_m=400, min_span_m=100, max_dev_deg=60, type_bands={},
+                    section_km=5, parallel_angle_deg=30, tower_cost_rs={}, ground_clearance_m=18.15,
+                    lowest_attachment_m=32.6, sag_at_design_m=14.278, go_radius_m=150, hilly_rise_m=10.0)
+
+    class _Rise:                                         # the far tower stands 50 m higher than the near one
+        ok = True
+
+        def sample(self, lon, lat):
+            return np.array([0.0, 50.0])
+
+    chk = Checker(comp, sp)
+    p, q = (1000.0, 0.0), (1370.0, 0.0)
+    assert chk.is_hilly(p, q) is False                   # no DEM yet: not hilly (and memoised)
+    chk.dem = _Rise()
+    assert chk.is_hilly(p, q) is True                    # the DEM's answer, not the memo's
+    chk.dem = None
+    assert chk.is_hilly(p, q) is False
