@@ -71,6 +71,7 @@ class SpotParams:
     approach_span_m: float | None = None
     proximity_discount: float = 0.0         # search-only discount near existing lines (string pulling)
     proximity_tower_discount: float = 0.0   # the same on towers standing near them (Vivek, 13 Oct 2026)
+    angle_point_rs: float = 0.0             # search-only surcharge on every tower that is not an A (what-if, 15 Oct 2026)
     hilly_surcharge_rs_per_m: float = 0.0   # search-only hill avoidance (Vivek, 14 Oct 2026), string pulling too
     hilly_tower_surcharge_rs: float = 0.0
     extension_pct: float = 9.4              # body extension price, % of the tower per +18 m
@@ -704,6 +705,8 @@ def _chain_cost(comp: Compiled, sp: SpotParams, pts, inner_types) -> float:
         px = int(np.clip((x - f.x0) / f.res_m, 0, f.width - 1))
         py = int(np.clip((f.y_top - y) / f.res_m, 0, f.height - 1))
         tc = sp.tower_cost_rs[t] + _tower_site_rs(comp, t, px, py)
+        if t != "A":
+            tc += sp.angle_point_rs
         if comp.hill_tower_rs and comp.hill_area is not None and comp.hill_area[py, px]:
             tc += comp.hill_tower_rs                 # search-only hill surcharge (14 Oct 2026)
         if sp.proximity_tower_discount > 0 and comp.near_existing is not None and comp.near_existing[py, px]:

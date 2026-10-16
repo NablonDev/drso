@@ -291,7 +291,9 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
     # with terrain, hilly spans (all-tension) may be longer than plain ones: the grid offers up to the
     # longer of the two and the edge test keeps non-hilly spans within the plain value
     smax_search = max(smax, hilly_m) if terrain else smax
+    angle_point_rs = float(rules["design_span"].params.get("angle_point_surcharge_cr", 0) or 0) * RS_PER_CR_
     base = SolverParams(site_spacing_m=eng["grid"]["site_spacing_m"], span_min_m=smin, span_max_m=smax_search,
+                        angle_tower_penalty_rs=angle_point_rs,
                         edge_cache_limit_bytes=float(eng["grid"].get("edge_cache_gb", 8)) * 1e9,
                         max_dev_deg=max_dev, type_bands=bands, tower_cost_rs=tower_cost,
                         parallel_angle_deg=eng["crossings"]["parallel_angle_deg"],
@@ -337,7 +339,7 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
                     nudge_radius_m=float(eng["grid"].get("nudge_radius_m", 30)),
                     hilly_design_span_m=float(rules["design_span"].params["hilly_m"]),
                     hilly_section_km=float(rules["section_interval"].params["hilly_km"]),
-                    hilly_rise_m=hilly_rise, tsd=tsd, approach_length_m=ap_len, approach_span_m=ap_span,
+                    hilly_rise_m=hilly_rise, tsd=tsd, approach_length_m=ap_len, approach_span_m=ap_span, angle_point_rs=angle_point_rs,
                     proximity_discount=prox_disc, proximity_tower_discount=prox_tdisc, extension_pct=ext_pct * 100.0,
                     section_spans=int(rules["section_interval"].params.get("plain_spans") or 0) or None,
                     hilly_section_spans=int(rules["section_interval"].params.get("hilly_spans") or 0) or None)
@@ -785,7 +787,7 @@ def _variant_params(base: SolverParams, var: dict, design: float) -> SolverParam
     from dataclasses import replace
     p = replace(base)
     if "angle_tower_penalty_rs" in var:
-        p.angle_tower_penalty_rs = float(var["angle_tower_penalty_rs"])
+        p.angle_tower_penalty_rs = base.angle_tower_penalty_rs + float(var["angle_tower_penalty_rs"])
     if "lateral_penalty_rs_per_m_per_km" in var:
         p.lateral_penalty_rs_per_m = float(var["lateral_penalty_rs_per_m_per_km"]) * design / 1000.0
     if "sensitive_multiplier" in var:

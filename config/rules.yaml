@@ -691,6 +691,9 @@ groups:
           - {key: hill_min_area_ha, label: "Hill: smallest patch kept", type: num, unit: ha, value: 5}
           - {key: hill_surcharge_cr_km, label: "Search surcharge per km of line over hill ground", type: num, unit: "₹ Cr/km", value: 2.0}
           - {key: hill_tower_surcharge_cr, label: "Search surcharge per tower on hill ground", type: num, unit: "₹ Cr", value: 1.0}
+          # what-if switch (15 Oct 2026): an angle point priced as a decision, not just steel — search-only, on every
+          # tower that is not a suspension tower; 0 = off
+          - {key: angle_point_surcharge_cr, label: "Search surcharge per angle point (not in the reported cost)", type: num, unit: "₹ Cr", value: 0}
           - {key: urban_m, label: "Urban / populated", type: num, unit: m, value: {765: 250, 400: 250, 220: 225, 132: 200}, best_guess: true}
 
       - id: section_interval
