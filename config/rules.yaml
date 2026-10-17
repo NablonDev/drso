@@ -356,7 +356,7 @@ groups:
         params:
           - {key: tower_setback_m, label: "Tower setback from the centreline", type: num, unit: m, value: {765: 92.5, 400: 80, 220: 80, 132: 80}}
           - {key: angle_deg, label: "Allowed crossing angle", type: rng, unit: "°", value: [80, 100]}
-          - {key: max_span_m, label: "Max crossing span", type: num, unit: m, value: 600}   # Vivek, 13 Oct 2026: was 250
+          - {key: max_span_m, label: "Max crossing span", type: num, unit: m, value: 250}   # TSD H (audit H2, 17 Oct 2026; 13 Oct value 600)
           - {key: tower_type, label: "Crossing tower type", type: sel, value: "B/C/D", options: ["B", "C", "D", "B/C/D"]}
           - {key: preferred_angle_deg, label: "Preferred crossing angle", type: num, unit: "°", value: 90}
           - {key: preferred_angle_tol_deg, label: "… tolerance", type: num, unit: "°", value: 5}
@@ -397,7 +397,7 @@ groups:
         params:
           - {key: tower_setback_m, label: "Bank buffer, each side", type: num, unit: m, value: 150}
           - {key: angle_deg, label: "Allowed crossing angle (±15°)", type: num, unit: "°", value: 90}
-          - {key: max_span_m, label: "Max crossing span", type: num, unit: m, value: 600}   # Vivek, 13 Oct 2026: was the 720 m long-span ceiling
+          - {key: max_span_m, label: "Max crossing span", type: num, unit: m, value: 720}   # TSD single-span ceiling, 60 % of the 1,200 m adjacent-span sum (audit H1, 17 Oct 2026): with the 150 m bank buffers a river up to 420 m wide can be crossed; wider needs a special crossing design the TSD does not carry
           - {key: preferred_angle_deg, label: "Preferred crossing angle", type: num, unit: "°", value: 90}
           - {key: preferred_angle_tol_deg, label: "… tolerance", type: num, unit: "°", value: 5}
           - {key: max_dev_adjacent_deg, label: "Max deviation at the two crossing towers", type: num, unit: "°", value: 45}
