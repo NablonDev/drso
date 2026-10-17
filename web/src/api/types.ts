@@ -627,7 +627,7 @@ export interface WithinHit {
 }
 
 export interface BufferItem {
-  kind: "setback" | "parallel" | "nocross";
+  kind: "setback" | "parallel" | "nocross" | "near";
   layer: string;
   buffer_m: number;
   classes?: string[] | null;

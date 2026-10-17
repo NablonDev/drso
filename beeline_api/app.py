@@ -1050,18 +1050,23 @@ def buffers(run_id: str, body: BuffersRequest):
     feats = []
     with db.conn() as c:
         for it in body.items[:30]:
+            # the corridor round the route, cut into small pieces so the spatial index does the work (17 Oct 2026:
+            # 0.7 s instead of 22 s for village roads within 150 m of a 112 km route)
             rows = c.execute("""
-              with r as (select ST_SetSRID(ST_GeomFromGeoJSON(%s), 4326) as g)
+              with c as (select ST_Subdivide(ST_Buffer(ST_SetSRID(ST_GeomFromGeoJSON(%s), 4326)::geography, %s)::geometry, 32) as g),
+                   hit as (select distinct f.id from features f
+                           join run_layers rl on rl.layer_version_id = f.layer_version_id
+                           join c on f.geom && c.g and ST_Intersects(f.geom, c.g)
+                           where rl.run_id = %s and rl.layer_key = %s
+                             and (%s::text[] is null or f.class = any(%s::text[]))
+                             and (%s::bigint[] is null or f.id = any(%s::bigint[]))
+                           limit %s)
               select f.id, f.name, f.class,
                      ST_AsGeoJSON(ST_SimplifyPreserveTopology(
                        case when %s > 0 then ST_Buffer(f.geom::geography, %s)::geometry else f.geom end, 0.00003), 6)::json as geom
-              from features f join run_layers rl on rl.layer_version_id = f.layer_version_id, r
-              where rl.run_id = %s and rl.layer_key = %s
-                and (%s::text[] is null or f.class = any(%s::text[]))
-                and (%s::bigint[] is null or f.id = any(%s::bigint[]))
-                and f.geom && ST_Expand(r.g, %s) and ST_DWithin(f.geom::geography, r.g::geography, %s)
-              limit %s""", (line, it.buffer_m, it.buffer_m, run_id, it.layer, it.classes, it.classes, it.ids, it.ids,
-                            it.near_m / 111320.0 * 1.2, it.near_m, max(1, min(it.limit, 1000)))).fetchall()
+              from hit join features f on f.id = hit.id""",
+                             (line, it.near_m, run_id, it.layer, it.classes, it.classes, it.ids, it.ids,
+                              max(1, min(it.limit, 2000)), it.buffer_m, it.buffer_m)).fetchall()
             for r in rows:
                 feats.append({"type": "Feature", "geometry": r["geom"],
                               "properties": {"kind": it.kind, "layer": it.layer, "id": r["id"], "name": r["name"], "class": r["class"], "buffer_m": it.buffer_m}})

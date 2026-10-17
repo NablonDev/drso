@@ -6,7 +6,7 @@ export const ESRI_MAX_ZOOM = 18;
 /** Layer colours from the prototype's MLAY array, keyed by API layer key. */
 export const LAYER_COLOURS: Record<string, string> = {
   lulc: "#8FA36B",
-  buildings: "#9A8574",
+  buildings: "#FF5B3A",
   clusters: "#A33A31",
   pond: "#7FB3D5",
   river: "#3E7CB1",
@@ -28,7 +28,7 @@ export const LAYER_COLOURS: Record<string, string> = {
   sandy_plain: "#D9B98C",
   salt_pans: "#E9E6DC",
   marshy_land: "#3E8E82",
-  village_roads: "#C9A27E",
+  village_roads: "#FFE45C",
   wind_turbines: "#5FB3E5",
   plotted: "#9C5C14",
   roads: "#8C8274",
@@ -240,9 +240,33 @@ function lulcColour(): ExpressionSpecification {
 }
 
 export const layerIds = (key: string) => [`L-${key}-fill`, `L-${key}-outline`, `L-${key}-line`, `L-${key}-point`];
+/** Extra drawing layers that follow a layer's visibility but are not hover targets (17 Oct 2026):
+ *  the building setback halo, the village-road casing and setback band. */
+const EXTRA_IDS: Record<string, string[]> = { buildings: ["L-buildings-ring"], village_roads: ["L-village_roads-band", "L-village_roads-casing"] };
+export const extraIds = (key: string) => EXTRA_IDS[key] ?? [];
+
+/** Default setbacks drawn round buildings and village roads (rules: Buildings tower setback = corridor
+ *  half-width, Village road tower setback); Results replaces them with the run's rule values. */
+export const DEFAULT_SETBACKS = { buildings: 33.5, village_roads: 30 };
+
+/** A line width that is `metres` wide on the ground at every zoom (exact between integer zooms with
+ *  exponential base 2), never thinner than `minPx` so the halo still shows when zoomed out. */
+export function metreWidth(metres: number, lat: number, minPx = 0): ExpressionSpecification {
+  const stops: number[] = [];
+  for (let z = 6; z <= 22; z++) stops.push(z, Math.max(minPx, metres / metresPerPixel(lat, z)));
+  return ["interpolate", ["exponential", 2], ["zoom"], ...stops] as unknown as ExpressionSpecification;
+}
+
+/** Set the building halo and the village-road band to the run's setbacks. */
+export function setSetbackWidths(map: maplibregl.Map, lat: number, setbacks: { buildings?: number | null; village_roads?: number | null }) {
+  const b = setbacks.buildings ?? DEFAULT_SETBACKS.buildings, v = setbacks.village_roads ?? DEFAULT_SETBACKS.village_roads;
+  if (map.getLayer("L-buildings-ring")) map.setPaintProperty("L-buildings-ring", "line-width", metreWidth(2 * b, lat, 3));
+  if (map.getLayer("L-village_roads-band")) map.setPaintProperty("L-village_roads-band", "line-width", metreWidth(2 * v, lat, 0));
+}
 
 /** Add the run's vector tile source and four styled sublayers per layer key. */
-export function addRunLayers(map: maplibregl.Map, runId: string, opts: { before?: string } = {}) {
+export function addRunLayers(map: maplibregl.Map, runId: string, opts: { before?: string; lat?: number } = {}) {
+  const lat = opts.lat ?? map.getCenter().lat;
   if (map.getSource("run")) return;
   map.addSource("run", {
     type: "vector",
@@ -255,6 +279,18 @@ export function addRunLayers(map: maplibregl.Map, runId: string, opts: { before?
     const fillColour = key === "lulc" ? lulcColour() : c;
     const minzoom = DENSE_LAYERS.includes(key) ? DENSE_MINZOOM : 6;
     const common = { source: "run", "source-layer": key, minzoom } as const;
+    // buildings: a soft halo at the tower setback under each footprint (17 Oct 2026)
+    if (key === "buildings")
+      map.addLayer({ id: "L-buildings-ring", type: "line", ...common, filter: IS_POLY, layout: { "line-join": "round" },
+        paint: { "line-color": c, "line-width": metreWidth(2 * DEFAULT_SETBACKS.buildings, lat, 3), "line-opacity": 0.22 } }, opts.before);
+    // village roads: a faint band at the tower setback and a dark casing under a thin bright line
+    if (key === "village_roads") {
+      // butt caps and a little blur: the roads come as many short pieces, and round caps stacked at every joint read as hatching
+      map.addLayer({ id: "L-village_roads-band", type: "line", ...common, filter: IS_LINE, layout: { "line-cap": "butt", "line-join": "round" },
+        paint: { "line-color": c, "line-width": metreWidth(2 * DEFAULT_SETBACKS.village_roads, lat, 0), "line-opacity": 0.1, "line-blur": 2 } }, opts.before);
+      map.addLayer({ id: "L-village_roads-casing", type: "line", ...common, filter: IS_LINE, layout: { "line-cap": "round", "line-join": "round" },
+        paint: { "line-color": "#1d1708", "line-width": ["interpolate", ["linear"], ["zoom"], 12, 2.6, 16, 4.2], "line-opacity": 0.55 } }, opts.before);
+    }
     map.addLayer(
       {
         id: `L-${key}-fill`,
@@ -263,7 +299,7 @@ export function addRunLayers(map: maplibregl.Map, runId: string, opts: { before?
         filter: IS_POLY,
         paint: {
           "fill-color": fillColour,
-          "fill-opacity": key === "lulc" ? 0.42 : 0.3,
+          "fill-opacity": key === "lulc" ? 0.42 : key === "buildings" ? 0.9 : 0.3,
         },
       },
       opts.before,
@@ -275,8 +311,8 @@ export function addRunLayers(map: maplibregl.Map, runId: string, opts: { before?
         ...common,
         filter: IS_POLY,
         paint: {
-          "line-color": key === "lulc" ? fillColour : c,
-          "line-width": ["case", ["boolean", ["feature-state", "sel"], false], 3, key === "lulc" ? 0.6 : 1.4],
+          "line-color": key === "lulc" ? fillColour : key === "buildings" ? "#ffffff" : c,
+          "line-width": ["case", ["boolean", ["feature-state", "sel"], false], 3, key === "lulc" ? 0.6 : key === "buildings" ? 1.2 : 1.4],
           "line-opacity": 0.95,
         },
       },
@@ -291,7 +327,7 @@ export function addRunLayers(map: maplibregl.Map, runId: string, opts: { before?
         layout: { "line-cap": "round", "line-join": "round" },
         paint: {
           "line-color": (key === "power" || key === "power_lt") ? voltageColour(c) : key === "roads" ? highwayColour(c) : c,
-          "line-width": ["case", ["boolean", ["feature-state", "sel"], false], 5, key === "river" || key === "canal" || key === "nalla" ? 3 : key === "rail" ? 2.4 : key === "roads" ? ["match", ["get", "class"], "nh", 3.2, 2.2] : 2.2],
+          "line-width": ["case", ["boolean", ["feature-state", "sel"], false], 5, key === "river" || key === "canal" || key === "nalla" ? 3 : key === "rail" ? 2.4 : key === "roads" ? ["match", ["get", "class"], "nh", 3.2, 2.2] : key === "village_roads" ? 1.5 : 2.2],
           "line-opacity": 0.95,
           ...(key === "rail" ? { "line-dasharray": [3, 2] } : key === "pipelines" ? { "line-dasharray": [1, 2] } : {}),
         },
@@ -318,7 +354,7 @@ export function addRunLayers(map: maplibregl.Map, runId: string, opts: { before?
 
 export function removeRunLayers(map: maplibregl.Map) {
   for (const key of LAYER_ORDER) {
-    for (const id of [...layerIds(key), `L-lowconf-${key}`]) if (map.getLayer(id)) map.removeLayer(id);
+    for (const id of [...layerIds(key), ...extraIds(key), `L-lowconf-${key}`]) if (map.getLayer(id)) map.removeLayer(id);
   }
   if (map.getSource("run")) map.removeSource("run");
 }
@@ -326,7 +362,7 @@ export function removeRunLayers(map: maplibregl.Map) {
 export function setRunLayerVisibility(map: maplibregl.Map, visible: (key: string) => boolean) {
   for (const key of LAYER_ORDER) {
     const v = visible(key) ? "visible" : "none";
-    for (const id of layerIds(key)) if (map.getLayer(id) && map.getLayoutProperty(id, "visibility") !== v) map.setLayoutProperty(id, "visibility", v);
+    for (const id of [...layerIds(key), ...extraIds(key)]) if (map.getLayer(id) && map.getLayoutProperty(id, "visibility") !== v) map.setLayoutProperty(id, "visibility", v);
   }
 }
 
@@ -334,7 +370,7 @@ export function setRunLayerOpacity(map: maplibregl.Map, op: number) {
   for (const key of LAYER_ORDER) {
     const [fill, outline, line, point] = layerIds(key);
     if (!map.getLayer(fill)) continue;
-    map.setPaintProperty(fill, "fill-opacity", (key === "lulc" ? 0.75 : 0.55) * op);
+    map.setPaintProperty(fill, "fill-opacity", key === "buildings" ? Math.min(1, 0.35 + op) : (key === "lulc" ? 0.75 : 0.55) * op);
     map.setPaintProperty(outline, "line-opacity", Math.min(1, 0.4 + op));
     map.setPaintProperty(line, "line-opacity", Math.min(1, 0.3 + op));
     map.setPaintProperty(point, "circle-opacity", Math.min(1, 0.3 + op));

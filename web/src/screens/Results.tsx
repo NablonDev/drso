@@ -10,6 +10,7 @@ import TowerLayer from "../components/map/TowerLayer";
 import CrossingLayer from "../components/map/CrossingLayer";
 import BendLayer, { BEND_COLOUR } from "../components/map/BendLayer";
 import BufferLayer, { BUFFER_COLOUR } from "../components/map/BufferLayer";
+import NearRouteLayer from "../components/map/NearRouteLayer";
 import DesignCheck from "../components/DesignCheck";
 import { designOf, spanNotesOf, STATUS_COLOUR, statutoryChecks } from "../lib/design";
 import {
@@ -24,6 +25,7 @@ import {
   setLowConfVisible,
   setRunLayerOpacity,
   setRunLayerVisibility,
+  setSetbackWidths,
 } from "../components/map/style";
 import { useFitBounds, useMapLibre, useRunTiles, type Bounds } from "../components/map/useMap";
 import TerrainControl from "../components/map/TerrainControl";
@@ -133,17 +135,29 @@ function Body({ s }: { s: Solve }) {
   useFitBounds(map, bounds);
   const ceiling = useCeiling(map);
   const wantTiles = t.lowconf || Object.values(on).some(Boolean);
+  // the building halo and village-road band at this run's setbacks (17 Oct 2026)
+  const setbacks = useMemo(() => {
+    const pv = (rid: string, key: string) => {
+      for (const g of rulesQ.data?.groups ?? []) for (const r of g.rules) if (r.id === rid) {
+        const v = r.params.find((x) => x.key === key)?.value;
+        return typeof v === "number" ? v : null;
+      }
+      return null;
+    };
+    return { buildings: pv("buildings", "tower_setback_m"), village_roads: pv("village_roads", "setback_m") };
+  }, [rulesQ.data]);
   const applyTiles = (m: maplibregl.Map) => {
     setRunLayerVisibility(m, (k) => Boolean(on[k]));
     setRunLayerOpacity(m, 0.55);
     setLowConfVisible(m, t.lowconf);
+    setSetbackWidths(m, midLat, setbacks);
   };
   const applyRef = useRef(applyTiles);
   applyRef.current = applyTiles;
   const tiles = useRunTiles(map, run.id, wantTiles, (m) => applyRef.current(m));
   useEffect(() => {
     if (map && map.getSource("run")) applyRef.current(map);
-  }, [map, on, t.lowconf]);
+  }, [map, on, t.lowconf, setbacks]);
 
   // static overlays: band, bee-line, previous revision, routes, end points
   useEffect(() => {
@@ -435,6 +449,7 @@ function Body({ s }: { s: Solve }) {
             why={design ? { sid: s.id, route: sel, rules: rulesQ.data, limits: design.limits } : undefined} /> : null}
           {feasible && design ? <CrossingLayer map={map} rows={design.crossings} visible={t.crossings && !hidden.includes(sel.id)} /> : null}
           {feasible && sel ? <BendLayer map={map} runId={run.id} sid={s.id} route={sel} rules={rulesQ.data} visible={t.bends && !hidden.includes(sel.id)} /> : null}
+          {feasible && sel ? <NearRouteLayer map={map} runId={run.id} sid={s.id} route={sel} roads={Boolean(on.village_roads) && !hidden.includes(sel.id)} buildings={Boolean(on.buildings) && !hidden.includes(sel.id)} /> : null}
           {feasible && sel ? <BufferLayer map={map} runId={run.id} sid={s.id} route={sel} rules={rulesQ.data} bends={t.bends && !hidden.includes(sel.id)} buffers={t.buffers && !hidden.includes(sel.id)} /> : null}
           <ScaleBar map={map} />
           <CeilingNote ceiling={ceiling} />
@@ -455,6 +470,17 @@ function Body({ s }: { s: Solve }) {
             {hwM > 0 ? <div><i style={{ background: routeColour(sel?.id ?? 1), opacity: 0.4, height: 8 }} />Right of way ±{num(hwM, 1)} m</div> : null}
             <div><i style={{ background: "#D69A4E", borderRadius: "50%", width: 8, height: 8 }} />Angle tower</div>
             <div><i style={{ background: "#fff", border: "1px solid #14202A", borderRadius: "50%", width: 8, height: 8 }} />Suspension tower</div>
+            {on.buildings ? (
+              <div>
+                <i style={{ background: LAYER_COLOURS.buildings, width: 8, height: 8, borderRadius: 1, boxShadow: `0 0 0 4px ${LAYER_COLOURS.buildings}38` }} />
+                <span style={{ marginLeft: 4 }}>Building · halo = {num(setbacks.buildings ?? 33.5, 1)} m setback</span>
+              </div>
+            ) : null}
+            {on.village_roads ? (
+              <div>
+                <i style={{ background: LAYER_COLOURS.village_roads, boxShadow: `0 0 0 1px #1d170880, 0 0 0 4px ${LAYER_COLOURS.village_roads}22` }} />Village road · band = {num(setbacks.village_roads ?? 30, 0)} m setback
+              </div>
+            ) : null}
             {t.bends ? (
               <div>
                 <i style={{ background: BEND_COLOUR.avoid }} />
