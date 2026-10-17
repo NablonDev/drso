@@ -166,6 +166,9 @@ class Compiled:
     go_overlap: list = field(default_factory=list)   # VecRules still checked inside the go zone (overlap only)
     go_conductor: list = field(default_factory=list)  # conductor VecRules kept in the go zone (>= 220 kV crossings)
     precedent_items: list = field(default_factory=list)  # polygons opened by "learn from existing lines"
+    # road structures (bridge / flyover / underpass) with no NH / SH line on them, frame coords + label: a span over
+    # one is flagged "classify this structure" (Vivek, 17 Oct 2026: bridges inherit the road they carry)
+    unclassified_structures: list = field(default_factory=list)
     near_existing: np.ndarray | None = None  # bool raster: within reach of an existing line (search discount)
     # last-resort relaxations taken in this compile: (VecRule of what was opened, approval months, label)
     relaxed_items: list = field(default_factory=list)
@@ -1345,6 +1348,27 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
             tower_forbidden |= om & zm
             fired[rid] = fired.get(rid, 0) + int((om & zm).sum())
 
+    # bridges inherit the road they carry (Vivek, 17 Oct 2026): the NH / SH crossing rules come from the road line
+    # over the structure; a road structure with no NH / SH line on it (within 15 m) is listed for a warning
+    unclassified = []
+    br = rules.get("bridges")
+    if br is not None and br.enabled and br.params.get("flag_unclassified", "Yes") == "Yes":
+        st = R.subset(br.layer, ["road_bridge", "flyover", "underpass"])
+        if st is not None and len(st):
+            su = st.to_crs(frame.epsg)
+            hw_roads = R.subset("roads", ["nh", "sh"])
+            hw_u = unary_union(list(hw_roads.to_crs(frame.epsg).geometry)).buffer(15.0) if hw_roads is not None and len(hw_roads) else None
+            fg = _to_frame(frame, st)
+            for (_, row), gu, gf in zip(su.iterrows(), su.geometry, fg):
+                if gu is None or gu.is_empty or gf is None or (hw_u is not None and gu.intersects(hw_u)):
+                    continue
+                a = row.get("attrs") or {}
+                nm = row.get("name")
+                nm = nm if isinstance(nm, str) and nm.strip() else None
+                label = f"{row['class'].replace('_', ' ')}" + (f" {nm}" if nm else "") + \
+                        (f" ({a.get('road_class') or a.get('cls')})" if (a.get("road_class") or a.get("cls")) else "") + \
+                        (f" src {row.get('src_id')}" if row.get("src_id") else "")
+                unclassified.append((gf, label))
     return Compiled(frame=frame, tower_forbidden=tower_forbidden, angle_forbidden=angle_forbidden,
                     conductor_forbidden=conductor_forbidden, strip_density=strip_density,
                     sensitive=sensitive, site_cost=site_cost, soil_mult=soil_mult,
@@ -1354,7 +1378,8 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
                     conductor_nogo=cond_geoms, rules_fired=fired, costs=costs,
                     terminal_zone=zone, terminal_yards=yards, terminal_cond=terminal_cond, relaxed=relaxed, relaxed_items=relaxed_items,
                     rasterizer=R, go_overlap=go_overlap, go_conductor=go_conductor,
-                    precedent_items=list(precedent_items.values()), near_existing=near_existing)
+                    precedent_items=list(precedent_items.values()), near_existing=near_existing,
+                    unclassified_structures=unclassified)
 
 
 def _airport_zone(R: "_Rasterizer", frame: Frame, layer: str, classes, d: float, funnel_m: float):

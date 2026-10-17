@@ -8,7 +8,9 @@ Nothing here imports beeline_engine; the only shared code is the DB / layer read
 violations.csv, crossings_compare.csv and run_meta.json to out_dir (default data/logs/independent_check/<run>_<solve>).
 Rule parameters (setbacks, windows, side distances) are copied from config/rules.yaml as of 16 Oct 2026 — keep in step
 (16 Oct: nalla tower setback only; no parallel buffer for river / canal / nalla; small rivers < 50 m; SH 60-90 deg,
-span <= 400 m, 240-260 m without approval; D towers both sides of crossed lines above 66 kV).
+span <= 400 m, 240-260 m without approval; D towers both sides of crossed lines above 66 kV.
+17 Oct: no NH / SH parallel buffer; canal = 45 m tower setback from the centreline only; bridges keep only "no tower
+on the structure" — the road carried brings its NH / SH crossing rules).
 """
 import sys, json, math, csv, collections
 from pathlib import Path
@@ -203,7 +205,7 @@ TOWER_SETBACKS = [
     ('bridges', 'bridges', ['road_bridge', 'rail_bridge', 'flyover', 'underpass'], 0.0),
     ('river', 'river', None, 150.0),
     ('small_river', 'small_river', None, 30.0),   # 16 Oct 2026: 30 m from the banks
-    ('canal', 'canal', None, 45.0),          # 30 m from the edge + 15 m half-width
+    ('canal', 'canal', None, 45.0),          # 17 Oct 2026: the only canal rule, 45 m from the centreline
     ('nalla', 'nalla', None, 40.0),          # 16 Oct 2026: the only nalla rule
     ('power_line', 'power', ['power_tower'], 72.5),
     ('power_line', 'power', ['power_line'], 80.0),
@@ -286,8 +288,7 @@ COND_BUFFERS = [
 # parallel-run buffers of the crossing rules: apply to spans that do NOT cross the feature
 PARALLEL = [
     ('railway', 'rail', None, 'CHW'),
-    ('national_highway', 'roads', ['nh'], 320.0),
-    ('state_highway', 'roads', ['sh'], 40.5),
+    # 17 Oct 2026: no parallel buffer for NH / SH
     # 16 Oct 2026: no parallel buffer for river, canal or nalla
     ('power_line', 'power', ['power_line'], 'CHW'),
     ('power_line_lt', 'power_lt', ['power_line'], 'CHW'),
@@ -367,7 +368,7 @@ for si, s in enumerate(S):
 
 # ----------------------------------------------------------------------------------------------- 3. spans and crossings
 def min_type_for(rule, kv=None):
-    if rule in ('railway', 'bridges'):
+    if rule == 'railway':
         return 'D45'
     if rule == 'national_highway':
         return 'B1'
@@ -378,11 +379,11 @@ def min_type_for(rule, kv=None):
         return 'D45' if kv is None or kv > 66 else 'A'
     return 'A'
 
-LONG_SPAN_RULES = {'river', 'canal', 'national_highway', 'bridges', 'pipeline_crossing'}
+LONG_SPAN_RULES = {'river', 'national_highway', 'pipeline_crossing'}
 ANGLE_MIN = {'railway': 80.0, 'national_highway': 80.0, 'state_highway': 60.0, 'bridges': 80.0, 'river': 75.0,
-             'pipeline_crossing': 75.0, 'power_line': 70.0, 'power_line_lt': 70.0, 'canal': None, 'small_river': None}
+             'pipeline_crossing': 75.0, 'power_line': 70.0, 'power_line_lt': 70.0, 'small_river': None}
 SIDE_MIN = {'railway': 86.0, 'national_highway': 92.5, 'state_highway': 87.0, 'river': 150.0, 'small_river': 30.0,
-            'canal': 45.0, 'pipeline_crossing': 30.0}
+            'pipeline_crossing': 30.0}
 MAX_SPAN = {'railway': RAIL_SPAN, 'state_highway': 400.0, 'small_river': 400.0}
 SH_BAND = (240.0, 260.0)           # 16 Oct 2026: SH crossing span without an approval record
 NO_DEV_LIMIT = {'small_river'}     # no turn limit at the crossing towers
@@ -411,7 +412,7 @@ for si, s in enumerate(S):
     crossed = []    # (rule, dict)
     # --- line features: rail, roads, canal, nalla, pipelines, power lines
     for rule, key, cls in (('railway', 'rail', None), ('national_highway', 'roads', ['nh']), ('state_highway', 'roads', ['sh']),
-                           ('canal', 'canal', None), ('pipeline_crossing', 'pipelines', None),
+                           ('pipeline_crossing', 'pipelines', None),
                            ('power_line', 'power', ['power_line']), ('power_line_lt', 'power_lt', ['power_line'])):
         ix = idx(key, cls)
         if ix.tree is None:
@@ -446,8 +447,7 @@ for si, s in enumerate(S):
                             rec['clear_of_tower_m'] = near
                     crossed.append(rec)
     # --- polygon features: river, bridges
-    for rule, key, cls in (('river', 'river', None), ('small_river', 'small_river', None),
-                           ('bridges', 'bridges', ['road_bridge', 'rail_bridge', 'flyover', 'underpass'])):
+    for rule, key, cls in (('river', 'river', None), ('small_river', 'small_river', None)):
         ix = idx(key, cls)
         if ix.tree is None:
             continue

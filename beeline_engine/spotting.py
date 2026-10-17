@@ -1045,6 +1045,18 @@ def build_route(chk: Checker, pts: list[tuple[float, float]], angle_set: set[int
             towers[i if i > 0 else 1].violations.append("conductor_buffer")
         if gantry_span and L < sp.gantry_min_span_m - 1e-6:
             towers[1 if i == 0 else n - 2].violations.append(f"gantry_span:{L:.0f}m")
+    # road structures with no NH / SH on them (Vivek, 17 Oct 2026): a warning to classify the structure
+    us = getattr(comp, "unclassified_structures", None)
+    if us:
+        from shapely import STRtree
+        tree = comp.__dict__.get("_us_tree")
+        if tree is None:
+            tree = comp.__dict__["_us_tree"] = STRtree([g for g, _ in us])
+        for i in range(1, n - 2):
+            seg = LineString([pts[i], pts[i + 1]])
+            for j in tree.query(seg):
+                if us[j][0].intersects(seg):
+                    towers[i].warnings.append(f"bridge_unclassified:{us[j][1]}")
     # forced crossing types
     for s in spans:
         for c in s.crossings:

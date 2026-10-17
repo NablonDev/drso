@@ -587,19 +587,19 @@ def test_relaxed_route_crosses_a_last_resort_water_body():
     assert any(e["type"] == "ROUTE_NOT_FOUND" for e in res["events_global"])
 
 
-def test_bridges_are_crossed_with_d_towers_and_flyover_extension():
-    """Bridges and flyovers (Rule_Table 25-26): crossable at 80–90° with D towers; a flyover crossing
-    gives both crossing towers the D tower's +18 m step."""
+def test_a_flyover_on_no_highway_is_spanned_without_a_bridge_package_and_flagged():
+    """Vivek, 17 Oct 2026: bridges inherit the road they carry; the bridge rule keeps only 'no tower on the structure'.
+    A flyover with no NH / SH line on it is crossed with no forced D type or 18 m extension, no tower stands on it,
+    and the span over it carries a 'classify this structure' warning."""
     f = frame()
     c = f.length_m / 2
     fly = frame_geom(f, box(c - 10, -6000, c + 10, 6000))
     r = run_solve(solve_input({"bridges": gdf([fly], "flyover", "Test flyover")}))["routes"][0]
-    hits = [(i, x) for i, s in enumerate(r["spans"]) for x in s["crossings"] if x["rule"] == "bridges"]
-    assert hits
-    for i, x in hits:
-        for t in (r["towers"][i], r["towers"][i + 1]):
-            assert t["type"] in ("D45", "D60") and t["extension_m"] >= 18.0, (t["type"], t["extension_m"])
-        assert x["angle_deg"] >= 80 - 1e-6
+    assert not [x for s in r["spans"] for x in s["crossings"] if x["rule"] == "bridges"]
+    assert all(abs(p[0] - c) > 10 for p in towers_frame(f, r)[1:-1])
+    flagged = [t for t in r["towers"] if any(w.startswith("bridge_unclassified") for w in t["warnings"])]
+    assert len(flagged) == 1
+    assert all(t["extension_m"] < 18.0 or "flyover" not in " ".join(t["reasons"]) for t in r["towers"])
 
 
 def test_buildings_keep_every_tower_100m_away():
@@ -934,19 +934,43 @@ def test_marsh_allows_towers_on_piles():
     assert abs(comp.soil_mult[int(row), int(col)] - 1.85) < 1e-6
 
 
-def test_canal_buffers_start_at_its_edge():
-    """Vivek, 10 Oct 2026: canal lines are centrelines of a ~30 m wide canal; the 30 m tower buffer starts
-    15 m out, i.e. 45 m from the centreline. 16 Oct 2026: no parallel-conductor buffer any more."""
+def test_canal_is_a_45m_tower_setback_only():
+    """Vivek, 17 Oct 2026: one canal rule — tower centre 45 m from the mapped centreline (30 m from the edge + the 15 m
+    half-width, not added again); no wire buffer, crossing raster, crossing type, span allowance or turn limit."""
     f = frame()
-    spec = LineSpec(765, "dc")
-    rules, costs = resolve_rules(spec), resolve_costs(spec)
     c = f.length_m / 2
     canal = frame_geom(f, LineString([(c, -2500), (c, 2500)]))
-    comp = compile_rules(f, {"canal": gdf([canal], "canal", "Test canal")}, rules, costs, 765, 33.5, 150, 400)
+    comp, _, _ = _comp16(f, {"canal": gdf([canal], "canal", "Test canal")})
     tower = [vr for vr in comp.tower_nogo if vr.rule_id == "canal"]
     assert tower and abs(tower[0].d - 45.0) < 1e-6, [vr.d for vr in tower]
-    assert any(vr.hits(Point(c + 40, 0)) for vr in tower) and not any(vr.hits(Point(c + 50, 0)) for vr in tower)
+    assert any(vr.hits(Point(c + 44, 0)) for vr in tower) and not any(vr.hits(Point(c + 46, 0)) for vr in tower)
+    assert not [cr for cr in comp.crossings if cr.rule_id == "canal"]
     assert not [pr for pr in comp.parallels if pr.rule_id == "canal"]
+    assert not [vr for vr in comp.conductor_nogo if vr.rule_id == "canal"]
+
+
+def test_highways_have_no_parallel_buffer_and_bridges_inherit_the_road():
+    """Vivek, 17 Oct 2026: no NH / SH parallel-run buffer (tower setbacks from the centreline stay); a bridge keeps only
+    'no tower on the structure'; a road structure with no NH / SH line on it is listed for a 'classify' warning."""
+    f = frame()
+    c = f.length_m / 2
+    nh = frame_geom(f, LineString([(c, -2500), (c, 2500)]))
+    sh = frame_geom(f, LineString([(c + 3000, -2500), (c + 3000, 2500)]))
+    roads = gpd.GeoDataFrame({"class": ["nh", "sh"], "name": ["NH", "SH"], "confidence": [0.9, 0.9]}, geometry=[nh, sh], crs=4326)
+    on_nh = frame_geom(f, box(c - 20, -10, c + 20, 10))                  # a bridge carrying the NH
+    loose = frame_geom(f, box(c - 2000, -10, c - 1960, 10))              # a bridge on no NH / SH
+    br = gpd.GeoDataFrame({"class": ["road_bridge", "road_bridge"], "name": [None, "Village bridge"], "confidence": [0.9, 0.9],
+                           "attrs": [{"road_class": "trunk"}, {"road_class": "unclassified"}]}, geometry=[on_nh, loose], crs=4326)
+    comp, rules, _ = _comp16(f, {"roads": roads, "bridges": br})
+    assert not [pr for pr in comp.parallels if pr.rule_id in ("national_highway", "state_highway")]
+    nh_t = [vr for vr in comp.tower_nogo if vr.rule_id == "national_highway"]
+    sh_t = [vr for vr in comp.tower_nogo if vr.rule_id == "state_highway"]
+    assert nh_t and abs(nh_t[0].d - 92.5) < 1e-6 and sh_t and abs(sh_t[0].d - 87.0) < 1e-6
+    assert {cr.rule_id for cr in comp.crossings} >= {"national_highway", "state_highway"}
+    assert not [cr for cr in comp.crossings if cr.rule_id == "bridges"]
+    bt = [vr for vr in comp.tower_nogo if vr.rule_id == "bridges"]
+    assert bt and any(vr.hits(Point(c - 1980, 0)) for vr in bt) and not any(vr.hits(Point(c - 1900, 0)) for vr in bt)
+    assert len(comp.unclassified_structures) == 1 and "Village bridge" in comp.unclassified_structures[0][1]
 
 
 def test_crossing_span_slack_is_removed_by_spotting():
