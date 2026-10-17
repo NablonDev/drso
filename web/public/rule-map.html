@@ -1,0 +1,787 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Beeline Rule Map</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo+Narrow:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: a drawing-sheet. Full-width ruler on top, then the pipeline strip, then rule cards in 5 group bands, each card a parametric SVG glyph + a parameter block. */
+:root{
+  --ground:#F4F4F5; --surface:#FFFFFF; --surface-2:#F9F9FA;
+  --ink:#141316; --ink-2:#333336; --muted:#5E5F63; --faint:#86878B;
+  --rule:#D2D3D5; --rule-2:#E6E7E8;
+  --accent:#8E278F; --accent-ink:#6B1D6C; --accent-soft:#F5EAF5; --accent-line:#D7B3D7;
+  --nogo:#A33A31; --nogo-soft:#F7E6E3;
+  --cross:#9E6811; --cross-soft:#FAF0DC;
+  --go:#3B7350; --go-soft:#E5F0E7;
+  --locked:#46596A; --locked-soft:#E7EBEF;
+  --tower:#8E278F; --cond:#1F7A8C; --cond-soft:#DDEFF2;
+  --feature:#B9A796; --feature-soft:#EFE8DD; --water:#9FBACD; --forest:#6E8A5E;
+  --display:"Archivo Narrow","Arial Narrow",system-ui,sans-serif;
+  --body:"IBM Plex Sans",system-ui,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --ground:#121113; --surface:#1C1A1D; --surface-2:#242126;
+  --ink:#F3F2F4; --ink-2:#D4D3D6; --muted:#A3A1A6; --faint:#76747A;
+  --rule:#3A373C; --rule-2:#2C292E;
+  --accent:#C77BC8; --accent-ink:#E2B0E3; --accent-soft:#2E1F2E; --accent-line:#5A3C5B;
+  --nogo:#E07B70; --nogo-soft:#3A2220;
+  --cross:#D9A24A; --cross-soft:#372B16;
+  --go:#7FBF93; --go-soft:#1E2F23;
+  --locked:#9DB1C2; --locked-soft:#232B33;
+  --tower:#C77BC8; --cond:#5FB8CB; --cond-soft:#17333A;
+  --feature:#8A7A68; --feature-soft:#2E2924; --water:#4E7489; --forest:#5F7A50;
+  color-scheme:dark }}
+:root[data-theme="dark"]{
+  --ground:#121113; --surface:#1C1A1D; --surface-2:#242126;
+  --ink:#F3F2F4; --ink-2:#D4D3D6; --muted:#A3A1A6; --faint:#76747A;
+  --rule:#3A373C; --rule-2:#2C292E;
+  --accent:#C77BC8; --accent-ink:#E2B0E3; --accent-soft:#2E1F2E; --accent-line:#5A3C5B;
+  --nogo:#E07B70; --nogo-soft:#3A2220;
+  --cross:#D9A24A; --cross-soft:#372B16;
+  --go:#7FBF93; --go-soft:#1E2F23;
+  --locked:#9DB1C2; --locked-soft:#232B33;
+  --tower:#C77BC8; --cond:#5FB8CB; --cond-soft:#17333A;
+  --feature:#8A7A68; --feature-soft:#2E2924; --water:#4E7489; --forest:#5F7A50;
+  color-scheme:dark }
+
+*{box-sizing:border-box}
+body{background:var(--ground);color:var(--ink);font-family:var(--body);font-size:14px;line-height:1.45;margin:0}
+.wrap{max-width:1180px;margin:0 auto;padding-block:20px 60px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+h1,h2,h3{font-family:var(--display);text-wrap:balance;margin:0}
+h1{font-size:34px;font-weight:700;letter-spacing:.01em;line-height:1.05}
+h2{font-size:22px;font-weight:600}
+h3{font-size:15px;font-weight:600}
+.eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+p{margin:0}
+.lede{max-width:66ch;color:var(--ink-2)}
+code,.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+
+header.top{display:grid;grid-template-columns:1fr auto;gap:18px 32px;align-items:end;border-bottom:2px solid var(--ink);padding-bottom:14px}
+.kvsel{display:flex;gap:0;border:1px solid var(--rule);border-radius:6px;overflow:hidden;background:var(--surface)}
+.kvsel button{font-family:var(--mono);font-size:13px;padding:8px 14px;border:0;background:transparent;color:var(--muted);cursor:pointer;border-right:1px solid var(--rule)}
+.kvsel button:last-child{border-right:0}
+.kvsel button[aria-pressed="true"]{background:var(--accent);color:#fff}
+.kvsel button:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.kvlab{font-size:12px;color:var(--muted);margin-bottom:6px}
+
+.stamp{display:flex;flex-wrap:wrap;gap:8px 22px;margin-top:12px;font-family:var(--mono);font-size:11.5px;color:var(--muted)}
+.stamp b{color:var(--ink);font-weight:500}
+
+section{margin-top:44px}
+.sechead{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px 16px;border-bottom:1px solid var(--rule);padding-bottom:8px;margin-bottom:16px}
+.sechead .count{font-family:var(--mono);font-size:12px;color:var(--muted)}
+.sechead p{flex-basis:100%;color:var(--muted);font-size:13px;max-width:80ch}
+
+/* legend */
+.legend{display:flex;flex-wrap:wrap;gap:8px 18px;font-size:12px;color:var(--ink-2);margin:10px 0 0}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.sw{width:22px;height:0;border-top:3px solid}
+.sw.tower{border-color:var(--tower)}
+.sw.cond{border-color:var(--cond);border-top-style:dashed}
+.sw.feat{width:14px;height:12px;border:1px solid var(--feature);background:var(--feature-soft)}
+
+/* ruler */
+.ruler{background:var(--surface);border:1px solid var(--rule);border-radius:6px;padding:14px 16px;overflow-x:auto}
+.ruler svg{display:block;min-width:720px;width:100%;height:auto}
+.ruler text{font-family:var(--mono);font-size:11px;fill:var(--ink-2)}
+.ruler .axis text{fill:var(--muted);font-size:10.5px}
+.ruler .grid{stroke:var(--rule-2)}
+.ruler .axis line{stroke:var(--rule)}
+.ruler .bar.t{stroke:var(--tower);stroke-width:5}
+.ruler .bar.c{stroke:var(--cond);stroke-width:5;stroke-dasharray:4 3}
+.ruler .zero{fill:var(--faint);font-size:10px}
+
+/* pipeline */
+.flow{display:grid;grid-template-columns:repeat(6,1fr);gap:10px}
+.step{background:var(--surface);border:1px solid var(--rule);border-top:3px solid var(--accent);border-radius:4px;padding:10px 12px;min-width:0}
+.step .n{font-family:var(--mono);font-size:11px;color:var(--accent)}
+.step h3{margin:2px 0 6px}
+.step p{font-size:12.5px;color:var(--ink-2)}
+.routes{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:14px}
+.route{background:var(--surface-2);border:1px solid var(--rule);border-radius:4px;padding:10px 12px;min-width:0}
+.route .n{font-family:var(--display);font-size:20px;font-weight:700;color:var(--accent)}
+.route h3{margin:0 0 4px}
+.route p{font-size:12.5px;color:var(--ink-2)}
+@media (max-width:860px){.flow{grid-template-columns:repeat(3,1fr)}.routes{grid-template-columns:repeat(2,1fr)}}
+@media (max-width:520px){.flow{grid-template-columns:1fr 1fr}.routes{grid-template-columns:1fr}}
+
+/* group band */
+.band{border-left:4px solid var(--gcol);padding-left:14px}
+.band.lock{--gcol:var(--locked);--gsoft:var(--locked-soft)}
+.band.nogo{--gcol:var(--nogo);--gsoft:var(--nogo-soft)}
+.band.cross{--gcol:var(--cross);--gsoft:var(--cross-soft)}
+.band.gng{--gcol:var(--go);--gsoft:var(--go-soft)}
+.band.geo{--gcol:var(--accent);--gsoft:var(--accent-soft)}
+.band .sechead h2{color:var(--gcol)}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:12px}
+.card{background:var(--surface);border:1px solid var(--rule);border-radius:5px;display:flex;flex-direction:column;min-width:0;overflow:hidden}
+.card .glyph{background:var(--surface-2);border-bottom:1px solid var(--rule-2)}
+.card .glyph svg{display:block;width:100%;height:auto}
+.card .glyph text{font-family:var(--mono);font-size:9.5px;fill:var(--ink-2)}
+.card .glyph .lbl{fill:var(--muted);font-size:9px}
+.card .glyph .feat{fill:var(--feature-soft);stroke:var(--feature);stroke-width:1}
+.card .glyph .water{fill:var(--water);fill-opacity:.35;stroke:var(--water)}
+.card .glyph .t{fill:none;stroke:var(--tower);stroke-width:1.6}
+.card .glyph .c{fill:none;stroke:var(--cond);stroke-width:1.4;stroke-dasharray:4 3}
+.card .glyph .line{stroke:var(--ink);stroke-width:2;fill:none}
+.card .glyph .theirs{stroke:var(--feature);stroke-width:2.5;fill:none}
+.card .glyph .twr{fill:var(--ink)}
+.card .glyph .arc{fill:var(--cross);fill-opacity:.18;stroke:var(--cross);stroke-width:1}
+.card .glyph .hatch{fill:url(#hatch)}
+.card .glyph .ban{stroke:var(--nogo);stroke-width:2}
+.card .body{padding:10px 12px 12px;display:flex;flex-direction:column;gap:6px;flex:1}
+.card .idrow{display:flex;justify-content:space-between;gap:8px;align-items:baseline}
+.card .rid{font-family:var(--mono);font-size:10.5px;color:var(--faint)}
+.card h3{font-size:15px;line-height:1.2}
+.chips{display:flex;flex-wrap:wrap;gap:4px}
+.chip{font-family:var(--mono);font-size:10.5px;padding:2px 7px;border-radius:3px;border:1px solid var(--rule);color:var(--ink-2);background:var(--surface-2)}
+.chip.nogo{background:var(--nogo-soft);color:var(--nogo);border-color:transparent}
+.chip.last{background:var(--cross-soft);color:var(--cross);border-color:transparent}
+.chip.allow{background:var(--go-soft);color:var(--go);border-color:transparent}
+.chip.flag{background:var(--locked-soft);color:var(--locked);border-color:transparent}
+.chip.soft{background:var(--accent-soft);color:var(--accent-ink);border-color:transparent}
+.chip.lock{background:var(--locked-soft);color:var(--locked);border-color:transparent}
+.params{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;font-size:12px;margin-top:2px}
+.params dt{color:var(--muted);white-space:nowrap}
+.params dd{margin:0;font-family:var(--mono);font-variant-numeric:tabular-nums;color:var(--ink);min-width:0;overflow-wrap:anywhere}
+.params dd.guess::after{content:" ?";color:var(--cross);font-weight:600}
+.card .note{font-size:11.5px;color:var(--muted);margin-top:auto;padding-top:6px;border-top:1px dashed var(--rule-2)}
+
+/* big diagrams */
+.diag{background:var(--surface);border:1px solid var(--rule);border-radius:6px;padding:14px 16px;overflow-x:auto}
+.diag svg{display:block;width:100%;height:auto;min-width:640px}
+.diag text{font-family:var(--mono);font-size:11px;fill:var(--ink-2)}
+.diag .lbl{fill:var(--muted);font-size:10.5px}
+.diag .theirs{stroke:var(--feature);stroke-width:3;fill:none}
+.diag .ours{stroke:var(--ink);stroke-width:2.2;fill:none}
+.diag .twr{fill:var(--ink)}
+.diag .ttwr{fill:var(--feature)}
+.diag .win{fill:var(--go);fill-opacity:.18;stroke:var(--go)}
+.diag .pref{fill:var(--go);fill-opacity:.35}
+.diag .allow{fill:var(--cross);fill-opacity:.16;stroke:var(--cross)}
+.diag .ban{fill:var(--nogo);fill-opacity:.2;stroke:var(--nogo)}
+.diag .dim{stroke:var(--muted);stroke-width:1}
+.diag .arc{fill:none;stroke-width:14}
+.two{display:grid;grid-template-columns:1.25fr 1fr;gap:14px}
+@media (max-width:820px){.two{grid-template-columns:1fr}}
+.diag .cap{font-family:var(--body);font-size:12.5px;fill:var(--ink-2)}
+
+table{border-collapse:collapse;width:100%;font-size:12.5px}
+th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--rule-2);vertical-align:top}
+th{font-family:var(--mono);font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);font-weight:500}
+td.num,th.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums}
+.tblwrap{overflow-x:auto;background:var(--surface);border:1px solid var(--rule);border-radius:6px;padding:4px 8px}
+
+.steer{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px}
+.steer .item{background:var(--surface);border:1px solid var(--rule);border-radius:5px;padding:10px 12px;min-width:0}
+.steer .item h3{color:var(--accent-ink);margin-bottom:4px}
+.steer .item p{font-size:12.5px;color:var(--ink-2)}
+.gaps{columns:2;column-gap:28px;font-size:12.5px;color:var(--ink-2);max-width:100ch}
+.gaps li{break-inside:avoid;margin-bottom:6px}
+@media (max-width:640px){.gaps{columns:1}}
+ul{padding-left:18px;margin:0}
+footer{margin-top:40px;border-top:1px solid var(--rule);padding-top:10px;font-size:11.5px;color:var(--muted);font-family:var(--mono)}
+@media (prefers-reduced-motion:no-preference){.kvsel button{transition:background .15s}}
+</style>
+<style>body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <line x1="0" y1="0" x2="0" y2="6" stroke="currentColor" stroke-width="1" stroke-opacity=".45"/>
+    </pattern>
+    <marker id="ah" viewBox="0 0 6 6" refX="5" refY="3" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0,0 L6,3 L0,6 z" fill="currentColor"/>
+    </marker>
+  </defs>
+</svg>
+
+<div class="wrap">
+<header class="top">
+  <div>
+    <div class="eyebrow">Beeline route solver · rules.yaml AESL-2026.10-tsd · costs AESL-RCP3-2026.10</div>
+    <h1>Beeline Rule Map</h1>
+    <p class="lede" style="margin-top:8px">Every rule the solver applies when it draws a transmission route, drawn as geometry. Fifty-two rules in five groups, plus the search-only steering and the cost model behind the reported price. Values follow the selected line voltage; the glyphs are schematic, the ruler is to scale.</p>
+    <div class="stamp"><span>Working tree at <b>040be30</b></span><span>Config read <b>15 Oct 2026</b></span><span>Circuit costed <b>double circuit only</b></span><span>Grid <b>20 m raster · 50 m sites · 25 m refine</b></span></div>
+  </div>
+  <div>
+    <div class="kvlab">Line voltage</div>
+    <div class="kvsel" role="group" aria-label="Line voltage">
+      <button id="kv765" aria-pressed="true" data-kv="765">765 kV</button>
+      <button id="kv400" aria-pressed="false" data-kv="400">400 kV</button>
+      <button id="kv220" aria-pressed="false" data-kv="220">220 kV</button>
+      <button id="kv132" aria-pressed="false" data-kv="132">132 kV</button>
+    </div>
+  </div>
+</header>
+
+<section>
+  <div class="sechead"><h2>Buffers to scale</h2><span class="count">log scale, 10 m to 10 km</span>
+    <p>How far a new tower and the conductor must stay from each feature. Solid is the tower setback, dashed the conductor buffer. The corridor half-width (CHW) is half the notified right of way and is the smallest buffer many rules fall back to.</p></div>
+  <div class="ruler"><svg id="ruler" viewBox="0 0 1000 10" role="img" aria-label="Buffer distances per rule on a log scale"></svg></div>
+  <div class="legend"><span><i class="sw tower"></i>tower setback</span><span><i class="sw cond"></i>conductor buffer</span><span class="mono" id="chwnote"></span></div>
+</section>
+
+<section>
+  <div class="sechead"><h2>How a route is made</h2><span class="count">6 stages · 4 routes</span></div>
+  <div class="flow">
+    <div class="step"><div class="n">1</div><h3>Rule compile</h3><p>20 m raster in a frame rotated along the bee-line. Every rule becomes a tower-forbidden, angle-tower-forbidden or conductor-forbidden mask, a ₹/m² corridor cost, a crossing-direction raster or a foundation multiplier. Hill ground from the 30 m DEM.</p></div>
+    <div class="step"><div class="n">2</div><h3>GPU search</h3><p>Pylon graph: sites every 50 m along and across, spans 100 m to the design span, state = site + incoming span, tower type from the deflection band. Exact dynamic programme ordered by chainage; no backward detours.</p></div>
+    <div class="step"><div class="n">3</div><h3>25 m refinement</h3><p>The search again on a 25 m lattice, confined to 300 m either side of the 50 m solution. Kept when feasible and no dearer.</p></div>
+    <div class="step"><div class="n">4</div><h3>Forest cap</h3><p>A strict route over 5 ha of reserve forest is re-searched with forest priced up, by bisection on the multiplier up to ×1000, until it sits under the cap. Reported cost uses true prices.</p></div>
+    <div class="step"><div class="n">5</div><h3>Tower spotting</h3><p>String-pulling to angle points, exact vector re-check of every rule, 10 m cost programme along each leg, crossing towers into their exact window, section points, DEM clearance with +18 m extensions, angle-point merges and descent, single-tower polish.</p></div>
+    <div class="step"><div class="n">6</div><h3>Log and export</h3><p>Typed decision events with source and confidence, violations and warnings per tower, DXF / SHP / KML / CSV / PDF and a manifest.</p></div>
+  </div>
+  <div class="routes">
+    <div class="route"><div class="n">R1</div><h3>Least cost</h3><p>Plain objective: towers, line, land, RoW, forest, foundations.</p></div>
+    <div class="route"><div class="n">R2</div><h3>Minimum deviation</h3><p>Same solve plus ₹40,000 per metre of lateral offset per km. Overlap check waits for R1.</p></div>
+    <div class="route"><div class="n">R3</div><h3>Relaxed</h3><p>Every "Last resort" rule opened: crossable at a price, towers inside where piles are allowed, approval months reported. Protected areas stay No-Go.</p></div>
+    <div class="route"><div class="n">R4</div><h3>Second least cost</h3><p>R1's corridor priced up by ₹20,000/m within 150 m when a route shares more than 85 % of it.</p></div>
+  </div>
+</section>
+
+<div id="groups"></div>
+
+<section>
+  <div class="sechead"><h2>Crossing an existing power line</h2><span class="count">rules power_line · power_line_lt</span>
+    <p>The most constrained crossing in the set. Preferred at the wire's null point and at 90°; allowed within a band of their span and an angle window; the two crossing towers stand in a distance window from the crossed conductor.</p></div>
+  <div class="two">
+    <div class="diag"><svg id="xdiag" viewBox="0 0 640 300" role="img" aria-label="Plan view of a power-line crossing"></svg></div>
+    <div class="diag"><svg id="protractor" viewBox="0 0 420 300" role="img" aria-label="Tower type by deflection angle"></svg></div>
+  </div>
+</section>
+
+<section>
+  <div class="sechead"><h2>Search-only steering</h2><span class="count">never in the reported ₹</span>
+    <p>These pull the search one way or another. The price shown for every route is always the true cost without them.</p></div>
+  <div class="steer">
+    <div class="item"><h3>Stay near existing lines</h3><p>Spans and towers within 1,000 m of an existing line or tower of 220 kV or more get a 20 % discount on line, RoW and tower price in the search and in spotting. Parallel-spacing and crossing rules still apply.</p></div>
+    <div class="item"><h3>Avoid hills</h3><p>Hill ground = relief of at least 25 m within 250 m and mean slope of at least 3° over 270 m, patches of 5 ha or more. Surcharge ₹2 Cr per km of line and ₹1 Cr per tower on it.</p></div>
+    <div class="item"><h3>Forest cap</h3><p>Strict routes (R1, R2, R4) may take at most 5 ha of reserve forest. Met by bisection on the forest price multiplier; search surcharge per hectare is 0.</p></div>
+    <div class="item"><h3>Crossing preferences</h3><p>A power-line crossing off the null point costs the search up to 20 % of the crossing tower's price, graded from 0 at the null point. Every 25 m a crossing tower stands beyond its window maximum costs 100 % of that price.</p></div>
+    <div class="item"><h3>Route diversity</h3><p>A route sharing more than 85 % of its 150 m corridor with an earlier one is re-run with that corridor priced up ₹20,000/m.</p></div>
+    <div class="item"><h3>Learn from existing lines</h3><p>Only when a route finds no feasible path: a wetland, pond, lake, reservoir, coastal water, CRZ zone, salt pan, forest, sanctuary or park that existing towers already stand in is opened, that polygon only, and listed with the route. Crossing, built-up, substation, airport, defence, monument and dam rules are never eased.</p></div>
+  </div>
+</section>
+
+<section>
+  <div class="sechead"><h2>Cost model behind the ₹</h2><span class="count">AESL Route Cost Parameters 3 · 765 kV D/C card</span>
+    <p>Reported route cost = towers by type (normal foundation included) + body extensions + foundation extra by soil + line per km + land and RoW compensation + forest diversion. No crossing charges: heavier crossing towers are priced by type.</p></div>
+  <div class="two">
+    <div class="tblwrap"><table id="towertbl"><thead><tr><th>Tower</th><th>Deflection</th><th class="num">Price ₹ Cr</th><th class="num">Base fdn ₹ L</th><th class="num">Base m²</th></tr></thead><tbody></tbody></table></div>
+    <div class="tblwrap"><table><thead><tr><th>Item</th><th class="num">Rate</th></tr></thead><tbody>
+      <tr><td>Land, rural settled (jantri 43 ₹/m² × 15)</td><td class="num">0.645 ₹ Cr/ha</td></tr>
+      <tr><td>Corridor compensation</td><td class="num">30 % of land</td></tr>
+      <tr><td>Tower-base compensation</td><td class="num">200 % of land</td></tr>
+      <tr><td>Forest NPV (dense) + CA + plans</td><td class="num">8.61 + 1.1 + 1.6 ₹ L/ha</td></tr>
+      <tr><td>Reserve forest land</td><td class="num">0.48 ₹ Cr/ha</td></tr>
+      <tr><td>NPV multiplier, sanctuary / national park</td><td class="num">×5 / ×10</td></tr>
+      <tr><td>Line per km at 765 kV D/C (conductor 1.61, insulators 0.325, accessories 0.09, erection 0.324)</td><td class="num">2.349 ₹ Cr/km</td></tr>
+      <tr><td>Line cost factor 765 / 400 / 220 / 132</td><td class="num">1.0 / 0.4 / 0.17 / 0.10</td></tr>
+      <tr><td>Foundation: normal / black cotton / rock / piles</td><td class="num">×1.0 / 1.55 / 1.2 / 1.85</td></tr>
+      <tr><td>Body extension +18 m</td><td class="num">9.4 % of tower price</td></tr>
+      <tr><td>Building demolition (relaxed only; unused while buildings are No-Go)</td><td class="num">20,750 / 24,410 ₹/m² plinth</td></tr>
+    </tbody></table></div>
+  </div>
+</section>
+
+<section>
+  <div class="sechead"><h2>Known gaps</h2><span class="count">what cannot move the route today</span></div>
+  <ul class="gaps">
+    <li><b>Dams and Nalla</b> rules have no data layer yet.</li>
+    <li><b>International border</b> is No-Go by decision but has no layer.</li>
+    <li><b>Crossing-tower deviation</b> (the "n±1" rule) is enforced since 13 Oct 2026: each crossing tower turns at most 45°, in the search and as a spotting violation. The README line calling it a warning is stale.</li>
+    <li><b>CRZ</b> uses the sea polygon edge in place of the HTL; no CRZ I to IV zones, no clearance cost.</li>
+    <li><b>Wetland HFL</b> 50 m foundation setback has no high-flood-level data.</li>
+    <li><b>Cell towers</b> are the 2022 Tarang Sanchar scrape, about 81 % of the real count; no refresh source.</li>
+    <li><b>Dholera airport</b> has no mapped runway, so the approach funnel cannot fire there.</li>
+    <li><b>Ground clearance</b> is checked on the 30 m Copernicus DEM, not the 10 m the research asks for.</li>
+    <li><b>Other voltages</b> than 765 kV: TSD span tables, ground clearance and sag use earlier figures until their sheets arrive.</li>
+    <li><b>Backward detours</b> and corridor-guided detours round blocks wider than the band are not representable.</li>
+    <li><b>Values marked ?</b> are best guesses pending AESL confirmation.</li>
+  </ul>
+</section>
+
+<footer>Source: config/rules.yaml, config/engine.yaml, config/costs.yaml, config/layers.yaml and beeline_engine/* in production_route at 040be30. Rule and cost values can be overridden per run on the Rules and Costs screens; this page shows the defaults.</footer>
+</div>
+
+<script>
+(function(){
+'use strict';
+const CHW={765:33.5,400:23,220:17.5,132:13.5};
+const KVS=[765,400,220,132];
+let KV=765;
+const V=(x)=> (x!==null && typeof x==='object' && !Array.isArray(x)) ? x[KV] : x;
+const fmt=(x)=>{ if(x==null) return '–'; if(Array.isArray(x)) return x.map(fmt).join('–'); if(typeof x==='number') return (Math.round(x*100)/100).toLocaleString('en-IN'); return String(x); };
+const m=(x)=> fmt(V(x))+' m';
+const chw=()=> `CHW ${CHW[KV]} m`;
+
+/* ---------- rule data: every rule in config/rules.yaml, in file order ---------- */
+const GROUPS=[
+ {key:'lock', title:'Statutory minimums', desc:'Legal floors. Editable, but a change is flagged on every export.'},
+ {key:'nogo', title:'No-Go zones', desc:'The route may not enter. "Last resort" = No-Go on routes 1, 2 and 4; crossable on the relaxed route with the approval months shown.'},
+ {key:'cross', title:'Crossings', desc:'Crossable, with the angle, span and tower type set here. Both towers of a railway or national-highway crossing are angle towers, B1 at least. Every crossing span may run to 600 m regardless of the design span.'},
+ {key:'gng', title:'Land classes', desc:'Each class is routable or not, and carries a cost class. No weights are exposed: how strongly the engine prefers a class is internal.'},
+ {key:'geo', title:'Geometry and towers', desc:'Span, deviation and tower selection. No layer needed.'},
+];
+
+const RULES=[
+ /* ---- lock ---- */
+ {g:'lock',id:'building_clearance',name:'Clearance from buildings',layer:'buildings',mech:'conductor_clearance',glyph:'clearance',treat:'lock',
+  tower:null,cond:null,
+  p:()=>[['Vertical',m({765:10.6,400:5.6,220:4.6,132:4.0}),1],['Horizontal',m({765:8.9,400:5.6,220:3.8,132:2.9}),1],['Outer phase off axis',m({765:15,400:10,220:7,132:5}),KV!==765],['Ignore below','0 m²']],
+  note:'CEA 2023 Reg. 63, at maximum sag and wind deflection.'},
+ {g:'lock',id:'airport_prohibition',name:'Airport no-go and approach funnel',layer:'aviation + approach',mech:'airport_prohibition',glyph:'airport',treat:'nogo',
+  tower:6000,cond:6000,
+  p:()=>[['From the boundary','6,000 m'],['Inside the funnel','10,000 m'],['Relaxed route','1,500 m / 6,000 m'],['Approval if relaxed','12 months'],['Applies to','EHT and HT']],
+  note:'ICAO Annex 14 approach surface from each runway end: 300 m inner edge 60 m past the threshold, 15 % divergence.'},
+ {g:'lock',id:'airport_noc',name:'Airport NOC radius',layer:'aviation',mech:'flag_radius',glyph:'flag',treat:'flag',
+  tower:null,cond:null,
+  p:()=>[['Radius from ARP','20 km'],['Height source','CCZM']],
+  note:'No geometry effect. Towers inside the radius raise an event; height is governed by the AAI colour-coded zoning map.'},
+ {g:'lock',id:'pipeline_footing',name:'Pipeline tower footing',layer:'pipelines',mech:'tower_setback',glyph:'setback',treat:'lock',
+  tower:30,cond:null,
+  p:()=>[['Setback from RoW edge','30 m'],['Mitigation below','No']],
+  note:'CEA 2023 Reg. 60(4).'},
+ {g:'lock',id:'pipeline_crossing',name:'Pipeline crossing angle',layer:'pipelines',mech:'crossing',glyph:'crossing',treat:'lock',
+  tower:null,cond:30,angle:[75,105],span:600,
+  p:()=>[['Minimum angle','75°'],['Preferred','90° ± 5°'],['Max crossing span','600 m'],['Max deviation at crossing towers','45°'],['Parallel conductor buffer','30 m']],
+  note:'CEA 2023 Reg. 60(5). A parallel run inside the buffer is blocked; a geometric crossing is exempt.'},
+
+ /* ---- nogo ---- */
+ {g:'nogo',id:'buildings',name:'Buildings / manmade structure',layer:'buildings',mech:'nogo',glyph:'nogo',treat:'nogo',
+  tower:CHW,cond:CHW,
+  p:()=>[['Tower setback',chw()],['Conductor buffer',chw()],['Applies to','All towers'],['Ignore below','0 m²'],['Relaxed route crosses','≤ 10 m² structures']],
+  note:'Measured from the raw statewide footprint, compound wall included. Falling-tower setback was dropped on 13 Oct 2026.'},
+ {g:'nogo',id:'clusters',name:'Built-up cluster (village)',layer:'clusters (derived)',mech:'nogo',glyph:'nogo',treat:'nogo',
+  tower:200,cond:200,
+  p:()=>[['Tower buffer','200 m'],['Conductor buffer','200 m'],['Cluster: buildings within','50 m'],['Minimum cluster area','9,000 m²']],
+  note:'Cluster threshold is an AESL assumption, not a regulation.'},
+ {g:'nogo',id:'plotted_land',name:'Plotted land',layer:'plotted',mech:'nogo',glyph:'nogo',treat:'nogo',
+  tower:100,cond:100,
+  p:()=>[['Tower buffer','100 m'],['Conductor buffer','100 m']],
+  note:'Rule_Table 19-20.'},
+ {g:'nogo',id:'substations',name:'Sub-station',layer:'substations',mech:'nogo',glyph:'substation',treat:'nogo',
+  tower:100,cond:CHW,
+  p:()=>[['Tower buffer','100 m'],['Conductor buffer',chw()],['Gantry buffer','10 m'],['Terminal yard within','150 m of A / B'],['Gantry to first tower','≥ 100 m'],['Dead-end tower deviation','≤ 15°']],
+  note:'The terminal yard is carved out; A and B are gantries, first and last towers are dead-ends.'},
+ {g:'nogo',id:'dams',name:'Dams',layer:'dams (no data yet)',mech:'nogo',glyph:'nogo',treat:'nogo',
+  tower:500,cond:500,
+  p:()=>[['Buffer','500 m'],['Crossing','Prohibited']],
+  note:'Rule_Table 21-22. Dam axes and register points await the water master.'},
+ {g:'nogo',id:'solar',name:'Solar park',layer:'solar',mech:'nogo',glyph:'nogo',treat:'nogo',
+  tower:150,cond:150,
+  p:()=>[['Tower buffer','150 m'],['Conductor buffer','150 m']],
+  note:'Reduced from 300 m by the change of 17 May 2024.'},
+ {g:'nogo',id:'creek',name:'Creek area',layer:'other_water · creek',mech:'nogo',glyph:'nogo',water:true,treat:'last',
+  tower:500,cond:500,
+  p:()=>[['Buffer','500 m'],['Treatment','Last resort'],['Relaxed: towers inside','Yes, on piles'],['Approval if crossed','12 months']],
+  note:'Rule_Table 63-64.'},
+ {g:'nogo',id:'reservoir',name:'Reservoir',layer:'reservoir',mech:'nogo',glyph:'nogo',water:true,treat:'last',
+  tower:200,cond:200,
+  p:()=>[['Tower buffer','200 m'],['Conductor buffer','200 m'],['Treatment','Last resort'],['Relaxed: towers inside','No'],['Approval if crossed','6 months']],
+  note:'Rule_Table 35-36. On the relaxed route the span may cross; towers stay 200 m from the water.'},
+ {g:'nogo',id:'lake',name:'Lake',layer:'lake',mech:'nogo',glyph:'nogo',water:true,treat:'last',
+  tower:CHW,cond:CHW,
+  p:()=>[['Tower buffer',chw()],['Conductor buffer',chw()],['Treatment','Last resort'],['Relaxed: towers inside','No'],['Approval if crossed','6 months']],
+  note:'Rule_Table 39-40.'},
+ {g:'nogo',id:'pond',name:'Pond',layer:'pond',mech:'nogo',glyph:'nogo',water:true,treat:'last',
+  tower:30,cond:30,
+  p:()=>[['Tower buffer','30 m'],['Conductor buffer','30 m'],['Treatment','Last resort'],['Relaxed: towers inside','No'],['Approval if crossed','6 months']],
+  note:'Rule_Table 41-42. Aquaculture ponds included.'},
+ {g:'nogo',id:'other_water',name:'Other water bodies',layer:'other_water',mech:'nogo',glyph:'nogo',water:true,treat:'nogo',
+  tower:0,cond:0,
+  p:()=>[['Classes','beach, coral reef, lagoon, mud flat, salt marsh, mangrove, detected water, 25 km marine buffer'],['Buffers','0 m / 0 m'],['Treatment','No-Go']],
+  note:'Includes the Rann mud flats and the marine screening buffer. Creeks and salt pans have their own rules.'},
+ {g:'nogo',id:'protected_areas',name:'National park, sanctuary, ESZ',layer:'national_park + wildlife_sanctuary + forest_in_pa + eco_sensitive_zone',mech:'nogo',glyph:'nogo',forest:true,treat:'nogo',
+  tower:0,cond:0,
+  p:()=>[['Buffers','0 m / 0 m'],['Treatment','No-Go, relaxed route too'],['Eased only by','Learn from existing lines'],['Diversion if eased','≤ 5 ha RO 6 mo · ≤ 40 ha REC 12 · > 40 ha Conservator 18']],
+  note:'Forest package 2 (13 Oct 2026). The international border is No-Go but has no layer.'},
+ {g:'nogo',id:'crz',name:'Coastal regulation zone',layer:'crz',mech:'nogo',glyph:'nogo',water:true,treat:'last',
+  tower:CHW,cond:CHW,
+  p:()=>[['Tower buffer from the sea',chw()],['Conductor buffer',chw()],['Treatment','Last resort'],['Relaxed: towers inside','Yes, on piles'],['Approval if crossed','12 months']],
+  note:'Measured from the sea polygon edge until the HTL is delivered. No CRZ clearance cost.'},
+ {g:'nogo',id:'cell_towers',name:'Cell tower',layer:'telecom',mech:'nogo',glyph:'point',treat:'nogo',
+  tower:210,cond:210,
+  p:()=>[['Tower buffer','210 m'],['Conductor buffer','210 m']],
+  note:'Rule_Table 13: 200 m from a 10 m radial base. Tarang Sanchar 2022 sites.'},
+ {g:'nogo',id:'wind_turbines',name:'Wind turbine',layer:'wind_turbines',mech:'nogo',glyph:'point',treat:'nogo',
+  tower:210,cond:210,
+  p:()=>[['Tower buffer','210 m'],['Conductor buffer','210 m']],
+  note:'Rule_Table 3-4: 200 m from a 10 m radial base.'},
+ {g:'nogo',id:'village_roads',name:'Village road',layer:'village_roads',mech:'tower_setback',glyph:'setback',treat:'nogo',
+  tower:30,cond:null,
+  p:()=>[['Tower setback','30 m'],['Conductor','crosses at any angle']],
+  note:'Rule_Table 31-32 (MDR, village roads, cart tracks).'},
+ {g:'nogo',id:'defence',name:'Defence land',layer:'defence',mech:'nogo',glyph:'nogo',treat:'nogo',
+  tower:CHW,cond:CHW,
+  p:()=>[['Tower buffer',chw()],['Conductor buffer',chw()],['Crossing','No-Go']],
+  note:'Rule_Table 57-58.'},
+ {g:'nogo',id:'monuments',name:'Monument and fort',layer:'monuments',mech:'nogo',glyph:'nogo',treat:'nogo',
+  tower:100,cond:100,
+  p:()=>[['Tower buffer','100 m'],['Conductor buffer','100 m'],['Crossing','No-Go']],
+  note:'Rule_Table 93-94.'},
+
+ /* ---- cross ---- */
+ {g:'cross',id:'railway_platforms',name:'Railway platform',layer:'rail_platforms · platform',mech:'nogo',glyph:'nogo',treat:'nogo',
+  tower:200,cond:CHW,
+  p:()=>[['Tower setback','200 m'],['Conductor buffer (not crossing)',chw()]],
+  note:'Indian Railways platform polygons (14 Oct 2026).'},
+ {g:'cross',id:'platform_crossing_zone',name:'No crossing near a station',layer:'rail_platforms · platform_crossing_zone',mech:'nogo',glyph:'station',treat:'nogo',
+  tower:0,cond:0,
+  p:()=>[['Zone','platform + 1,500 m beyond each end, along the long side'],['Buffers','0 m / 0 m']],
+  note:'The line may not cross the railway anywhere inside the zone.'},
+ {g:'cross',id:'railway',name:'Railway line',layer:'rail',mech:'crossing',glyph:'crossing',treat:'cross',
+  tower:86,cond:CHW,angle:[80,100],span:300,type:'D',
+  p:()=>[['Tower setback from centreline','86 m'],['Parallel conductor buffer',chw()],['Crossing angle','80–100°, 90° ± 5° preferred'],['Max crossing span','300 m'],['Crossing tower type','D'],['Max deviation at crossing towers','45°']],
+  note:'TSD A. Both crossing towers are angle towers.'},
+ {g:'cross',id:'national_highway',name:'National highway',layer:'roads · nh',mech:'crossing',glyph:'crossing',treat:'cross',
+  tower:{765:92.5,400:80,220:80,132:80},cond:320,angle:[80,100],span:600,type:'B/C/D',
+  p:()=>[['Tower setback from centreline',m({765:92.5,400:80,220:80,132:80})],['Parallel-run setback','320 m'],['Crossing angle','80–100°, 90° ± 5° preferred'],['Max crossing span','600 m'],['Crossing tower type','B/C/D'],['Max deviation at crossing towers','45°']],
+  note:'TSD H. 72.5 m tower height + 20 m half-carriageway at 765 kV. Both crossing towers are angle towers.'},
+ {g:'cross',id:'state_highway',name:'State highway',layer:'roads · sh',mech:'crossing',glyph:'crossing',treat:'cross',
+  tower:87,cond:{765:40.5,400:30,220:24.5,132:20.5},angle:[70,110],span:600,type:'A/B/C/D',
+  p:()=>[['Tower setback from centreline','87 m'],['Parallel conductor buffer',m({765:40.5,400:30,220:24.5,132:20.5})],['Crossing angle','70–110°, 90° ± 5° preferred'],['Max crossing span','600 m'],['Crossing tower type','A/B/C/D'],['Max deviation at crossing towers','45°']],
+  note:'Rule_Table 29-30: 80 m from the edge + 7 m half-carriageway.'},
+ {g:'cross',id:'bridges',name:'Bridges and flyovers',layer:'bridges',mech:'crossing',glyph:'crossing',treat:'cross',
+  tower:0,cond:null,angle:[80,100],span:600,type:'D',
+  p:()=>[['Tower on the deck','never (0 m buffer)'],['Crossing angle','80–100°, 90° ± 5° preferred'],['Max crossing span','600 m'],['Crossing tower type','D'],['Flyover: tower extension','+18 m'],['Max deviation at crossing towers','45°']],
+  note:'Rule_Table 25-26. Road bridge, rail bridge, flyover, underpass decks.'},
+ {g:'cross',id:'river',name:'River',layer:'river',mech:'crossing',glyph:'crossing',water:true,treat:'cross',
+  tower:150,cond:150,angle:[75,105],span:600,type:'A/B/C · D ≥ 600 m',
+  p:()=>[['Bank buffer each side','150 m'],['Parallel conductor buffer','150 m'],['Crossing angle','90° ± 15°, 90° ± 5° preferred'],['Max crossing span','600 m'],['Major crossing (≥ 600 m wide)','D towers'],['Minor crossing','A/B/C'],['Max deviation at crossing towers','45°']],
+  note:'Rule_Table 37-38. Crossing towers raised by the height the sag needs.'},
+ {g:'cross',id:'canal',name:'Canal',layer:'canal',mech:'crossing',glyph:'crossing',water:true,treat:'cross',
+  tower:45,cond:45,angle:null,span:600,type:'A/B/C',
+  p:()=>[['Canal half-width added','15 m'],['Tower buffer from the edge','30 m (45 m from centreline)'],['Parallel conductor buffer','30 m from the edge'],['Crossing angle','Any'],['Max crossing span','600 m'],['Tower type','A/B/C'],['Crossing span','exempt from the parallel check']],
+  note:'Rule_Table 79-80. Spans running alongside inside the buffer stay blocked.'},
+ {g:'cross',id:'nalla',name:'Nalla',layer:'nalla (no data yet)',mech:'crossing',glyph:'crossing',water:true,treat:'cross',
+  tower:40,cond:40,angle:null,span:600,type:'A/B/C',
+  p:()=>[['Tower buffer from centreline','40 m'],['Parallel conductor buffer','40 m'],['Crossing angle','Any'],['Max crossing span','600 m'],['Tower type','A/B/C'],['Max deviation at crossing towers','45°']],
+  note:'Rule_Table 81-82: 30 m from the edge of a 20 m nalla.'},
+ {g:'cross',id:'power_line',name:'High tension power line',layer:'power · 765 / 400 / 220 / 132 kV (+ HVDC)',mech:'crossing',glyph:'powerline',treat:'cross',
+  tower:{765:72.5,400:55,220:40,132:32},cond:CHW,angle:[70,110],span:null,type:'B/C/D · D ≥ 400 kV',
+  p:()=>[['Our tower to their tower',m({765:72.5,400:55,220:40,132:32})],['Our tower to their conductor','80 m'],['Our conductor to their tower','80 m'],['Our conductor parallel to theirs',chw()],['Crossing point','null point ± 5 % preferred, ± 20 % allowed'],['Unmapped span: clear of a tower','80 m'],['Crossing angle','70–110° from 66 kV, 90° ± 5° preferred'],['Crossing towers from the wire',fmt(V({765:[87,123],400:[66,94],220:[48,68],132:[38,54]}))+' m each side'],['Beyond the maximum','100 % of tower price per 25 m'],['Off-preference allowance','20 % of tower price, graded'],['Tower type','B/C/D; D for lines ≥ 400 kV'],['Max deviation at crossing towers','45°']],
+  note:'The side window bounds the crossing span; the minimum is hard. A falling tower must not reach another line.'},
+ {g:'cross',id:'power_line_lt',name:'Low tension power line',layer:'power_lt · 66 / 33 kV',mech:'crossing',glyph:'powerline',treat:'cross',
+  tower:{765:72.5,400:55,220:40,132:32},cond:CHW,angle:[70,110],span:null,type:'A/B/C/D',
+  p:()=>[['Our tower to their pole',m({765:72.5,400:55,220:40,132:32})],['Our tower to their conductor','80 m'],['Our conductor to their pole',chw()],['Our conductor parallel to theirs',chw()],['Crossing point','null point ± 5 % preferred, ± 20 % allowed'],['Crossing angle','70–110° from 66 kV, 90° ± 5° preferred'],['Crossing towers from the wire',fmt(V({765:[87,123],400:[66,94],220:[48,68],132:[38,54]}))+' m each side'],['Beyond the maximum','100 % of tower price per 25 m'],['Off-preference allowance','20 % of tower price, graded'],['Tower type','A/B/C/D'],['Max deviation at crossing towers','45°']],
+  note:'Poles 60–100 m apart, so the conductor keeps only CHW from poles (TSD B.3).'},
+
+ /* ---- gng ---- */
+ {g:'gng',id:'forest',name:'Reserve and protected forest',layer:'reserve_forest + forest_in_pa',mech:'landclass',glyph:'land',forest:true,treat:'allow',
+  tower:CHW,cond:null,
+  p:()=>[['Treatment','Allowed, diversion needed'],['Buffer',chw()],['Cap per strict route','5 ha'],['Regional Office threshold','5 ha'],['Conservator threshold','40 ha'],['Search surcharge','0 ₹ Cr/ha'],['Cost class','forest']],
+  note:'Diversion priced at NPV + CA + plans + RF land. The relaxed route is exempt from the cap.'},
+ {g:'gng',id:'agriculture',name:'Agricultural land',layer:'lulc · agriculture, fallow',mech:'landclass',glyph:'land',treat:'allow',
+  tower:CHW,cond:null,
+  p:()=>[['Treatment','Allowed'],['Buffer',chw()],['Cost class','agriculture']],
+  note:'Corridor compensation across the RoW from the Costs screen. LULC layer hidden until a delivery: all land is costed non-agricultural.'},
+ {g:'gng',id:'orchard',name:'Orchard and plantation',layer:'lulc · orchard',mech:'landclass',glyph:'land',treat:'last',
+  tower:CHW,cond:null,
+  p:()=>[['Treatment','Last resort'],['Relaxed: towers inside','Yes'],['Buffer',chw()],['Cost class','orchard']],
+  note:'Rule_Table 85-86.'},
+ {g:'gng',id:'marsh',name:'Marshy land',layer:'lulc · marsh + soil marshy_land',mech:'landclass',glyph:'land',water:true,treat:'allow',
+  tower:50,cond:null,
+  p:()=>[['Treatment','Allowed, on piles'],['Buffer','50 m fixed'],['Foundation','×1.85 (wet / submerged)'],['Cost class','barren']],
+  note:'Existing lines run through the soil-map marsh (10 Oct 2026).'},
+ {g:'gng',id:'salt_pans',name:'Salt pans',layer:'lulc · salt_pan + soil salt_pans',mech:'landclass',glyph:'land',water:true,treat:'last',
+  tower:200,cond:null,
+  p:()=>[['Treatment','Last resort'],['Buffer','200 m fixed'],['Relaxed: towers inside','Yes, on piles'],['Approval if crossed','12 months'],['Cost class','barren']],
+  note:'Rule_Table 59-60.'},
+ {g:'gng',id:'salt_pan_water',name:'Salt pans (water bodies)',layer:'other_water · salt_pan',mech:'nogo',glyph:'nogo',water:true,treat:'last',
+  tower:200,cond:200,
+  p:()=>[['Tower buffer','200 m'],['Conductor buffer','200 m'],['Treatment','Last resort'],['Relaxed: towers inside','Yes, on piles'],['Approval if crossed','12 months']],
+  note:'Same rule for salt pans mapped in the water package.'},
+ {g:'gng',id:'wetland',name:'Wetland',layer:'wet_land',mech:'landclass',glyph:'land',water:true,treat:'allow',
+  tower:0,cond:null,
+  p:()=>[['Treatment','Allowed, on piles'],['Buffer','None'],['Foundation','×1.85'],['Cost class','barren']],
+  note:'Rule_Table 75-76. 50 m HFL setback awaits data.'},
+ {g:'gng',id:'social_forest',name:'Social forest',layer:'social_forest',mech:'landclass',glyph:'land',forest:true,treat:'allow',
+  tower:0,cond:null,
+  p:()=>[['Treatment','Allowed'],['Buffer','0 m fixed'],['Strip width from infrastructure','30 m'],['Cost class','social_forest']],
+  note:'Planted strip along a road, canal or railway.'},
+ {g:'gng',id:'barren',name:'Shrubs, barren and hard rock',layer:'lulc · shrub, barren, hard_rock, sand_dunes, unclassified + soil hard_rock, sand_dunes',mech:'landclass',glyph:'land',treat:'allow',
+  tower:0,cond:null,
+  p:()=>[['Treatment','Allowed'],['Buffer','0 m'],['Foundation','rock ×1.2 · dunes ×1.85'],['Cost class','barren']],
+  note:'Cheapest ground on any corridor.'},
+
+ /* ---- geo ---- */
+ {g:'geo',id:'max_deviation',name:'Maximum angular deviation',layer:'none',mech:'geometry',glyph:'deviation',treat:'geo',
+  p:()=>[['Limit','60°']],note:'Top of the largest tower class (D60).'},
+ {g:'geo',id:'design_span',name:'Design span and hills',layer:'DEM',mech:'geometry',glyph:'span',treat:'geo',
+  p:()=>[['Plain terrain',m({765:400,400:400,220:350,132:320})],['Hilly terrain',m({765:400,400:400,220:350,132:320})],['Hilly span: rise over','10 m between towers'],['Hilly towers','tension, B1 at least'],['Hill ground','relief ≥ 25 m in 250 m and slope ≥ 3° over 270 m, patches ≥ 5 ha'],['Hill surcharge (search)','₹2 Cr/km + ₹1 Cr/tower'],['Urban span',m({765:250,400:250,220:225,132:200}),1]],
+  note:'Hard maximum in search and spotting. TSD 765 kV: adjacent-span sum by deviation, one span ≤ 60 % of it, wind span 400 m.'},
+ {g:'geo',id:'section_interval',name:'Section point interval',layer:'none',mech:'geometry',glyph:'section',treat:'geo',
+  p:()=>[['Plain','5 km or 15 spans'],['Hilly','3 km or 10 spans']],note:'A suspension tower is upgraded to B1 where tension towers are further apart.'},
+ {g:'geo',id:'corridor_half_width',name:'Corridor half-width',layer:'none',mech:'geometry',glyph:'corridor',treat:'geo',
+  p:()=>[['Half-width',chw(),1],['Urban half-width',m({765:27,400:20,220:15,132:12}),1]],note:'Half the notified RoW (MoP guidelines 2015). Many buffers fall back to it.'},
+ {g:'geo',id:'approach_section',name:'Approach section near substation',layer:'none',mech:'geometry',glyph:'approach',treat:'geo',
+  p:()=>[['Length from each gantry','2,000 m'],['Approach half-width',m({765:27,400:19,220:12,132:9.5})],['Approach span','design span'],['Go zone round each gantry','500 m'],['In the go zone','only a tower base on a substation or existing tower is banned; ≥ 220 kV crossings keep their angle window only']],
+  note:'CEA Technical Standards 2025 Schedule VII. CHW-tied buffers shrink with the approach width.'},
+ {g:'geo',id:'existing_line_proximity',name:'Stay close to existing lines',layer:'power',mech:'soft',glyph:'soft',treat:'soft',
+  p:()=>[['Within','1,000 m'],['Span discount (search)','20 %'],['Tower discount (search)','20 %'],['Existing lines from','220 kV']],note:'Search only; reported cost is the true cost.'},
+ {g:'geo',id:'precedent_easing',name:'Learn from existing lines',layer:'power',mech:'soft',glyph:'ease',treat:'soft',
+  p:()=>[['When no route is found','Ease'],['Opens','the one polygon existing towers stand in'],['Never eased','crossings, built-up, substation, airport, defence, monument, dam']],note:'Sanctuary, park or forest then needs diversion approval by area.'},
+ {g:'geo',id:'tower_type_bands',name:'Tower type by deviation',layer:'none',mech:'geometry',glyph:'bands',treat:'geo',
+  p:()=>[['A up to','2°'],['B1 up to','15°'],['C1 up to','30°'],['D45 up to','45°'],['D60 up to','60°']],note:'Five types of Route Cost Parameters 3. The band a deflection falls in picks the tower.'},
+ {g:'geo',id:'crossing_span_limits',name:'Span limits at a crossing',layer:'none',mech:'geometry',glyph:'minspan',treat:'geo',
+  p:()=>[['Minimum span','100 m'],['Angle point shift allowance','100 m'],['Search slack on crossing spans','25 m']],note:'The minimum stands in for the falling-tower distance. The spotting slides crossing towers to the exact limit.'},
+];
+
+const TREAT={nogo:['No-Go','nogo'],last:['Last resort','last'],allow:['Allowed','allow'],flag:['Flag only','flag'],lock:['Statutory','lock'],cross:['Crossable','last'],soft:['Search only','soft'],geo:['Geometry','soft']};
+
+/* ---------- glyphs ---------- */
+const S=(x)=>String(x).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function twr(x,y,s=5){return `<path class="twr" d="M${x-s},${y+s} L${x},${y-s} L${x+s},${y+s} z"/>`;}
+function glyph(r){
+  const W=270,H=120; let g='';
+  const tv=r.tower==null?null:V(r.tower), cv=r.cond==null?null:V(r.cond);
+  const featFill = r.water?'water':(r.forest?'feat hatch':'feat');
+  switch(r.glyph){
+   case 'nogo': case 'point': {
+     const cx=135, cy=62;
+     const feat = r.glyph==='point' ? `<circle cx="${cx}" cy="${cy}" r="4" class="twr"/>` :
+       `<path class="${featFill}" style="color:var(--forest)" d="M${cx-34},${cy-18} L${cx+10},${cy-26} L${cx+36},${cy-6} L${cx+22},${cy+22} L${cx-26},${cy+20} L${cx-40},${cy+2} z"/>`;
+     const tR = tv==null?null: (tv===0?44:Math.min(58, 44+Math.log10(tv+1)*5));
+     const cR = cv==null?null: (cv===0?44:Math.min(58, 44+Math.log10(cv+1)*5));
+     let rings='';
+     if(cR!=null) rings+=`<rect class="c" x="${cx-cR-6}" y="${cy-cR+12}" width="${2*cR+12}" height="${2*cR-24}" rx="18"/>`;
+     if(tR!=null) rings+=`<rect class="t" x="${cx-tR-2}" y="${cy-tR+14}" width="${2*tR+4}" height="${2*tR-28}" rx="16"/>`;
+     const ban = r.treat==='nogo' ? `<line class="ban" x1="${cx-14}" y1="${cy-8}" x2="${cx+14}" y2="${cy+8}"/><line class="ban" x1="${cx+14}" y1="${cy-8}" x2="${cx-14}" y2="${cy+8}"/>` : '';
+     const tl = tv==null?'':`<text x="8" y="16" style="fill:var(--tower)">tower ${tv===0?'at edge':fmt(tv)+' m'}</text>`;
+     const cl = cv==null?'':`<text x="${W-8}" y="16" text-anchor="end" style="fill:var(--cond)">conductor ${cv===0?'at edge':fmt(cv)+' m'}</text>`;
+     g=feat+ban+rings+tl+cl+`<text class="lbl" x="${cx}" y="${H-6}" text-anchor="middle">${S(r.layer)}</text>`;
+     break; }
+   case 'setback': {
+     g=`<line class="theirs" x1="20" y1="60" x2="250" y2="60"/><line class="t" x1="20" y1="40" x2="250" y2="40"/><line class="t" x1="20" y1="80" x2="250" y2="80"/>
+        <line class="line" x1="90" y1="100" x2="190" y2="20"/>${twr(90,100)}${twr(190,20)}
+        <text x="24" y="36" style="fill:var(--tower)">tower ${fmt(tv)} m each side</text><text class="lbl" x="24" y="98">conductor crosses freely</text>`;
+     break; }
+   case 'clearance': {
+     g=`<rect class="feat" x="40" y="48" width="70" height="56"/><path class="feat" d="M36,48 L75,28 L114,48 z"/>
+        <line class="line" x1="110" y1="26" x2="260" y2="26"/><line class="line" x1="150" y1="26" x2="260" y2="26"/>
+        <circle cx="200" cy="26" r="3" class="twr"/><text x="206" y="22">outer phase</text>
+        <line class="dim" style="stroke:var(--cond)" x1="75" y1="28" x2="75" y2="12" marker-end="url(#ah)"/><text x="80" y="12" style="fill:var(--cond)">vertical ${fmt(V({765:10.6,400:5.6,220:4.6,132:4.0}))} m</text>
+        <line class="dim" style="stroke:var(--cond)" x1="114" y1="60" x2="150" y2="60" marker-end="url(#ah)"/><text x="118" y="76" style="fill:var(--cond)">horiz ${fmt(V({765:8.9,400:5.6,220:3.8,132:2.9}))} m</text>
+        <line class="dim" x1="200" y1="100" x2="200" y2="34"/><line class="dim" x1="200" y1="100" x2="260" y2="100"/><text class="lbl" x="204" y="112">axis to outer phase ${fmt(V({765:15,400:10,220:7,132:5}))} m</text>
+        <line x1="20" y1="104" x2="260" y2="104" style="stroke:var(--rule)"/>`;
+     break; }
+   case 'airport': {
+     g=`<rect class="feat" x="100" y="48" width="60" height="26"/><line x1="100" y1="61" x2="160" y2="61" style="stroke:var(--ink);stroke-width:2"/>
+        <path class="arc" d="M160,56 L262,30 L262,92 L160,66 z"/><path class="arc" d="M100,56 L8,30 L8,92 L100,66 z"/>
+        <rect class="t" x="80" y="30" width="100" height="62" rx="10"/>
+        <text x="110" y="44" style="fill:var(--tower)">6 km</text><text x="200" y="24" style="fill:var(--cross)">funnel 10 km</text>
+        <text class="lbl" x="130" y="112" text-anchor="middle">relaxed route 1.5 km / 6 km</text>`;
+     break; }
+   case 'flag': {
+     g=`<rect class="feat" x="110" y="52" width="50" height="20"/><circle cx="135" cy="62" r="50" style="fill:none;stroke:var(--locked);stroke-dasharray:2 4"/>
+        <text x="135" y="20" text-anchor="middle" style="fill:var(--locked)">NOC radius 20 km</text><text class="lbl" x="135" y="112" text-anchor="middle">event only, no mask</text>`;
+     break; }
+   case 'substation': {
+     g=`<rect class="feat" x="20" y="34" width="60" height="56"/><text class="lbl" x="24" y="30">terminal yard</text>
+        <rect class="feat" x="190" y="30" width="56" height="60"/><text class="lbl" x="192" y="26">other substation</text>
+        <circle cx="80" cy="62" r="3" class="twr"/><text class="lbl" x="60" y="104">gantry</text>
+        <line class="line" x1="80" y1="62" x2="160" y2="56"/>${twr(160,56)}<text x="140" y="46">≥ 100 m, ≤ 15°</text>
+        <rect class="t" x="182" y="22" width="72" height="76"/><rect class="c" x="186" y="26" width="64" height="68"/>
+        <text x="186" y="112" style="fill:var(--tower)">tower 100 m</text><text x="200" y="12" text-anchor="start" style="fill:var(--cond)">cond ${CHW[KV]} m</text>`;
+     break; }
+   case 'station': {
+     g=`<line class="theirs" x1="10" y1="62" x2="260" y2="62"/><rect class="feat" x="110" y="52" width="50" height="8"/>
+        <rect class="ban" style="fill:var(--nogo);fill-opacity:.15" x="20" y="48" width="230" height="28"/>
+        <text x="30" y="40" style="fill:var(--nogo)">1,500 m</text><text x="200" y="40" style="fill:var(--nogo)">1,500 m</text><text class="lbl" x="135" y="92" text-anchor="middle">platform</text>
+        <text class="lbl" x="135" y="112" text-anchor="middle">no railway crossing inside the zone</text>`;
+     break; }
+   case 'crossing': {
+     const a = r.angle; const half = a? (a[1]-a[0])/2 : 90;
+     const cx=135, cy=64;
+     const arc = a ? `<path class="arc" d="M${cx},${cy} L${cx+ 60*Math.cos((-90-half)*Math.PI/180)},${cy+60*Math.sin((-90-half)*Math.PI/180)} A60,60 0 0,1 ${cx+60*Math.cos((-90+half)*Math.PI/180)},${cy+60*Math.sin((-90+half)*Math.PI/180)} z"/>` : `<path class="arc" d="M${cx},${cy} L${cx-60},${cy} A60,60 0 0,1 ${cx+60},${cy} z"/>`;
+     const feat = r.water ? `<rect class="water" x="10" y="${cy-8}" width="250" height="16"/>` : `<line class="theirs" x1="10" y1="${cy}" x2="260" y2="${cy}"/>`;
+     const tb = tv==null?'':`<line class="t" x1="10" y1="${cy-28}" x2="260" y2="${cy-28}"/><line class="t" x1="10" y1="${cy+28}" x2="260" y2="${cy+28}"/>`;
+     const cb = cv==null?'':`<line class="c" x1="10" y1="${cy-20}" x2="260" y2="${cy+20-40}"/><line class="c" x1="10" y1="${cy+20}" x2="260" y2="${cy+20}"/>`;
+     g=feat+tb+cb+arc+`<line class="line" x1="${cx-10}" y1="${cy+52}" x2="${cx+10}" y2="${cy-52}"/>${twr(cx-10,cy+52)}${twr(cx+10,cy-52)}
+        <text x="8" y="14" style="fill:var(--tower)">${tv==null?'':'tower '+fmt(tv)+' m'}</text><text x="${W-8}" y="14" text-anchor="end" style="fill:var(--cond)">${cv==null?'':'parallel '+fmt(cv)+' m'}</text>
+        <text x="${cx+16}" y="${cy-36}" style="fill:var(--cross)">${a?a[0]+'–'+a[1]+'°':'any angle'}</text>
+        <text x="8" y="${H-6}">${r.span?'span ≤ '+fmt(r.span)+' m':'span by window'}</text><text x="${W-8}" y="${H-6}" text-anchor="end">${S(r.type||'')}</text>`;
+     break; }
+   case 'powerline': {
+     const cy=64; const sw=V({765:[87,123],400:[66,94],220:[48,68],132:[38,54]});
+     g=`<line class="theirs" x1="10" y1="${cy}" x2="260" y2="${cy}"/>${twr(30,cy,5).replace('class="twr"','class="twr" style="fill:var(--feature)"')}${twr(240,cy,5).replace('class="twr"','class="twr" style="fill:var(--feature)"')}
+        <rect x="30" y="${cy-6}" width="42" height="12" style="fill:var(--nogo);fill-opacity:.25"/><rect x="198" y="${cy-6}" width="42" height="12" style="fill:var(--nogo);fill-opacity:.25"/>
+        <rect x="93" y="${cy-6}" width="84" height="12" style="fill:var(--cross);fill-opacity:.2"/><rect x="125" y="${cy-6}" width="20" height="12" style="fill:var(--go);fill-opacity:.45"/>
+        <line class="line" x1="128" y1="${cy+44}" x2="142" y2="${cy-44}"/>${twr(128,cy+44)}${twr(142,cy-44)}
+        <text x="135" y="12" text-anchor="middle" style="fill:var(--go)">null point ± 5 %</text><text x="135" y="${cy-28}" text-anchor="middle" style="fill:var(--cross)">± 20 % allowed</text>
+        <text x="32" y="${cy+20}" style="fill:var(--nogo)">20 % banned</text><text x="238" y="${cy+20}" text-anchor="end" style="fill:var(--nogo)">20 % banned</text>
+        <text x="150" y="${cy+40}" style="fill:var(--tower)">${sw[0]}–${sw[1]} m each side</text><text class="lbl" x="8" y="${H-6}">70–110°, 90° preferred</text><text x="${W-8}" y="${H-6}" text-anchor="end">${S(r.type)}</text>`;
+     break; }
+   case 'land': {
+     const col = r.forest?'var(--forest)':(r.water?'var(--water)':'var(--feature)');
+     const buf = tv? `<rect class="t" x="30" y="24" width="210" height="80" rx="6"/><text x="34" y="20" style="fill:var(--tower)">buffer ${fmt(tv)} m</text>` : '';
+     const chipc = TREAT[r.treat][1];
+     g=`<rect class="hatch" style="color:${col}" x="46" y="38" width="178" height="52"/><rect x="46" y="38" width="178" height="52" style="fill:none;stroke:${col}"/>${buf}
+        <line class="line" x1="20" y1="90" x2="250" y2="40"/>${twr(60,81)}${twr(135,65)}${twr(210,49)}
+        <text x="135" y="${H-6}" text-anchor="middle" style="fill:var(--${chipc==='allow'?'go':chipc==='last'?'cross':'nogo'})">${S(TREAT[r.treat][0])}</text>`;
+     break; }
+   case 'deviation': {
+     g=`<line class="line" x1="20" y1="90" x2="135" y2="90"/><line class="line" x1="135" y1="90" x2="${135+100*Math.cos(-60*Math.PI/180)}" y2="${90+100*Math.sin(-60*Math.PI/180)}"/>
+        <path class="arc" d="M175,90 A40,40 0 0,0 ${135+40*Math.cos(-60*Math.PI/180)},${90+40*Math.sin(-60*Math.PI/180)} L135,90 z"/>${twr(135,90)}<text x="182" y="66" style="fill:var(--cross)">≤ 60°</text>
+        <text class="lbl" x="20" y="112">deflection at any tower</text>`;
+     break; }
+   case 'span': {
+     const ds=V({765:400,400:400,220:350,132:320});
+     g=`<path d="M10,96 Q70,92 110,70 T200,60 T260,90" style="fill:none;stroke:var(--feature);stroke-width:2"/>
+        <line class="line" x1="40" y1="60" x2="130" y2="60"/><line class="line" x1="130" y1="60" x2="220" y2="60"/>${twr(40,60)}${twr(130,60)}${twr(220,60)}
+        <line class="dim" x1="40" y1="44" x2="130" y2="44" marker-start="url(#ah)" marker-end="url(#ah)"/><text x="85" y="40" text-anchor="middle">≤ ${ds} m</text>
+        <line class="dim" x1="226" y1="92" x2="226" y2="62" marker-start="url(#ah)" marker-end="url(#ah)"/><text x="232" y="80">rise &gt; 10 m = hilly, B1</text>
+        <text class="lbl" x="10" y="112">hill ground: relief ≥ 25 m, slope ≥ 3°, +₹2 Cr/km +₹1 Cr/tower (search)</text>`;
+     break; }
+   case 'section': {
+     let t='';for(let i=0;i<9;i++){t+=twr(20+i*29,60,i%8===0?7:4);}
+     g=`<line class="line" x1="20" y1="60" x2="252" y2="60"/>${t}<line class="dim" x1="20" y1="36" x2="252" y2="36" marker-start="url(#ah)" marker-end="url(#ah)"/><text x="136" y="30" text-anchor="middle">≤ 5 km / 15 spans (hilly 3 km / 10)</text>
+        <text class="lbl" x="136" y="92" text-anchor="middle">B1 section tower at each end</text>`;
+     break; }
+   case 'corridor': {
+     const h=CHW[KV];
+     g=`<rect x="10" y="${62-h}" width="250" height="${2*h}" style="fill:var(--accent-soft);stroke:var(--accent-line)"/><line class="line" x1="10" y1="62" x2="260" y2="62"/>${twr(60,62)}${twr(200,62)}
+        <line class="dim" x1="130" y1="62" x2="130" y2="${62-h}" marker-end="url(#ah)"/><text x="136" y="${58-h/2}">${h} m</text><text class="lbl" x="135" y="112" text-anchor="middle">RoW ${2*h} m · urban ${V({765:27,400:20,220:15,132:12})} m half</text>`;
+     break; }
+   case 'approach': {
+     const ah=V({765:27,400:19,220:12,132:9.5});
+     g=`<rect class="feat" x="10" y="44" width="30" height="36"/><circle cx="40" cy="62" r="3" class="twr"/>
+        <circle cx="40" cy="62" r="34" style="fill:var(--go);fill-opacity:.15;stroke:var(--go)"/><text x="48" y="22" style="fill:var(--go)">go zone 500 m</text>
+        <rect x="40" y="${62-ah}" width="140" height="${2*ah}" style="fill:var(--accent-soft);stroke:var(--accent-line)"/><rect x="180" y="${62-CHW[KV]}" width="80" height="${2*CHW[KV]}" style="fill:var(--accent-soft);stroke:var(--accent-line)"/>
+        <line class="line" x1="40" y1="62" x2="260" y2="62"/>${twr(110,62)}${twr(180,62)}${twr(250,62)}
+        <text x="110" y="104" text-anchor="middle">2 km at ${ah} m half</text><text x="220" y="104" text-anchor="middle">then ${CHW[KV]} m</text>`;
+     break; }
+   case 'soft': {
+     g=`<line class="theirs" x1="10" y1="40" x2="260" y2="46"/><rect x="10" y="20" width="250" height="52" style="fill:var(--accent-soft);fill-opacity:.7"/>
+        <line class="line" x1="20" y1="60" x2="250" y2="64"/>${twr(60,61)}${twr(135,62)}${twr(210,63)}
+        <text x="14" y="34" style="fill:var(--feature)">existing ≥ 220 kV line</text><text x="135" y="92" text-anchor="middle" style="fill:var(--accent-ink)">within 1 km: −20 % spans and towers (search)</text>`;
+     break; }
+   case 'ease': {
+     g=`<path class="water" d="M60,30 L220,26 L236,80 L120,98 L40,74 z"/>${twr(110,60,5).replace('class="twr"','class="twr" style="fill:var(--feature)"')}${twr(170,54,5).replace('class="twr"','class="twr" style="fill:var(--feature)"')}
+        <line class="theirs" x1="20" y1="66" x2="260" y2="48"/><line class="line" x1="20" y1="84" x2="260" y2="70"/>${twr(90,79)}${twr(200,74)}
+        <text x="135" y="18" text-anchor="middle">existing towers stand here → opened for this route</text><text class="lbl" x="135" y="112" text-anchor="middle">only when no feasible path exists</text>`;
+     break; }
+   case 'bands': {
+     const bands=[['A',0,2,'var(--go)'],['B1',2,15,'var(--cond)'],['C1',15,30,'var(--accent)'],['D45',30,45,'var(--cross)'],['D60',45,60,'var(--nogo)']];
+     const cx=40,cy=100,R=90; let s='';
+     for(const [n,a0,a1,c] of bands){const p0=[cx+R*Math.cos(-a0*Math.PI/180),cy+R*Math.sin(-a0*Math.PI/180)],p1=[cx+R*Math.cos(-a1*Math.PI/180),cy+R*Math.sin(-a1*Math.PI/180)];
+       s+=`<path d="M${cx},${cy} L${p0[0]},${p0[1]} A${R},${R} 0 0,0 ${p1[0]},${p1[1]} z" style="fill:${c};fill-opacity:.25;stroke:${c}"/>`;
+       const am=(a0+a1)/2*Math.PI/180; s+=`<text x="${cx+(R+14)*Math.cos(-am)}" y="${cy+(R+14)*Math.sin(-am)+3}" style="fill:${c}">${n} ≤${a1}°</text>`;}
+     g=s+`<line class="line" x1="${cx}" y1="${cy}" x2="${cx+R}" y2="${cy}"/>`;
+     break; }
+   case 'minspan': {
+     g=`<line class="theirs" x1="10" y1="62" x2="260" y2="62"/><line class="line" x1="80" y1="100" x2="190" y2="24"/>${twr(80,100)}${twr(190,24)}
+        <line class="dim" x1="80" y1="108" x2="190" y2="108" marker-start="url(#ah)" marker-end="url(#ah)"/><text x="135" y="118" text-anchor="middle">≥ 100 m</text>
+        <line class="dim" x1="170" y1="24" x2="210" y2="24" marker-start="url(#ah)" marker-end="url(#ah)"/><text x="214" y="28">shift ≤ 100 m</text>`;
+     break; }
+  }
+  return `<svg viewBox="0 0 ${W} ${H}" aria-hidden="true">${g}</svg>`;
+}
+
+/* ---------- cards ---------- */
+function renderGroups(){
+  const root=document.getElementById('groups'); let html='';
+  for(const G of GROUPS){
+    const rs=RULES.filter(r=>r.g===G.key);
+    html+=`<section class="band ${G.key}"><div class="sechead"><h2>${S(G.title)}</h2><span class="count">${rs.length} rules</span><p>${S(G.desc)}</p></div><div class="cards">`;
+    for(const r of rs){
+      const [tl,tc]=TREAT[r.treat];
+      const params=r.p().map(([k,v,guess])=>`<dt>${S(k)}</dt><dd class="${guess?'guess':''}">${S(v)}</dd>`).join('');
+      html+=`<article class="card" id="${r.id}"><div class="glyph">${glyph(r)}</div><div class="body">
+        <div class="idrow"><span class="rid">${r.id}</span><span class="rid">${S(r.mech)}</span></div>
+        <h3>${S(r.name)}</h3>
+        <div class="chips"><span class="chip ${tc}">${tl}</span><span class="chip">${S(r.layer)}</span></div>
+        <dl class="params">${params}</dl>
+        <p class="note">${S(r.note)}</p></div></article>`;
+    }
+    html+=`</div></section>`;
+  }
+  root.innerHTML=html;
+}
+
+/* ---------- ruler ---------- */
+function renderRuler(){
+  const rows=RULES.filter(r=>(r.tower!=null&&V(r.tower)!=null)||(r.cond!=null&&V(r.cond)!=null)).map(r=>({name:r.name,t:r.tower==null?null:V(r.tower),c:r.cond==null?null:V(r.cond),g:r.g}))
+    .sort((a,b)=>Math.max(b.t??-1,b.c??-1)-Math.max(a.t??-1,a.c??-1));
+  const L=250,R=990,top=26,rh=15,W=1000,H=top+rows.length*rh+30;
+  const x=(v)=> v<=0? L : L+(Math.log10(v)-1)/(4-1)*(R-L);
+  let s=`<g class="axis">`;
+  for(const v of [10,20,50,100,200,500,1000,2000,5000,10000]){ s+=`<line class="grid" x1="${x(v)}" y1="${top-6}" x2="${x(v)}" y2="${H-24}"/><text x="${x(v)}" y="${H-10}" text-anchor="middle">${v>=1000?(v/1000)+' km':v+' m'}</text>`; }
+  s+=`<line x1="${L}" y1="${H-22}" x2="${R}" y2="${H-22}"/></g>`;
+  const chwx=x(CHW[KV]); s+=`<line x1="${chwx}" y1="${top-6}" x2="${chwx}" y2="${H-24}" style="stroke:var(--accent);stroke-dasharray:3 3"/><text x="${chwx+4}" y="${top-10}" style="fill:var(--accent)">CHW ${CHW[KV]} m</text>`;
+  rows.forEach((r,i)=>{ const y=top+i*rh+8;
+    s+=`<text x="${L-8}" y="${y+4}" text-anchor="end">${S(r.name)}</text>`;
+    if(r.t!=null){ if(r.t>0) s+=`<line class="bar t" x1="${L}" y1="${y-2}" x2="${x(r.t)}" y2="${y-2}"/>`; else s+=`<text class="zero" x="${L+4}" y="${y+1}">0 · at the edge</text>`; }
+    if(r.c!=null && r.c>0) s+=`<line class="bar c" x1="${L}" y1="${y+4}" x2="${x(r.c)}" y2="${y+4}"/>`;
+    const mx=Math.max(r.t??0,r.c??0); if(mx>0) s+=`<text x="${x(mx)+5}" y="${y+4}">${r.t!=null&&r.c!=null&&r.t!==r.c?fmt(r.t)+' / '+fmt(r.c):fmt(mx)}</text>`;
+  });
+  const svg=document.getElementById('ruler'); svg.setAttribute('viewBox',`0 0 ${W} ${H}`); svg.innerHTML=s;
+  document.getElementById('chwnote').textContent=`CHW at ${KV} kV = ${CHW[KV]} m · tower height ${V({765:72.5,400:55,220:40,132:32})} m`;
+}
+
+/* ---------- crossing diagram ---------- */
+function renderXdiag(){
+  const sw=V({765:[87,123],400:[66,94],220:[48,68],132:[38,54]});
+  const cy=150, x0=40, x1=600, span=x1-x0; // their span 560 px = 400 m
+  const pxm=span/400;
+  const nullx=(x0+x1)/2;
+  let s=`<line class="theirs" x1="${x0}" y1="${cy}" x2="${x1}" y2="${cy}"/>`;
+  s+=`<path class="ttwr" d="M${x0-7},${cy+9} L${x0},${cy-9} L${x0+7},${cy+9} z"/><path class="ttwr" d="M${x1-7},${cy+9} L${x1},${cy-9} L${x1+7},${cy+9} z"/>`;
+  s+=`<text class="lbl" x="${x0}" y="${cy+26}" text-anchor="middle">their tower</text><text class="lbl" x="${x1}" y="${cy+26}" text-anchor="middle">their tower</text>`;
+  s+=`<rect class="ban" x="${x0}" y="${cy-8}" width="${span*0.2}" height="16"/><rect class="ban" x="${x1-span*0.2}" y="${cy-8}" width="${span*0.2}" height="16"/>`;
+  s+=`<rect class="allow" x="${nullx-span*0.2}" y="${cy-8}" width="${span*0.4}" height="16"/><rect class="pref" x="${nullx-span*0.05}" y="${cy-8}" width="${span*0.1}" height="16"/>`;
+  s+=`<text x="${x0+span*0.1}" y="${cy-14}" text-anchor="middle" style="fill:var(--nogo)">20 % banned</text><text x="${x1-span*0.1}" y="${cy-14}" text-anchor="middle" style="fill:var(--nogo)">20 % banned</text>`;
+  s+=`<text x="${nullx}" y="${cy-14}" text-anchor="middle" style="fill:var(--go)">null point ± 5 % preferred · ± 20 % allowed, penalty graded</text>`;
+  // our line crossing at 90
+  const d1=sw[0]*pxm, d2=sw[1]*pxm;
+  s+=`<rect class="win" x="${nullx-14}" y="${cy-d2}" width="28" height="${d2-d1}"/><rect class="win" x="${nullx-14}" y="${cy+d1}" width="28" height="${d2-d1}"/>`;
+  s+=`<line class="ours" x1="${nullx}" y1="${cy-d2-20}" x2="${nullx}" y2="${cy+d2+20}"/>`;
+  s+=`<path class="twr" d="M${nullx-6},${cy-d1-4} L${nullx},${cy-d1-16} L${nullx+6},${cy-d1-4} z"/><path class="twr" d="M${nullx-6},${cy+d1+16} L${nullx},${cy+d1+4} L${nullx+6},${cy+d1+16} z"/>`;
+  s+=`<text x="${nullx+20}" y="${cy-d1-4}">crossing tower ${sw[0]}–${sw[1]} m from the wire</text><text x="${nullx+20}" y="${cy+d2+2}">min hard · beyond max: 100 % of tower price per 25 m</text>`;
+  s+=`<text x="${nullx+20}" y="${cy-d2-24}">our line: 70–110°, 90° ± 5° preferred</text>`;
+  s+=`<text class="cap" x="${x0}" y="22">Plan view, their span 400 m. Our tower ≥ ${V({765:72.5,400:55,220:40,132:32})} m from their towers and 80 m from their conductor; our conductor 80 m from their towers (CHW from 66 / 33 kV poles), CHW ${CHW[KV]} m when parallel.</text>`;
+  s+=`<text class="cap" x="${x0}" y="290">Both crossing towers: D for lines ≥ 400 kV, else B/C/D (HT) or A/B/C/D (LT); deviation ≤ 45° each; n±1 deviation reported as a warning only.</text>`;
+  document.getElementById('xdiag').innerHTML=s;
+}
+
+/* ---------- protractor ---------- */
+const TOWERS={765:{A:[0.4765,11.0,729],B1:[0.6886,14.0,784],C1:[0.7803,16.0,784],D45:[0.9754,18.4,784],D60:[1.1085,23.0,784]},
+  400:{A:[0.2144,3.5,256],B1:[0.3099,6.0,289],C1:[0.3511,12.0,289],D45:[0.4389,12.85,441],D60:[0.4988,15.0,441]},
+  220:{A:[0.0953,1.3,60.84],B1:[0.1377,1.6,121],C1:[0.1561,1.8,144],D45:[0.1951,2.5,196],D60:[0.1951,2.5,196]},
+  132:{A:[0.0524,0.93,49],B1:[0.0757,0.97,81],C1:[0.0858,1.1,110.25],D45:[0.1073,1.5,169],D60:[0.1073,1.5,169]}};
+const BANDS=[['A',0,2,'var(--go)','0–2°'],['B1',2,15,'var(--cond)','2–15°'],['C1',15,30,'var(--accent)','15–30°'],['D45',30,45,'var(--cross)','30–45°'],['D60',45,60,'var(--nogo)','45–60°']];
+function renderProtractor(){
+  const cx=40,cy=250,R=200; let s='';
+  for(const [n,a0,a1,c,lab] of BANDS){
+    const p0=[cx+R*Math.cos(-a0*Math.PI/180),cy+R*Math.sin(-a0*Math.PI/180)],p1=[cx+R*Math.cos(-a1*Math.PI/180),cy+R*Math.sin(-a1*Math.PI/180)];
+    s+=`<path d="M${cx},${cy} L${p0[0]},${p0[1]} A${R},${R} 0 0,0 ${p1[0]},${p1[1]} z" style="fill:${c};fill-opacity:.22;stroke:${c}"/>`;
+    const am=(a0+a1)/2*Math.PI/180, r2=R+16;
+    s+=`<text x="${cx+r2*Math.cos(-am)}" y="${cy+r2*Math.sin(-am)+4}" style="fill:${c};font-weight:500">${n} ${lab}</text>`;
+    s+=`<text x="${cx+r2*Math.cos(-am)}" y="${cy+r2*Math.sin(-am)+16}" class="lbl">₹ ${TOWERS[KV][n][0]} Cr</text>`;
+  }
+  for(const a of [0,10,20,30,40,50,60]){ const p=[cx+(R+4)*Math.cos(-a*Math.PI/180),cy+(R+4)*Math.sin(-a*Math.PI/180)]; s+=`<line class="dim" x1="${cx+(R-6)*Math.cos(-a*Math.PI/180)}" y1="${cy+(R-6)*Math.sin(-a*Math.PI/180)}" x2="${p[0]}" y2="${p[1]}"/>`; }
+  s+=`<line class="ours" x1="${cx}" y1="${cy}" x2="${cx+R}" y2="${cy}"/><path class="twr" d="M${cx-7},${cy+8} L${cx},${cy-8} L${cx+7},${cy+8} z"/>`;
+  s+=`<text class="cap" x="${cx}" y="22">Tower type by deflection at ${KV} kV. Over 60° is not allowed.</text><text class="cap" x="${cx}" y="40">Hilly spans and section points force B1 at least; railway and NH crossings force angle towers.</text>`;
+  document.getElementById('protractor').innerHTML=s;
+  const tb=document.querySelector('#towertbl tbody'); tb.innerHTML=BANDS.map(([n,,,,lab])=>{const t=TOWERS[KV][n];return `<tr><td class="mono">${n}</td><td>${lab}</td><td class="num">${t[0]}</td><td class="num">${t[1]}</td><td class="num">${t[2]}</td></tr>`;}).join('');
+}
+
+function renderAll(){ renderRuler(); renderGroups(); renderXdiag(); renderProtractor(); }
+document.querySelectorAll('.kvsel button').forEach(b=>b.addEventListener('click',()=>{
+  KV=Number(b.dataset.kv); document.querySelectorAll('.kvsel button').forEach(x=>x.setAttribute('aria-pressed',String(x===b))); renderAll();
+  try{localStorage.setItem('beeline-kv',String(KV));}catch(e){}
+}));
+try{const k=Number(localStorage.getItem('beeline-kv')); if(KVS.includes(k)){KV=k; document.querySelectorAll('.kvsel button').forEach(x=>x.setAttribute('aria-pressed',String(Number(x.dataset.kv)===k)));}}catch(e){}
+renderAll();
+})();
+</script>
+</body>
+</html>

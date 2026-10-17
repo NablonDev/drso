@@ -1,0 +1,369 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Beeline Solver Simulator</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo+Narrow:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one canvas stage with a stage strip above and a one-line HUD below. Everything else is the picture. */
+:root{
+  --ground:#F4F4F5; --surface:#FFFFFF; --surface-2:#F9F9FA; --ink:#141316; --ink-2:#333336; --muted:#5E5F63; --faint:#86878B;
+  --rule:#D2D3D5; --rule-2:#E6E7E8; --accent:#8E278F; --accent-ink:#6B1D6C; --accent-soft:#F5EAF5;
+  --nogo:#A33A31; --cross:#9E6811; --go:#3B7350; --tower:#8E278F; --cond:#1F7A8C;
+  --feature:#B9A796; --feature-soft:#EFE8DD; --water:#7FA6BF; --forest:#6E8A5E; --agri:#E6ECD9; --hill:#C9B8A4; --marsh:#B9CFC4;
+  --r1:#8E278F; --r2:#1F7A8C; --r3:#9E6811; --r4:#3B7350;
+  --display:"Archivo Narrow","Arial Narrow",system-ui,sans-serif; --body:"IBM Plex Sans",system-ui,sans-serif; --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --ground:#121113; --surface:#1C1A1D; --surface-2:#242126; --ink:#F3F2F4; --ink-2:#D4D3D6; --muted:#A3A1A6; --faint:#76747A;
+  --rule:#3A373C; --rule-2:#2C292E; --accent:#C77BC8; --accent-ink:#E2B0E3; --accent-soft:#2E1F2E;
+  --nogo:#E07B70; --cross:#D9A24A; --go:#7FBF93; --tower:#C77BC8; --cond:#5FB8CB;
+  --feature:#8A7A68; --feature-soft:#2E2924; --water:#4E7489; --forest:#5F7A50; --agri:#26291F; --hill:#3A332B; --marsh:#223530;
+  --r1:#C77BC8; --r2:#5FB8CB; --r3:#D9A24A; --r4:#7FBF93; color-scheme:dark }}
+:root[data-theme="dark"]{
+  --ground:#121113; --surface:#1C1A1D; --surface-2:#242126; --ink:#F3F2F4; --ink-2:#D4D3D6; --muted:#A3A1A6; --faint:#76747A;
+  --rule:#3A373C; --rule-2:#2C292E; --accent:#C77BC8; --accent-ink:#E2B0E3; --accent-soft:#2E1F2E;
+  --nogo:#E07B70; --cross:#D9A24A; --go:#7FBF93; --tower:#C77BC8; --cond:#5FB8CB;
+  --feature:#8A7A68; --feature-soft:#2E2924; --water:#4E7489; --forest:#5F7A50; --agri:#26291F; --hill:#3A332B; --marsh:#223530;
+  --r1:#C77BC8; --r2:#5FB8CB; --r3:#D9A24A; --r4:#7FBF93; color-scheme:dark }
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--ground);color:var(--ink);font-family:var(--body);font-size:14px;line-height:1.45}
+img{max-width:100%}[hidden]{display:none!important}
+.wrap{max-width:1120px;margin:0 auto;padding-block:16px 40px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+h1{font-family:var(--display);font-size:28px;font-weight:700;margin:0;line-height:1.05}
+.eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+header{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:end;gap:10px 20px;border-bottom:2px solid var(--ink);padding-bottom:10px}
+header p{margin:4px 0 0;color:var(--ink-2);max-width:70ch}
+.stages{display:flex;flex-wrap:wrap;gap:4px;margin-top:12px}
+.stages button{font-family:var(--mono);font-size:12px;padding:6px 10px;border:1px solid var(--rule);background:var(--surface);color:var(--muted);border-radius:4px;cursor:pointer;min-width:0}
+.stages button[aria-current="step"]{background:var(--accent);color:#fff;border-color:var(--accent)}
+.stages button.done{color:var(--ink)}
+.stages button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.controls{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:10px}
+.controls button{font-family:var(--mono);font-size:13px;padding:7px 14px;border:1px solid var(--rule);background:var(--surface-2);color:var(--ink);border-radius:5px;cursor:pointer}
+.controls button.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+.controls button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.controls label{font-family:var(--mono);font-size:12px;color:var(--muted);display:flex;align-items:center;gap:6px}
+.controls input[type=range]{width:120px;accent-color:var(--accent)}
+.stage{margin-top:10px;background:var(--surface);border:1px solid var(--rule);border-radius:6px;overflow:hidden}
+.stage canvas{display:block;width:100%;height:auto;cursor:crosshair}
+.hud{display:grid;grid-template-columns:1fr auto;gap:8px 16px;align-items:center;padding:10px 14px;border-top:1px solid var(--rule-2);background:var(--surface-2)}
+.hud .say{font-size:14.5px;color:var(--ink);min-width:0}
+.hud .say b{font-family:var(--display);font-size:17px;color:var(--accent-ink);margin-right:8px}
+.hud .cost{font-family:var(--mono);font-size:13px;color:var(--ink);text-align:right;white-space:nowrap}
+.hud .cost small{display:block;color:var(--muted);font-size:11px}
+@media (max-width:640px){.hud{grid-template-columns:1fr}.hud .cost{text-align:left}}
+.bar{display:flex;height:10px;border-radius:3px;overflow:hidden;background:var(--rule-2);margin-top:6px}
+.bar div{height:100%}
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;padding:8px 14px;border-top:1px solid var(--rule-2);font-size:12px;color:var(--ink-2)}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.legend i{display:inline-block;width:14px;height:11px;border-radius:2px;border:1px solid var(--rule)}
+.routes{display:none;grid-template-columns:repeat(4,1fr);gap:8px;padding:10px 14px;border-top:1px solid var(--rule-2)}
+.routes.show{display:grid}
+.routes div{font-family:var(--mono);font-size:12px;min-width:0}
+.routes b{display:block;font-family:var(--display);font-size:16px}
+@media (max-width:640px){.routes{grid-template-columns:1fr 1fr}}
+footer{margin-top:14px;font-size:11.5px;color:var(--muted);font-family:var(--mono)}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div>
+    <div class="eyebrow">Beeline route solver · the real search logic on a sample corridor</div>
+    <h1>Beeline Solver Simulator</h1>
+    <p>Watch the solver work on an 8 km × 3 km sample band. Everything you see is the engine's own method at toy scale: 100 m sites instead of 50, the same rules, prices, dynamic programme and spotting. Hover any point during or after the sweep to see the cheapest chain that reaches it.</p>
+  </div>
+</header>
+
+<div class="stages" id="stages" role="group" aria-label="Stages"></div>
+<div class="controls">
+  <button id="play" class="primary">Play</button>
+  <button id="next">Next stage</button>
+  <button id="prev">Previous</button>
+  <button id="restart">Restart</button>
+  <label>speed <input id="speed" type="range" min="1" max="8" value="3"></label>
+  <label><input id="auto" type="checkbox" checked> auto-advance</label>
+</div>
+
+<div class="stage">
+  <canvas id="cv" width="1040" height="440" aria-label="Solver simulation"></canvas>
+  <div class="hud">
+    <div class="say" id="say"></div>
+    <div class="cost" id="cost"></div>
+  </div>
+  <div class="legend" id="legend"></div>
+  <div class="routes" id="routes"></div>
+</div>
+<footer>Sample data only. Prices from costs.yaml (765 kV D/C): A 0.4765, B1 0.6886, C1 0.7803, D45 0.9754, D60 1.1085 ₹ Cr; line 2.349 ₹ Cr/km; RoW 30 % of 0.645 ₹ Cr/ha across 67 m; forest NPV + CA + plans 11.31 ₹ L/ha; lateral penalty 16,000 ₹ per tower per metre; forest cap 5 ha; hill 2 Cr/km + 1 Cr/tower (search only); near-line discount 20 % (search only).</footer>
+</div>
+
+<script>
+(function(){
+'use strict';
+/* ============================ world ============================ */
+const LEN=8000, HALF=1500, RES=20, SX=100, SY=100;
+const PX=8, OX=20, OY=20;                    // 8 m per px
+const C=LEN/SX+1, R=2*HALF/SY+1, R0=HALF/SY;
+const W=Math.round(LEN/RES), Hh=Math.round(2*HALF/RES);
+const CRORE=1e7;
+const PRICE={A:0.4765*CRORE,B1:0.6886*CRORE,C1:0.7803*CRORE,D45:0.9754*CRORE,D60:1.1085*CRORE};
+const TYPES=['A','B1','C1','D45','D60'], BANDS=[2,15,30,45,60];
+const LINE_RS_M=2.349*CRORE/1000, CORR_W=67, SPAN_MAX=400, SPAN_MIN=100, DEV_MAX=60, DEAD_END_DEV=15;
+const LAND_M2=0.645*CRORE/1e4, STRIP_AGRI=LAND_M2*0.30, STRIP_FOREST=(8.61+1.1+1.6)*1e5/1e4+0.48*CRORE/1e4*0.30;
+const BASE_COMP=729*LAND_M2*2.0, FDN_A=11e5;
+const HILL_RS_M=2*CRORE/1000, HILL_TOWER=1*CRORE, NEAR_DISC=0.2, LAT_PEN=16000, FOREST_CAP_HA=5, DIV_PEN=20000, DIV_CORR=150;
+const XL={angle:[70,110], sideMin:87, sideMax:123, relaxPer25:PRICE.D45, nullPref:0.05, nullAllow:0.2, nullPen:0.2*PRICE.D45, theirSpan:400, towerSet:72.5, condSet:80};
+const RIVER={angle:[75,105], bank:150, width:120};
+
+const village=[[1950,120],[2100,20],[2380,60],[2520,250],[2480,520],[2250,640],[2000,560],[1880,340]];
+const houses=[[1500,-900],[3900,820],[6950,-620],[4900,1100]];
+const pond={c:[3300,-640],r:160}, marsh={c:[3300,-640],r:380};
+const river=[[4350,1520],[4450,900],[4400,300],[4550,-300],[4500,-900],[4650,-1520]];
+const forest=[[5450,-320],[5900,-380],[6400,-250],[6750,100],[6700,700],[6350,1000],[5800,980],[5450,760],[5300,300]];
+const exline={a:[5950,-1520],b:[7150,1520]};
+const hill={c:[1300,-760],r:430};
+const yardA=[-150,-150,150,150], yardB=[LEN-150,-150,LEN+150,150];
+const extowers=(()=>{const d=Math.hypot(exline.b[0]-exline.a[0],exline.b[1]-exline.a[1]);const n=Math.round(d/XL.theirSpan);const out=[];for(let i=0;i<=n;i++){const t=i/n;out.push([exline.a[0]+t*(exline.b[0]-exline.a[0]),exline.a[1]+t*(exline.b[1]-exline.a[1])]);}return out;})();
+
+/* ---------- geometry helpers ---------- */
+const d2=(ax,ay,bx,by)=>Math.hypot(ax-bx,ay-by);
+function dSeg(px,py,ax,ay,bx,by){const dx=bx-ax,dy=by-ay;const l2=dx*dx+dy*dy;let t=l2?((px-ax)*dx+(py-ay)*dy)/l2:0;t=Math.max(0,Math.min(1,t));return Math.hypot(px-(ax+t*dx),py-(ay+t*dy));}
+function dPoly(px,py,pts,closed){let m=Infinity;for(let i=0;i<pts.length-(closed?0:1);i++){const a=pts[i],b=pts[(i+1)%pts.length];m=Math.min(m,dSeg(px,py,a[0],a[1],b[0],b[1]));}return m;}
+function inPoly(px,py,pts){let ins=false;for(let i=0,j=pts.length-1;i<pts.length;j=i++){const a=pts[i],b=pts[j];if((a[1]>py)!==(b[1]>py)&&px<(b[0]-a[0])*(py-a[1])/(b[1]-a[1])+a[0])ins=!ins;}return ins;}
+function segInter(p,q,a,b){const d=(q[0]-p[0])*(b[1]-a[1])-(q[1]-p[1])*(b[0]-a[0]);if(Math.abs(d)<1e-9)return null;const t=((a[0]-p[0])*(b[1]-a[1])-(a[1]-p[1])*(b[0]-a[0]))/d;const u=((a[0]-p[0])*(q[1]-p[1])-(a[1]-p[1])*(q[0]-p[0]))/d;if(t<0||t>1||u<0||u>1)return null;return [p[0]+t*(q[0]-p[0]),p[1]+t*(q[1]-p[1]),u];}
+function acuteAngle(ax,ay,bx,by){const d=Math.abs(Math.atan2(ay,ax)-Math.atan2(by,bx))*180/Math.PI;let a=d%180;if(a>90)a=180-a;return a;} // 0..90
+function crossRiver(p,q){for(let i=0;i<river.length-1;i++){const x=segInter(p,q,river[i],river[i+1]);if(x){const a=acuteAngle(q[0]-p[0],q[1]-p[1],river[i+1][0]-river[i][0],river[i+1][1]-river[i][1]);return {pt:x,angle:a};}}return null;}
+function crossLine(p,q){const x=segInter(p,q,exline.a,exline.b);if(!x)return null;const a=acuteAngle(q[0]-p[0],q[1]-p[1],exline.b[0]-exline.a[0],exline.b[1]-exline.a[1]);const L=Math.hypot(exline.b[0]-exline.a[0],exline.b[1]-exline.a[1]);const along=x[2]*L;const k=Math.round(along/XL.theirSpan);const toTower=Math.abs(along-k*XL.theirSpan);const spanPos=(along%XL.theirSpan)/XL.theirSpan;const fromNull=Math.abs(spanPos-0.5);return {pt:x,angle:a,toTower,fromNull};}
+const dLine=(x,y)=>dSeg(x,y,exline.a[0],exline.a[1],exline.b[0],exline.b[1]);
+const dTowerEx=(x,y)=>{let m=Infinity;for(const t of extowers)m=Math.min(m,d2(x,y,t[0],t[1]));return m;};
+
+/* ---------- raster: the compiled rules ---------- */
+const ras={tf:new Uint8Array(W*Hh),cf:new Uint8Array(W*Hh),cfPond:new Uint8Array(W*Hh),price:new Float32Array(W*Hh),forest:new Uint8Array(W*Hh),hill:new Uint8Array(W*Hh),soil:new Float32Array(W*Hh),near:new Uint8Array(W*Hh),reason:new Uint8Array(W*Hh)};
+const RZ={village:1,house:2,pond:3,river:4,line:5,yard:6};
+function cellXY(i){const cx=i%W,cy=(i/W)|0;return [(cx+0.5)*RES,HALF-(cy+0.5)*RES];}
+function cellAt(x,y){if(x<-1||x>LEN+1||y<-HALF-1||y>HALF+1)return -1;const cx=Math.min(W-1,Math.max(0,Math.floor(x/RES))),cy=Math.min(Hh-1,Math.max(0,Math.floor((HALF-y)/RES)));return cy*W+cx;}
+(function build(){
+  for(let i=0;i<W*Hh;i++){const [x,y]=cellXY(i);
+    let tf=0,cf=0,cfp=0,rz=0;
+    const dv=inPoly(x,y,village)?0:dPoly(x,y,village,true); if(dv<=200){tf=1;cf=1;rz=RZ.village;}
+    for(const h of houses){if(d2(x,y,h[0],h[1])<=33.5+12){tf=1;cf=1;rz=rz||RZ.house;}}
+    const dp=d2(x,y,pond.c[0],pond.c[1])-pond.r; if(dp<=30){tf=1;cfp=1;rz=rz||RZ.pond;}
+    const dr=dPoly(x,y,river,false); if(dr<=RIVER.width/2+RIVER.bank){tf=1;rz=rz||RZ.river;}   // towers off the banks; the wire crosses the water
+    if(dTowerEx(x,y)<=XL.towerSet||dLine(x,y)<=XL.condSet){tf=1;rz=rz||RZ.line;}
+    if(dTowerEx(x,y)<=XL.condSet){cf=1;}
+    const inA=x>=yardA[0]&&x<=yardA[2]&&Math.abs(y)<=150, inB=x>=yardB[0]&&Math.abs(y)<=150; if(inA||inB){tf=1;rz=RZ.yard;}
+    ras.tf[i]=tf;ras.cf[i]=cf;ras.cfPond[i]=cfp;ras.reason[i]=rz;
+    const f=inPoly(x,y,forest);ras.forest[i]=f?1:0;ras.price[i]=f?STRIP_FOREST:STRIP_AGRI;
+    ras.hill[i]=d2(x,y,hill.c[0],hill.c[1])<=hill.r?1:0;
+    ras.soil[i]=d2(x,y,marsh.c[0],marsh.c[1])<=marsh.r?1.85:(ras.hill[i]?1.2:1.0);
+    ras.near[i]=dLine(x,y)<=1000?1:0;
+  }
+})();
+
+/* ---------- lattice ---------- */
+const RIVER_SPAN_MAX=600;   // engine.yaml spans.river_crossing_max_span_m: long spans only where the span crosses a river
+const OFF=[];for(let dc=1;dc<=6;dc++)for(let dr=-4;dr<=4;dr++){const L=Math.hypot(dc*SX,dr*SY);if(L<SPAN_MIN-1||L>RIVER_SPAN_MAX+1)continue;const h=Math.atan2(dr*SY,dc*SX)*180/Math.PI;if(Math.abs(h)>DEV_MAX)continue;OFF.push({dc,dr,L,h,long:L>SPAN_MAX+1});}
+const K=OFF.length;
+const T=[];for(let i=0;i<K;i++){T.push([]);for(let j=0;j<K;j++){const d=Math.abs(OFF[i].h-OFF[j].h);T[i].push(d>DEV_MAX?-1:typeIdx(d));}}
+function typeIdx(d){for(let i=0;i<5;i++)if(d<=BANDS[i]+1e-9)return i;return -1;}
+const siteXY=(c,r)=>[c*SX,(r-R0)*SY];
+const idx=(c,r,k)=>(c*R+r)*K+k;
+
+/* ---------- the solver (edge costs + layer-wise DP) ---------- */
+function makeSolver(opt){
+  opt=Object.assign({lateral:0,relaxed:false,forestMult:1,avoid:null,hillOn:true,nearOn:true},opt||{});
+  const cfm=opt.relaxed?ras.cf:(()=>{const a=new Uint8Array(W*Hh);for(let i=0;i<a.length;i++)a[i]=ras.cf[i]|ras.cfPond[i];return a;})();
+  const S=new Float64Array((C)*R), Sh=new Uint8Array(C*R);
+  for(let c=0;c<C;c++)for(let r=0;r<R;r++){const [x,y]=siteXY(c,r);const i=cellAt(x,y);let s=Infinity;if(i>=0&&!ras.tf[i]){s=BASE_COMP+FDN_A*(ras.soil[i]-1)+opt.lateral*Math.abs(y);if(opt.hillOn&&ras.hill[i]){s+=HILL_TOWER;Sh[c*R+r]=1;}}S[c*R+r]=s;}
+  S[0*R+R0]=0; S[(C-1)*R+R0]=0;
+  const Ecache=new Map();
+  function edge(c,r,k){const key=idx(c,r,k);if(Ecache.has(key))return Ecache.get(key);const o=OFF[k];const c2=c+o.dc,r2=r+o.dr;let res={cost:Infinity,X:false,reason:''};
+    if(c2<C&&r2>=0&&r2<R&&isFinite(S[c2*R+r2])){const p=siteXY(c,r),q=siteXY(c2,r2);const n=Math.ceil(o.L/RES)+1;let blocked=false,strip=0,hillF=0,nearF=0,forestL=0;
+      for(let s=0;s<=n;s++){const t=s/n;const x=p[0]+t*(q[0]-p[0]),y=p[1]+t*(q[1]-p[1]);const i=cellAt(x,y);if(i<0){blocked=true;break;}if(cfm[i]){blocked=true;break;}strip+=ras.price[i]*(ras.forest[i]?opt.forestMult:1);hillF+=ras.hill[i];nearF+=ras.near[i];forestL+=ras.forest[i];}
+      if(blocked){res.reason='wire over a forbidden cell';}
+      else if(o.long&&!crossRiver(p,q)){res.reason='over 400 m: only across a river';}
+      else{let cost=o.L*LINE_RS_M+o.L*CORR_W*strip/(n+1);let fac=1;if(opt.nearOn)fac=1-NEAR_DISC*nearF/(n+1);cost*=fac;if(opt.hillOn)cost+=HILL_RS_M*o.L*hillF/(n+1);
+        if(opt.avoid){let inC=0;for(let s=0;s<=n;s++){const t=s/n;const x=p[0]+t*(q[0]-p[0]),y=p[1]+t*(q[1]-p[1]);if(dPoly(x,y,opt.avoid,false)<=DIV_CORR)inC++;}cost+=DIV_PEN*o.L*inC/(n+1);}
+        const rv=crossRiver(p,q);if(rv&&(rv.angle<RIVER.angle[0]||rv.angle>RIVER.angle[1]))rv.angle<RIVER.angle[0]?(cost=Infinity,res.reason='river crossed at '+rv.angle.toFixed(0)+'°, needs 75–105°'):0;
+        const xl=crossLine(p,q);if(xl){res.X=true;if(xl.angle<XL.angle[0]){cost=Infinity;res.reason='line crossed at '+xl.angle.toFixed(0)+'°, needs 70–110°';}
+          else if(xl.toTower<XL.nullAllow*XL.theirSpan){cost=Infinity;res.reason='crossing within 20 % of their span from their tower';}
+          else{const dp_=dLine(p[0],p[1]),dq_=dLine(q[0],q[1]);if(dp_<XL.sideMin||dq_<XL.sideMin){cost=Infinity;res.reason='crossing tower under 87 m from the wire';}
+            else{for(const d of [dp_,dq_])if(d>XL.sideMax)cost+=XL.relaxPer25*(d-XL.sideMax)/25;const f=Math.max(0,xl.fromNull-XL.nullPref)/(XL.nullAllow-XL.nullPref);cost+=XL.nullPen*Math.min(1,f);}}}
+        res.cost=cost;res.forestL=o.L*forestL/(n+1);}
+    } else res.reason=c2>=C?'beyond B':'tower on a forbidden site';
+    Ecache.set(key,res);return res;}
+  const V=new Float64Array(C*R*K).fill(Infinity), FR=new Int32Array(C*R*K).fill(-1), TY=new Int8Array(C*R*K).fill(-1);
+  // seeds: A is the dead-end tower; outgoing heading within ±15°
+  const st={col:0,done:false,best:Infinity,endK:-1,settled:0};
+  function tfac(c,r){if(!opt.nearOn)return 1;const i=cellAt(...siteXY(c,r));return i>=0&&ras.near[i]?1-NEAR_DISC:1;}
+  function step(){if(st.done)return false;const c=st.col;
+    for(let r=0;r<R;r++){const s=S[c*R+r];if(!isFinite(s))continue;
+      for(let k2=0;k2<K;k2++){const e=edge(c,r,k2);if(!isFinite(e.cost))continue;let bestM=Infinity,bk=-1,bt=-1;
+        if(c===0){if(r!==R0||Math.abs(OFF[k2].h)>DEAD_END_DEV)continue;bestM=PRICE.D60;bk=0;bt=4;}
+        else{for(let k=0;k<K;k++){const v=V[idx(c,r,k)];if(!isFinite(v))continue;let ti=T[k][k2];if(ti<0)continue;if(e.X||edge(c-OFF[k].dc,r-OFF[k].dr,k).X)ti=Math.max(ti,3);const m=v+PRICE[TYPES[ti]]*tfac(c,r);if(m<bestM){bestM=m;bk=k;bt=ti;}}}
+        if(bk<0)continue;const tot=bestM+s+e.cost;const o=OFF[k2];const j=idx(c+o.dc,r+o.dr,k2);if(tot<V[j]){V[j]=tot;FR[j]=idx(c,r,bk);TY[j]=bt;}}}
+    st.col++;if(st.col>=C-1){st.done=true;let b=Infinity,bk=-1;for(let k=0;k<K;k++){if(Math.abs(OFF[k].h)>DEAD_END_DEV)continue;const v=V[idx(C-1,R0,k)];if(v<b){b=v;bk=k;}}st.best=isFinite(b)?b+PRICE.D60:Infinity;st.endK=bk;}
+    return true;}
+  function bestAt(c,r){let b=Infinity,bk=-1;for(let k=0;k<K;k++){const v=V[idx(c,r,k)];if(v<b){b=v;bk=k;}}return {v:b,k:bk};}
+  function chain(c,r,k){const pts=[];let j=idx(c,r,k);while(j>=0){const kk=j%K,cr=(j/K)|0;const rr=cr%R,cc=(cr/R)|0;pts.push({c:cc,r:rr,k:kk,type:TY[j]});if(cc===0)break;j=FR[j];}return pts.reverse();}
+  function path(){if(!st.done||st.endK<0)return null;const p=chain(C-1,R0,st.endK);p[0].type=4;p[p.length-1].type=4;return p;}
+  return {opt,S,Sh,edge,V,st,step,bestAt,chain,path,run(){while(step());return path();}};
+}
+
+/* ---------- spotting: string pulling + towers + true cost ---------- */
+function legTowers(p,q){const L=d2(p[0],p[1],q[0],q[1]);if(L<=RIVER_SPAN_MAX+1&&crossRiver(p,q))return [];const n=Math.max(1,Math.ceil(L/SPAN_MAX));const out=[];for(let i=1;i<n;i++){const t=i/n;out.push([p[0]+t*(q[0]-p[0]),p[1]+t*(q[1]-p[1])]);}return out;}
+function towerOk(x,y){const i=cellAt(x,y);if(i<0||ras.tf[i])return false;return true;}
+function spanOk(p,q,relaxed){const L=d2(p[0],p[1],q[0],q[1]);if(L>SPAN_MAX+1&&!(L<=RIVER_SPAN_MAX+1&&crossRiver(p,q)))return false;const n=Math.ceil(L/10)+1;for(let s=0;s<=n;s++){const t=s/n;const i=cellAt(p[0]+t*(q[0]-p[0]),p[1]+t*(q[1]-p[1]));if(i<0||ras.cf[i]||(!relaxed&&ras.cfPond[i]))return false;}
+  const rv=crossRiver(p,q);if(rv&&(rv.angle<RIVER.angle[0]))return false;const xl=crossLine(p,q);if(xl){if(xl.angle<XL.angle[0]||xl.toTower<XL.nullAllow*XL.theirSpan)return false;if(dLine(p[0],p[1])<XL.sideMin||dLine(q[0],q[1])<XL.sideMin)return false;}return true;}
+function legOk(p,q,relaxed){const ts=[p,...legTowers(p,q),q];for(let i=1;i<ts.length-1;i++)if(!towerOk(ts[i][0],ts[i][1]))return false;for(let i=0;i<ts.length-1;i++)if(!spanOk(ts[i],ts[i+1],relaxed))return false;return true;}
+function buildTowers(verts){const tw=[];for(let i=0;i<verts.length-1;i++){tw.push({x:verts[i][0],y:verts[i][1],ap:true});for(const t of legTowers(verts[i],verts[i+1]))tw.push({x:t[0],y:t[1],ap:false});}const l=verts[verts.length-1];tw.push({x:l[0],y:l[1],ap:true});
+  for(let i=0;i<tw.length;i++){const t=tw[i];let dev=0;if(i>0&&i<tw.length-1){const a=Math.atan2(t.y-tw[i-1].y,t.x-tw[i-1].x),b=Math.atan2(tw[i+1].y-t.y,tw[i+1].x-t.x);dev=Math.abs((b-a)*180/Math.PI);if(dev>180)dev=360-dev;}t.dev=dev;let ti=i===0||i===tw.length-1?4:typeIdx(dev);if(ti<0)ti=4;t.reasons=[];
+    const ci=cellAt(t.x,t.y);if(ci>=0&&ras.hill[ci]&&ti<1&&i>0&&i<tw.length-1){ti=1;t.reasons.push('hilly: B1');}
+    if(i>0&&i<tw.length-1){if((crossLine([tw[i-1].x,tw[i-1].y],[t.x,t.y])||crossLine([t.x,t.y],[tw[i+1].x,tw[i+1].y]))&&ti<3){ti=3;t.reasons.push('crossing 400 kV: D');}}
+    t.ti=ti;}
+  // section points: every 15 spans a B1 at least
+  let since=0;for(let i=1;i<tw.length-1;i++){since++;if(tw[i].ti>=1){since=0;}else if(since>=15){tw[i].ti=1;tw[i].reasons.push('section point: B1');since=0;}}
+  return tw;}
+function trueCost(tw){let towers=0,line=0,strip=0,forestHa=0,site=0;for(let i=0;i<tw.length;i++){const t=tw[i];towers+=PRICE[TYPES[t.ti]];const ci=cellAt(t.x,t.y);if(i>0&&i<tw.length-1&&ci>=0)site+=BASE_COMP+FDN_A*(ras.soil[ci]-1);
+    if(i<tw.length-1){const q=tw[i+1];const L=d2(t.x,t.y,q.x,q.y);line+=L*LINE_RS_M;const n=Math.ceil(L/10)+1;let s=0,f=0;for(let k=0;k<=n;k++){const u=k/n;const cj=cellAt(t.x+u*(q.x-t.x),t.y+u*(q.y-t.y));if(cj>=0){s+=ras.price[cj];f+=ras.forest[cj];}}strip+=L*CORR_W*s/(n+1);forestHa+=L*CORR_W*f/(n+1)/1e4;}}
+  return {towers,line,strip,site,forestHa,total:towers+line+strip+site,km:tw.reduce((a,t,i)=>i?a+d2(t.x,t.y,tw[i-1].x,tw[i-1].y):0,0)/1000};}
+function pullAll(path,relaxed){const v=path.map(p=>siteXY(p.c,p.r));let changed=true;while(changed){changed=false;for(let i=1;i<v.length-1;i++){if(legOk(v[i-1],v[i+1],relaxed)){const before=trueCost(buildTowers([v[i-1],v[i],v[i+1]])).total,after=trueCost(buildTowers([v[i-1],v[i+1]])).total;if(after<=before*1.01){v.splice(i,1);changed=true;i--;}}}}return v;}
+
+/* ============================ drawing ============================ */
+const cv=document.getElementById('cv'),ctx=cv.getContext('2d');
+const css=(n)=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const X=(x)=>OX+x/PX, Y=(y)=>OY+(HALF-y)/PX;
+let maskImg=null,maskKey='';
+function drawMap(opts){opts=opts||{};const col={agri:css('--agri'),forest:css('--forest'),water:css('--water'),feat:css('--feature'),featS:css('--feature-soft'),hill:css('--hill'),marsh:css('--marsh'),ink:css('--ink'),muted:css('--muted'),rule:css('--rule')};
+  ctx.save();ctx.fillStyle=col.agri;ctx.fillRect(X(0),Y(HALF),LEN/PX,2*HALF/PX);
+  // hill
+  ctx.fillStyle=col.hill;ctx.beginPath();ctx.arc(X(hill.c[0]),Y(hill.c[1]),hill.r/PX,0,7);ctx.fill();ctx.strokeStyle=col.muted;ctx.setLineDash([2,3]);for(const f of [0.33,0.66]){ctx.beginPath();ctx.arc(X(hill.c[0]),Y(hill.c[1]),hill.r*f/PX,0,7);ctx.stroke();}ctx.setLineDash([]);
+  // marsh
+  ctx.fillStyle=col.marsh;ctx.beginPath();ctx.arc(X(marsh.c[0]),Y(marsh.c[1]),marsh.r/PX,0,7);ctx.fill();
+  // forest
+  ctx.fillStyle=col.forest;ctx.globalAlpha=.45;poly(forest,true);ctx.fill();ctx.globalAlpha=1;ctx.strokeStyle=col.forest;ctx.lineWidth=1;poly(forest,true);ctx.stroke();
+  // river
+  ctx.strokeStyle=col.water;ctx.lineWidth=RIVER.width/PX;ctx.lineJoin='round';poly(river,false);ctx.stroke();
+  // pond
+  ctx.fillStyle=col.water;ctx.beginPath();ctx.arc(X(pond.c[0]),Y(pond.c[1]),pond.r/PX,0,7);ctx.fill();
+  // village + houses
+  ctx.fillStyle=col.featS;ctx.strokeStyle=col.feat;ctx.lineWidth=1.2;poly(village,true);ctx.fill();ctx.stroke();
+  for(const h of houses){ctx.fillStyle=col.feat;ctx.fillRect(X(h[0])-3,Y(h[1])-3,6,6);}
+  // existing line
+  ctx.strokeStyle=col.feat;ctx.lineWidth=2.5;ctx.beginPath();ctx.moveTo(X(exline.a[0]),Y(exline.a[1]));ctx.lineTo(X(exline.b[0]),Y(exline.b[1]));ctx.stroke();
+  for(const t of extowers){tri(X(t[0]),Y(t[1]),4,col.feat);}
+  // yards
+  ctx.fillStyle=col.featS;ctx.strokeStyle=col.ink;ctx.lineWidth=1;ctx.fillRect(X(yardA[0]),Y(yardA[3]),300/PX,300/PX);ctx.strokeRect(X(yardA[0]),Y(yardA[3]),300/PX,300/PX);ctx.fillRect(X(yardB[0]),Y(yardB[3]),300/PX,300/PX);ctx.strokeRect(X(yardB[0]),Y(yardB[3]),300/PX,300/PX);
+  // labels
+  ctx.fillStyle=col.ink;ctx.font='500 11px "IBM Plex Mono",monospace';ctx.fillText('A',X(0)-4,Y(0)-24);ctx.fillText('B',X(LEN)-4,Y(0)-24);
+  ctx.fillStyle=col.muted;ctx.font='10px "IBM Plex Mono",monospace';
+  lab('village',2250,-80);lab('hill (rock)',1300,-1250);lab('pond + marsh',3300,-1080);lab('river',4700,1300);lab('reserve forest',6050,1120);lab('existing 400 kV',6700,-1350);lab('farmland',700,1300);
+  ctx.strokeStyle=col.rule;ctx.lineWidth=1;ctx.strokeRect(X(0),Y(HALF),LEN/PX,2*HALF/PX);
+  ctx.restore();}
+function lab(t,x,y){ctx.fillText(t,X(x)-ctx.measureText(t).width/2,Y(y));}
+function poly(pts,closed){ctx.beginPath();pts.forEach((p,i)=>i?ctx.lineTo(X(p[0]),Y(p[1])):ctx.moveTo(X(p[0]),Y(p[1])));if(closed)ctx.closePath();}
+function tri(x,y,s,c){ctx.fillStyle=c;ctx.beginPath();ctx.moveTo(x-s,y+s);ctx.lineTo(x,y-s);ctx.lineTo(x+s,y+s);ctx.closePath();ctx.fill();}
+function hexa(h,a){const n=parseInt(h.slice(1),16);return `rgba(${n>>16&255},${n>>8&255},${n&255},${a})`;}
+function drawBuffers(t){ // growing distance transforms
+  const nogo=css('--nogo'),cond=css('--cond');ctx.save();ctx.lineJoin='round';ctx.lineCap='round';
+  const ring=(fn,rad,color,alpha)=>{ctx.strokeStyle=hexa(color,alpha);ctx.lineWidth=Math.max(0.5,2*rad*t/PX);fn();ctx.stroke();};
+  ring(()=>poly(village,true),200,nogo,.35);ring(()=>{poly(village,true);},200,cond,.25);
+  for(const h of houses)ring(()=>{ctx.beginPath();ctx.arc(X(h[0]),Y(h[1]),0.5,0,7);},33.5+12,nogo,.5);
+  ring(()=>{ctx.beginPath();ctx.arc(X(pond.c[0]),Y(pond.c[1]),pond.r/PX,0,7);},30,nogo,.35);
+  ring(()=>poly(river,false),RIVER.width/2+RIVER.bank,nogo,.22);
+  for(const tw of extowers)ring(()=>{ctx.beginPath();ctx.arc(X(tw[0]),Y(tw[1]),0.5,0,7);},XL.condSet,cond,.35);
+  ring(()=>{ctx.beginPath();ctx.moveTo(X(exline.a[0]),Y(exline.a[1]));ctx.lineTo(X(exline.b[0]),Y(exline.b[1]));},XL.condSet,nogo,.3);
+  ctx.restore();}
+function drawMasks(alpha,showPond){const key=css('--nogo')+css('--cond')+showPond;if(!maskImg||maskKey!==key){maskKey=key;const img=ctx.createImageData(W,Hh);const n=hexa(css('--nogo'),1).match(/\d+/g).map(Number),c=hexa(css('--cond'),1).match(/\d+/g).map(Number);
+    for(let i=0;i<W*Hh;i++){const o=i*4;if(ras.tf[i]){img.data[o]=n[0];img.data[o+1]=n[1];img.data[o+2]=n[2];img.data[o+3]=110;}if(ras.cf[i]||(showPond&&ras.cfPond[i])){const cx=i%W,cy=(i/W)|0;if((cx+cy)%2===0){img.data[o]=c[0];img.data[o+1]=c[1];img.data[o+2]=c[2];img.data[o+3]=170;}}}
+    const off=document.createElement('canvas');off.width=W;off.height=Hh;off.getContext('2d').putImageData(img,0,0);maskImg=off;}
+  ctx.save();ctx.globalAlpha=alpha;ctx.imageSmoothingEnabled=false;ctx.drawImage(maskImg,X(0),Y(HALF),LEN/PX,2*HALF/PX);ctx.restore();}
+function drawSites(solver,alpha){ctx.save();ctx.globalAlpha=alpha;for(let c=0;c<C;c++)for(let r=0;r<R;r++){const [x,y]=siteXY(c,r);const ok=isFinite(solver.S[c*R+r]);ctx.fillStyle=ok?css('--accent'):css('--nogo');if(ok){ctx.beginPath();ctx.arc(X(x),Y(y),1.6,0,7);ctx.fill();}else{ctx.fillRect(X(x)-1,Y(y)-1,2,2);}}ctx.restore();}
+function heatColor(f){ // 0 cheap .. 1 dear
+  const a=[59,115,80],b=[158,104,17],c=[163,58,49];const m=f<.5?[a,b,f*2]:[b,c,(f-.5)*2];const t=m[2];return `rgb(${Math.round(m[0][0]+(m[1][0]-m[0][0])*t)},${Math.round(m[0][1]+(m[1][1]-m[0][1])*t)},${Math.round(m[0][2]+(m[1][2]-m[0][2])*t)})`;}
+function drawHeat(solver,upto){ctx.save();for(let c=1;c<=upto&&c<C;c++){let mn=Infinity;const vals=[];for(let r=0;r<R;r++){const b=solver.bestAt(c,r);vals.push(b.v);if(b.v<mn)mn=b.v;}if(!isFinite(mn))continue;
+  for(let r=0;r<R;r++){const v=vals[r];if(!isFinite(v))continue;const [x,y]=siteXY(c,r);const f=Math.max(0,Math.min(1,(v-mn)/(2.5*CRORE)));ctx.fillStyle=heatColor(f);ctx.beginPath();ctx.arc(X(x),Y(y),3.2,0,7);ctx.fill();}}ctx.restore();}
+function drawChain(pts,color,width,dash){if(!pts||pts.length<2)return;ctx.save();ctx.strokeStyle=color;ctx.lineWidth=width;if(dash)ctx.setLineDash(dash);ctx.lineJoin='round';ctx.beginPath();pts.forEach((p,i)=>{const [x,y]=p.x!==undefined?[p.x,p.y]:siteXY(p.c,p.r);i?ctx.lineTo(X(x),Y(y)):ctx.moveTo(X(x),Y(y));});ctx.stroke();ctx.restore();}
+function drawTowers(tw,upto,color){ctx.save();const n=upto==null?tw.length:upto;const typeCol=[css('--go'),css('--cond'),css('--accent'),css('--cross'),css('--nogo')];for(let i=0;i<n;i++){const t=tw[i];tri(X(t.x),Y(t.y),t.ti>=3?6:(t.ti>=1?5:3.5),typeCol[t.ti]);}ctx.restore();}
+function drawFan(solver,c,r,hl){ctx.save();const p=siteXY(c,r);for(let k=0;k<K;k++){const e=solver.edge(c,r,k);const o=OFF[k];if(o.long&&!isFinite(e.cost)&&e.reason.startsWith('over 400'))continue;const q=siteXY(c+o.dc,r+o.dr);const ok=isFinite(e.cost);ctx.strokeStyle=ok?hexa(css('--go'),.85):hexa(css('--nogo'),.7);ctx.lineWidth=ok?1.6:1;if(!ok)ctx.setLineDash([3,3]);else ctx.setLineDash([]);ctx.beginPath();ctx.moveTo(X(p[0]),Y(p[1]));ctx.lineTo(X(q[0]),Y(q[1]));ctx.stroke();
+    if(hl===k){ctx.setLineDash([]);ctx.fillStyle=css('--ink');ctx.font='10.5px "IBM Plex Mono",monospace';const txt=ok?`₹${(e.cost/1e5).toFixed(1)} L`:e.reason;ctx.fillText(txt,X(q[0])+6,Y(q[1])+4);}}
+  ctx.fillStyle=css('--ink');ctx.beginPath();ctx.arc(X(p[0]),Y(p[1]),4,0,7);ctx.fill();ctx.restore();}
+function drawColumnMark(c){ctx.save();ctx.fillStyle=hexa(css('--accent'),.16);ctx.fillRect(X(c*SX)-SX/PX/2,Y(HALF),SX/PX,2*HALF/PX);ctx.restore();}
+function drawForestHa(tw,color){ctx.save();ctx.strokeStyle=color;ctx.lineWidth=7;ctx.globalAlpha=.35;ctx.beginPath();let on=false;for(let i=0;i<tw.length-1;i++){const p=tw[i],q=tw[i+1];const n=20;for(let s=0;s<=n;s++){const t=s/n;const x=p.x+t*(q.x-p.x),y=p.y+t*(q.y-p.y);const ci=cellAt(x,y);const f=ci>=0&&ras.forest[ci];if(f&&!on){ctx.moveTo(X(x),Y(y));on=true;}else if(f)ctx.lineTo(X(x),Y(y));else on=false;}}ctx.stroke();ctx.restore();}
+
+/* ============================ stages ============================ */
+const say=document.getElementById('say'),costEl=document.getElementById('cost'),legendEl=document.getElementById('legend'),routesEl=document.getElementById('routes');
+const fmtCr=(v)=>'₹'+(v/CRORE).toFixed(2)+' Cr';
+function setSay(title,text){say.innerHTML=`<b>${title}</b>${text}`;}
+function setCost(html){costEl.innerHTML=html;}
+function setLegend(items){legendEl.innerHTML=items.map(([c,t,style])=>`<span><i style="background:${c};${style||''}"></i>${t}</span>`).join('');}
+function costBar(cst){const tot=cst.total;const seg=[[cst.towers,css('--accent')],[cst.line,css('--cond')],[cst.strip,css('--feature')],[cst.site,css('--cross')]];return `<div class="bar">${seg.map(([v,c])=>`<div style="width:${(100*v/tot).toFixed(1)}%;background:${c}"></div>`).join('')}</div>`;}
+
+const STAGES=[
+ {name:'0 Map', enter(){S.t=0;setSay('The sample band','8 km from A to B, 1.5 km either side. Farmland, a village, a pond on marsh, a hill, a river, a reserve forest and an existing 400 kV line.');setCost('');setLegend([[css('--agri'),'farmland'],[css('--forest'),'reserve forest'],[css('--water'),'water'],[css('--feature-soft'),'built-up / yards'],[css('--hill'),'hill, rock'],[css('--marsh'),'marsh']]);}, tick(dt){S.t+=dt;return S.t>1.5;}, draw(){drawMap();}},
+ {name:'1 Compile rules', enter(){S.t=0;setSay('Compile the rules','Every buffer grows out of its feature as a distance transform. Red: no tower may stand. Blue hatch: no wire may pass over. The forest keeps its own price per m²; the hill and marsh change the foundation price.');setLegend([[hexa(css('--nogo'),.45),'tower forbidden'],[hexa(css('--cond'),.6),'conductor forbidden'],[css('--forest'),'forest: priced, 5 ha cap'],[css('--hill'),'hill: search surcharge'],[css('--marsh'),'marsh: piles ×1.85']]);},
+   tick(dt){S.t+=dt;return S.t>4;}, draw(){drawMap();const g=Math.min(1,S.t/2.2);if(S.t<2.6)drawBuffers(g);else drawMasks(Math.min(1,(S.t-2.4)/.6),true);}},
+ {name:'2 Sites and spans', enter(){S.t=0;S.solver=S.solver||makeSolver({});S.fanSite=null;setSay('Candidate tower sites','A site every 100 m along and across (50 m in the real engine). Sites inside a red buffer are dropped. From one site the next tower can be any site 100–400 m ahead within ±60°: green spans are allowed, red dashed ones break a rule.');setLegend([[css('--accent'),'candidate site'],[css('--nogo'),'dropped site'],[css('--go'),'allowed span'],[css('--nogo'),'span breaks a rule','opacity:.6']]);},
+   tick(dt){S.t+=dt;if(S.t>1.2){const list=[[42,13],[46,15],[61,17],[32,12],[24,9]];const i=Math.min(list.length-1,Math.floor((S.t-1.2)/1.6));S.fanSite=list[i];S.fanK=-1;}return S.t>1.2+1.6*5;},
+   draw(){drawMap();drawMasks(.75,true);drawSites(S.solver,Math.min(1,S.t/1.2));if(S.fanSite)drawFan(S.solver,S.fanSite[0],S.fanSite[1],S.fanK);}},
+ {name:'3 Price a move', enter(){S.t=0;S.solver=S.solver||makeSolver({});setSay('Price every move','Each move pays three things: standing here (foundation by soil, land under the base), the bend (tower type by deflection: A 0.48 … D60 1.11 ₹ Cr), and the span (₹2.35 Cr/km of line plus the 67 m strip of land under it). Read the tag on the highlighted span.');setCost('');setLegend([[css('--go'),'A tower, straight'],[css('--cond'),'B1 ≤ 15°'],[css('--accent'),'C1 ≤ 30°'],[css('--cross'),'D45'],[css('--nogo'),'D60 ≤ 60°']]);},
+   tick(dt){S.t+=dt;return S.t>6;}, draw(){drawMap();drawMasks(.5,true);const c=30,r=15;const p=siteXY(c,r);drawSites(S.solver,.5);const KS=OFF.filter(o=>!o.long).length;const k=Math.floor((S.t/6)*KS)%KS;drawFan(S.solver,c,r,k);
+     // show the bend price table for this k vs a straight arrival
+     const o=OFF[k];const dev=Math.abs(o.h);const ti=typeIdx(dev);ctx.save();ctx.fillStyle=css('--surface');ctx.globalAlpha=.92;ctx.fillRect(X(300),Y(HALF-40),330,86);ctx.globalAlpha=1;ctx.fillStyle=css('--ink');ctx.font='11px "IBM Plex Mono",monospace';
+     const e=S.solver.edge(c,r,k);const lines=[`span ${o.L.toFixed(0)} m, heading ${o.h.toFixed(1)}°`,`bend from straight: ${dev.toFixed(1)}° → ${ti>=0?TYPES[ti]:'not allowed'} ${ti>=0?fmtCr(PRICE[TYPES[ti]]):''}`,`standing here: ${fmtCr(S.solver.S[c*R+r])}`,isFinite(e.cost)?`span: ${fmtCr(e.cost)} (line ${fmtCr(o.L*LINE_RS_M)} + strip)`:`span: not allowed, ${e.reason}`];lines.forEach((l,i)=>ctx.fillText(l,X(300)+8,Y(HALF-40)+18+i*17));ctx.restore();}},
+ {name:'4 Sweep', enter(){S.t=0;S.solver=makeSolver({});S.acc=0;setSay('The sweep','Column by column from A. For every site the solver keeps the cheapest total so far, per arrival direction, and remembers where it came from. Colour = cost per metre reached (green cheap, red dear). The whole column is done at once on the GPU.');setLegend([[heatColor(0),'cheapest site in its column'],[heatColor(.5),'+₹1.25 Cr'],[heatColor(1),'+₹2.5 Cr or more'],[hexa(css('--accent'),.3),'column being solved']]);},
+   tick(dt){S.acc+=dt*8;while(S.acc>=1&&!S.solver.st.done){S.solver.step();S.acc-=1;}if(S.solver.st.done){S.t+=dt;return S.t>1;}setCost(`column ${S.solver.st.col} / ${C-1}<small>sites settled so far</small>`);return false;},
+   draw(){drawMap();drawMasks(.35,true);drawHeat(S.solver,S.solver.st.col);if(!S.solver.st.done)drawColumnMark(S.solver.st.col);}},
+ {name:'5 Read back', enter(){S.t=0;if(!S.solver||!S.solver.st.done){S.solver=makeSolver({});S.solver.run();}S.path=S.solver.path();S.n=0;setSay('Read the answer back','B is reached. Following the remembered links backwards from B gives the cheapest chain for this grid, exactly. No guessing, no restarts.');setCost(`search cost ${fmtCr(S.solver.st.best)}<small>includes search-only nudges</small>`);},
+   tick(dt){S.t+=dt;S.n=Math.min(S.path.length,Math.floor(S.t*14));return S.n>=S.path.length&&S.t>S.path.length/14+1;},
+   draw(){drawMap();drawMasks(.3,true);drawHeat(S.solver,C);const pts=S.path.slice(Math.max(0,S.path.length-S.n));drawChain(pts,css('--accent'),3);for(const p of pts){const [x,y]=siteXY(p.c,p.r);tri(X(x),Y(y),3.5,css('--ink'));}}},
+ {name:'6 Spot towers', enter(){S.t=0;if(!S.path){S.solver=makeSolver({});S.solver.run();S.path=S.solver.path();}S.verts=S.path.map(p=>siteXY(p.c,p.r));S.i=1;S.phase='pull';S.acc=0;S.flash=null;S.pass=0;S.changed=false;setSay('Tower spotting','String-pulling: each grid bend is tested for removal. The straight leg must pass the exact rule checks and not cost more. Then towers are placed along each leg at equal spans, typed by their deflection; crossing towers are forced to D, hill towers to B1, section points every 15 spans.');setLegend([[css('--go'),'A suspension'],[css('--cond'),'B1'],[css('--accent'),'C1'],[css('--cross'),'D45'],[css('--nogo'),'D60 dead-end']]);},
+   tick(dt){S.acc+=dt*3;if(S.phase==='pull'){while(S.acc>=1){S.acc-=1;if(S.i>=S.verts.length-1){if(S.changed){S.i=1;S.changed=false;S.pass++;continue;}S.phase='place';S.towers=buildTowers(S.verts);S.cost=trueCost(S.towers);S.n=0;break;}
+        const ok=legOk(S.verts[S.i-1],S.verts[S.i+1],false);let accept=false;if(ok){const b=trueCost(buildTowers([S.verts[S.i-1],S.verts[S.i],S.verts[S.i+1]])).total,a=trueCost(buildTowers([S.verts[S.i-1],S.verts[S.i+1]])).total;accept=a<=b*1.01;}S.flash={a:S.verts[S.i-1],b:S.verts[S.i+1],ok:accept};if(accept){S.verts.splice(S.i,1);S.changed=true;}else S.i++;}return false;}
+     else{S.nf=(S.nf||0)+dt*6;S.n=Math.min(S.towers.length,Math.floor(S.nf));const part=trueCost(S.towers.slice(0,Math.max(2,S.n)));setCost(`true cost so far ${fmtCr(part.total)}<small>${S.n} of ${S.towers.length} towers · ${part.km.toFixed(1)} km</small>`+costBar(part));if(S.n>=S.towers.length){S.t+=dt;if(S.t>1.5){setCost(`true cost ${fmtCr(S.cost.total)}<small>${S.towers.length} towers · ${S.cost.km.toFixed(2)} km · forest ${S.cost.forestHa.toFixed(1)} ha</small>`+costBar(S.cost));return true;}}return false;}},
+   draw(){drawMap();drawMasks(.3,true);if(S.phase==='pull'){drawChain(S.path,hexa(css('--faint'),.8),1.5,[3,3]);drawChain(S.verts.map(v=>({x:v[0],y:v[1]})),css('--accent'),2.5);for(const v of S.verts)tri(X(v[0]),Y(v[1]),3.5,css('--ink'));if(S.flash){ctx.save();ctx.strokeStyle=S.flash.ok?css('--go'):css('--nogo');ctx.lineWidth=4;ctx.globalAlpha=.8;ctx.beginPath();ctx.moveTo(X(S.flash.a[0]),Y(S.flash.a[1]));ctx.lineTo(X(S.flash.b[0]),Y(S.flash.b[1]));ctx.stroke();ctx.restore();}}
+     else{drawChain(S.path,hexa(css('--faint'),.6),1,[3,3]);drawChain(S.towers,css('--accent'),2.5);drawTowers(S.towers,S.n);if(S.n>0&&S.n<=S.towers.length){const t=S.towers[S.n-1];if(t.reasons.length){ctx.save();ctx.fillStyle=css('--ink');ctx.font='10.5px "IBM Plex Mono",monospace';ctx.fillText(t.reasons.join(', '),X(t.x)+8,Y(t.y)-8);ctx.restore();}}}}},
+ {name:'7 Forest cap', enter(){S.t=0;if(!S.towers){S.solver=makeSolver({});S.path=S.solver.run();S.verts=pullAll(S.path,false);S.towers=buildTowers(S.verts);S.cost=trueCost(S.towers);}S.capRuns=[];S.lo=1;S.hi=1000;S.pass=0;S.acc=0;S.capDone=false;S.over=S.cost.forestHa>FOREST_CAP_HA;
+     if(S.over){setSay('Forest cap','The strict route takes more reserve forest than the 5 ha cap. Bisection on the forest price: each pass re-runs the search with forest dearer (search only), until the cheapest multiplier that keeps the route under the cap is found. Then the route is spotted once.');}else{setSay('Forest cap','This route takes under 5 ha of reserve forest, so no cap pass is needed.');}
+     setLegend([[css('--accent'),'route under test'],[hexa(css('--forest'),.5),'forest under the corridor'],[hexa(css('--faint'),.6),'earlier passes']]);},
+   tick(dt){if(!S.over){S.t+=dt;return S.t>2;}S.acc+=dt;if(S.acc<1.1)return false;S.acc=0;if(S.capDone){S.t+=dt*1.1;return S.t>1.5;}
+     if(S.pass>=7||S.hi/S.lo<1.25){S.capDone=true;const sol=makeSolver({forestMult:S.hi});const p=sol.run();S.verts=pullAll(p,false);S.towers=buildTowers(S.verts);S.cost=trueCost(S.towers);S.capRuns.push({path:p,ha:S.cost.forestHa,mult:S.hi,final:true});setCost(`final: forest ×${S.hi.toFixed(1)} in the search · ${S.cost.forestHa.toFixed(2)} ha · true cost ${fmtCr(S.cost.total)}<small>reported with true prices</small>`+costBar(S.cost));return false;}
+     const mid=Math.sqrt(S.lo*S.hi);const sol=makeSolver({forestMult:mid});const p=sol.run();if(!p){S.hi=mid;S.pass++;return false;}const ha=trueCost(buildTowers(pullAll(p,false))).forestHa;S.capRuns.push({path:p,ha,mult:mid});if(ha<=FOREST_CAP_HA-0.5)S.hi=mid;else S.lo=mid;S.pass++;setCost(`pass ${S.pass}: forest ×${mid.toFixed(1)} → ${ha.toFixed(2)} ha ${ha<=FOREST_CAP_HA?'under':'over'} the 5 ha cap<small>bracket ×${S.lo.toFixed(1)} – ×${S.hi.toFixed(1)}</small>`);return false;},
+   draw(){drawMap();drawMasks(.25,true);for(const r of S.capRuns.slice(0,-1))drawChain(r.path,hexa(css('--faint'),.5),1.5);const last=S.capRuns[S.capRuns.length-1];if(last){if(last.final){drawChain(S.towers,css('--accent'),2.5);drawForestHa(S.towers,css('--forest'));drawTowers(S.towers);}else{drawChain(last.path,css('--accent'),2.5);drawForestHa(last.path.map(p=>{const [x,y]=siteXY(p.c,p.r);return {x,y};}),css('--forest'));}}
+     else{drawChain(S.towers,css('--accent'),2.5);drawForestHa(S.towers,css('--forest'));drawTowers(S.towers);if(!S.capRuns.length)setCost(`forest under the corridor ${S.cost.forestHa.toFixed(2)} ha · cap 5 ha<small>${S.over?'over the cap':'under the cap'}</small>`);}}},
+ {name:'8 Four routes', enter(){S.t=0;S.acc=0;S.routes=[];S.ri=0;routesEl.innerHTML='';routesEl.classList.add('show');setSay('Four routes','The same sweep, four times, each with one extra search-only price. R1 least cost (forest cap applied). R2 pays 16,000 ₹ per tower per metre of sideways offset. R3 relaxed: last-resort rules opened, here the pond becomes crossable and the cap is lifted. R4 pays 20,000 ₹/m for sharing R1\'s corridor. Reported ₹ is the true cost of each.');setLegend([[css('--r1'),'R1 least cost'],[css('--r2'),'R2 minimum deviation'],[css('--r3'),'R3 relaxed'],[css('--r4'),'R4 second least cost']]);
+     if(!S.towers){S.solver=makeSolver({});S.path=S.solver.run();S.verts=pullAll(S.path,false);S.towers=buildTowers(S.verts);S.cost=trueCost(S.towers);}
+     const r1={id:'R1',name:'Least cost',towers:S.towers,cost:S.cost,color:css('--r1')};S.routes.push(r1);
+     const mk=(id,name,opt,relaxed,color)=>{let sol=makeSolver(opt);let p=sol.run();if(!p)return {id,name,towers:[],cost:null,color};let v=pullAll(p,relaxed);let tw=buildTowers(v);let cst=trueCost(tw);if(!relaxed&&cst.forestHa>FOREST_CAP_HA){let lo=1,hi=1000;for(let i=0;i<7&&hi/lo>1.25;i++){const mid=Math.sqrt(lo*hi);const pp=makeSolver(Object.assign({},opt,{forestMult:mid})).run();if(!pp){hi=mid;continue;}const ha=trueCost(buildTowers(pullAll(pp,false))).forestHa;if(ha<=FOREST_CAP_HA-0.5)hi=mid;else lo=mid;}p=makeSolver(Object.assign({},opt,{forestMult:hi})).run();v=pullAll(p,false);tw=buildTowers(v);cst=trueCost(tw);}return {id,name,towers:tw,cost:cst,color};};
+     S.pending=[()=>mk('R2','Minimum deviation',{lateral:LAT_PEN},false,css('--r2')),()=>mk('R3','Relaxed',{relaxed:true},true,css('--r3')),()=>mk('R4','Second least cost',{avoid:S.towers.map(t=>[t.x,t.y])},false,css('--r4'))];},
+   tick(dt){S.acc+=dt;if(S.acc>1.3&&S.pending.length){S.acc=0;S.routes.push(S.pending.shift()());}const finished=!S.pending.length&&S.acc>1.5;routesEl.innerHTML=S.routes.map(r=>`<div style="color:${r.color}"><b>${r.id} ${r.name}</b>${r.cost?`${fmtCr(r.cost.total)} · ${r.towers.length} towers · ${r.cost.km.toFixed(2)} km · forest ${r.cost.forestHa.toFixed(1)} ha`:'no feasible route'}</div>`).join('');return finished;},
+   draw(){drawMap();drawMasks(.25,false);[...S.routes].reverse().forEach((r,i)=>{if(!r.towers.length)return;drawChain(r.towers,r.color,r.id==='R1'?3.5:2);ctx.save();for(const t of r.towers)tri(X(t.x),Y(t.y),t.ti>=3?5:3,r.color);ctx.restore();});}},
+];
+
+/* ============================ runner ============================ */
+const S={};let cur=0,playing=false,last=0,speed=3,hover=null;
+const stagesEl=document.getElementById('stages');STAGES.forEach((s,i)=>{const b=document.createElement('button');b.textContent=s.name;b.addEventListener('click',()=>goto(i));stagesEl.appendChild(b);});
+function goto(i){cur=Math.max(0,Math.min(STAGES.length-1,i));routesEl.classList.remove('show');if(cur<4){S.solver=null;S.path=null;S.towers=null;}STAGES[cur].enter();[...stagesEl.children].forEach((b,j)=>{b.setAttribute('aria-current',j===cur?'step':'false');b.classList.toggle('done',j<cur);});draw();}
+function frame(ts){if(!playing)return;const dt=Math.min(0.1,(ts-last)/1000)*speed;last=ts;const done=STAGES[cur].tick(dt);draw();if(done){if(document.getElementById('auto').checked&&cur<STAGES.length-1){goto(cur+1);}else{setPlaying(false);return;}}requestAnimationFrame(frame);}
+function setPlaying(p){playing=p;document.getElementById('play').textContent=p?'Pause':'Play';if(p){last=performance.now();requestAnimationFrame(frame);}}
+function draw(){const dpr=window.devicePixelRatio||1;if(cv.width!==1040*dpr){cv.width=1040*dpr;cv.height=440*dpr;}ctx.setTransform(dpr,0,0,dpr,0,0);ctx.fillStyle=css('--surface');ctx.fillRect(0,0,1040,440);STAGES[cur].draw();
+  if(hover&&S.solver&&cur>=4){const b=S.solver.bestAt(hover.c,hover.r);if(isFinite(b.v)){const ch=S.solver.chain(hover.c,hover.r,b.k);drawChain(ch,css('--ink'),2,[5,3]);const [x,y]=siteXY(hover.c,hover.r);ctx.save();ctx.fillStyle=css('--ink');ctx.beginPath();ctx.arc(X(x),Y(y),4,0,7);ctx.fill();ctx.font='11px "IBM Plex Mono",monospace';const t=`cheapest to here: ${fmtCr(b.v)} · ${ch.length-1} spans`;const w=ctx.measureText(t).width+10;ctx.fillStyle=css('--surface');ctx.fillRect(Math.min(X(x)+8,1030-w),Y(y)-22,w,16);ctx.fillStyle=css('--ink');ctx.fillText(t,Math.min(X(x)+13,1035-w),Y(y)-10);ctx.restore();}}
+  // scale bar
+  ctx.save();ctx.strokeStyle=css('--ink');ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(X(200),Y(-HALF)+16);ctx.lineTo(X(1200),Y(-HALF)+16);ctx.stroke();ctx.fillStyle=css('--muted');ctx.font='10px "IBM Plex Mono",monospace';ctx.fillText('1 km',X(620),Y(-HALF)+28);ctx.restore();}
+document.getElementById('play').addEventListener('click',()=>setPlaying(!playing));
+document.getElementById('next').addEventListener('click',()=>{goto(cur+1);if(!playing)setPlaying(true);});
+document.getElementById('prev').addEventListener('click',()=>{goto(cur-1);});
+document.getElementById('restart').addEventListener('click',()=>{goto(0);setPlaying(true);});
+document.getElementById('speed').addEventListener('input',(e)=>{speed=Number(e.target.value);});
+cv.addEventListener('mousemove',(e)=>{const rect=cv.getBoundingClientRect();const px=(e.clientX-rect.left)*1040/rect.width,py=(e.clientY-rect.top)*440/rect.height;const x=(px-OX)*PX,y=HALF-(py-OY)*PX;const c=Math.round(x/SX),r=Math.round(y/SY)+R0;if(c>=0&&c<C&&r>=0&&r<R)hover={c,r};else hover=null;if(!playing)draw();});
+cv.addEventListener('mouseleave',()=>{hover=null;if(!playing)draw();});
+goto(0);
+window.__sim={STAGES,S,goto,tick:(dt)=>{const d=STAGES[cur].tick(dt);draw();return d;},cur:()=>cur,makeSolver,pullAll,buildTowers,trueCost};
+const reduce=window.matchMedia('(prefers-reduced-motion: reduce)').matches;if(!reduce)setPlaying(true);
+})();
+</script>
+</body>
+</html>

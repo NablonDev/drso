@@ -1,0 +1,335 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Beeline Solver Explained</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo+Narrow:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: a reading page of numbered picture panels; one interactive panel (the sweep) in the middle. */
+:root{
+  --ground:#F4F4F5; --surface:#FFFFFF; --surface-2:#F9F9FA;
+  --ink:#141316; --ink-2:#333336; --muted:#5E5F63; --faint:#86878B;
+  --rule:#D2D3D5; --rule-2:#E6E7E8;
+  --accent:#8E278F; --accent-ink:#6B1D6C; --accent-soft:#F5EAF5; --accent-line:#D7B3D7;
+  --nogo:#A33A31; --nogo-soft:#F7E6E3; --cross:#9E6811; --cross-soft:#FAF0DC; --go:#3B7350; --go-soft:#E5F0E7;
+  --tower:#8E278F; --cond:#1F7A8C; --feature:#B9A796; --feature-soft:#EFE8DD; --water:#9FBACD; --forest:#6E8A5E;
+  --display:"Archivo Narrow","Arial Narrow",system-ui,sans-serif; --body:"IBM Plex Sans",system-ui,sans-serif; --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --ground:#121113; --surface:#1C1A1D; --surface-2:#242126; --ink:#F3F2F4; --ink-2:#D4D3D6; --muted:#A3A1A6; --faint:#76747A;
+  --rule:#3A373C; --rule-2:#2C292E; --accent:#C77BC8; --accent-ink:#E2B0E3; --accent-soft:#2E1F2E; --accent-line:#5A3C5B;
+  --nogo:#E07B70; --nogo-soft:#3A2220; --cross:#D9A24A; --cross-soft:#372B16; --go:#7FBF93; --go-soft:#1E2F23;
+  --tower:#C77BC8; --cond:#5FB8CB; --feature:#8A7A68; --feature-soft:#2E2924; --water:#4E7489; --forest:#5F7A50; color-scheme:dark }}
+:root[data-theme="dark"]{
+  --ground:#121113; --surface:#1C1A1D; --surface-2:#242126; --ink:#F3F2F4; --ink-2:#D4D3D6; --muted:#A3A1A6; --faint:#76747A;
+  --rule:#3A373C; --rule-2:#2C292E; --accent:#C77BC8; --accent-ink:#E2B0E3; --accent-soft:#2E1F2E; --accent-line:#5A3C5B;
+  --nogo:#E07B70; --nogo-soft:#3A2220; --cross:#D9A24A; --cross-soft:#372B16; --go:#7FBF93; --go-soft:#1E2F23;
+  --tower:#C77BC8; --cond:#5FB8CB; --feature:#8A7A68; --feature-soft:#2E2924; --water:#4E7489; --forest:#5F7A50; color-scheme:dark }
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--ground);color:var(--ink);font-family:var(--body);font-size:15px;line-height:1.5}
+img{max-width:100%}[hidden]{display:none!important}
+.wrap{max-width:1040px;margin:0 auto;padding-block:22px 60px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+h1,h2,h3{font-family:var(--display);text-wrap:balance;margin:0}
+h1{font-size:36px;font-weight:700;line-height:1.05}
+h2{font-size:24px;font-weight:600}
+h3{font-size:16px;font-weight:600}
+.eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+p{margin:0;max-width:68ch;color:var(--ink-2)}
+.lede{font-size:16.5px;color:var(--ink)}
+header{border-bottom:2px solid var(--ink);padding-bottom:16px;display:flex;flex-direction:column;gap:8px}
+section{margin-top:44px}
+.sechead{border-bottom:1px solid var(--rule);padding-bottom:8px;margin-bottom:16px;display:flex;flex-direction:column;gap:4px}
+.answer{background:var(--accent-soft);border-left:4px solid var(--accent);padding:14px 16px;border-radius:0 6px 6px 0;margin-top:16px}
+.answer p{color:var(--ink);max-width:none}
+.answer b{color:var(--accent-ink)}
+.panel{display:grid;grid-template-columns:1.15fr 1fr;gap:16px;align-items:start;background:var(--surface);border:1px solid var(--rule);border-radius:6px;padding:14px 16px;margin-top:14px}
+.panel .fig{overflow-x:auto}
+.panel svg{display:block;width:100%;height:auto;min-width:300px}
+.panel .n{font-family:var(--display);font-size:30px;font-weight:700;color:var(--accent);line-height:1}
+.panel h3{font-size:18px;margin:6px 0 6px}
+.panel p{font-size:14px}
+.panel p+p{margin-top:8px}
+@media (max-width:760px){.panel{grid-template-columns:1fr}}
+svg text{font-family:var(--mono);font-size:10.5px;fill:var(--ink-2)}
+svg .lbl{fill:var(--muted);font-size:10px}
+svg .feat{fill:var(--feature-soft);stroke:var(--feature)}
+svg .water{fill:var(--water);fill-opacity:.4;stroke:var(--water)}
+svg .forest{fill:var(--forest);fill-opacity:.3;stroke:var(--forest)}
+svg .ban{fill:var(--nogo);fill-opacity:.22;stroke:var(--nogo)}
+svg .cban{fill:var(--cond);fill-opacity:.15;stroke:var(--cond);stroke-dasharray:4 3}
+svg .line{stroke:var(--ink);stroke-width:2;fill:none}
+svg .theirs{stroke:var(--feature);stroke-width:3;fill:none}
+svg .twr{fill:var(--ink)}
+svg .dim{stroke:var(--muted);stroke-width:1;fill:none}
+svg .grid{stroke:var(--rule-2)}
+svg .site{fill:var(--accent);fill-opacity:.55}
+svg .fan{stroke:var(--accent);stroke-width:1;fill:none;stroke-opacity:.6}
+svg .cap{font-family:var(--body);font-size:12px;fill:var(--ink-2)}
+.formula{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:10px}
+.formula .term{background:var(--surface-2);border:1px solid var(--rule);border-radius:5px;padding:10px 12px;min-width:0}
+.formula .term .sym{font-family:var(--mono);font-size:22px;color:var(--accent)}
+.formula .term h3{margin:2px 0 4px;font-size:15px}
+.formula .term p{font-size:12.5px}
+@media (max-width:600px){.formula{grid-template-columns:1fr}}
+.demo{background:var(--surface);border:1px solid var(--rule);border-radius:6px;padding:14px 16px;margin-top:14px}
+.demo .bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:10px}
+.demo button{font-family:var(--mono);font-size:13px;padding:7px 14px;border:1px solid var(--rule);background:var(--surface-2);color:var(--ink);border-radius:5px;cursor:pointer}
+.demo button.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+.demo button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.demo .status{font-family:var(--mono);font-size:12.5px;color:var(--muted)}
+.demo .fig{overflow-x:auto}
+.demo svg{display:block;width:100%;height:auto;min-width:640px}
+.demo .cell{stroke:var(--rule);stroke-width:.5}
+.demo .cost{font-size:9.5px;fill:var(--ink-2)}
+.demo .reach{font-size:10.5px;font-weight:500;fill:var(--ink)}
+.demo .cur{fill:var(--accent);fill-opacity:.18}
+.demo .path{stroke:var(--accent);stroke-width:3;fill:none}
+.demo .legend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12px;color:var(--ink-2);margin-top:8px}
+.demo .legend i{display:inline-block;width:14px;height:12px;border:1px solid var(--rule);vertical-align:-2px;margin-right:5px}
+.stack{display:flex;height:34px;border-radius:5px;overflow:hidden;border:1px solid var(--rule);margin-top:10px}
+.stack div{display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:11px;color:#fff;min-width:0;overflow:hidden;white-space:nowrap}
+.stacklegend{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:6px 14px;margin-top:10px;font-size:13px;color:var(--ink-2)}
+.stacklegend i{display:inline-block;width:12px;height:12px;border-radius:2px;vertical-align:-1px;margin-right:6px}
+.nudges{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px;margin-top:12px}
+.nudge{background:var(--surface);border:1px solid var(--rule);border-radius:5px;padding:10px 12px;min-width:0}
+.nudge h3{color:var(--accent-ink);margin-bottom:3px;font-size:15px}
+.nudge p{font-size:12.5px}
+.gap{background:var(--surface);border:1px solid var(--rule);border-radius:6px;padding:14px 16px;margin-top:14px;display:grid;grid-template-columns:1fr 1.05fr;gap:16px;align-items:start}
+.gap .fig{overflow-x:auto}
+.gap svg{display:block;width:100%;height:auto;min-width:300px}
+.gap h3{font-size:18px;margin-bottom:6px}
+.gap p{font-size:14px}
+.gap p+p{margin-top:8px}
+.gap .tag{display:inline-block;font-family:var(--mono);font-size:11px;padding:2px 8px;border-radius:3px;margin-bottom:6px}
+.tag.fixed{background:var(--go-soft);color:var(--go)}
+.tag.open{background:var(--cross-soft);color:var(--cross)}
+@media (max-width:760px){.gap{grid-template-columns:1fr}}
+footer{margin-top:40px;border-top:1px solid var(--rule);padding-top:10px;font-size:11.5px;color:var(--muted);font-family:var(--mono)}
+code{font-family:var(--mono);font-size:.92em;background:var(--surface-2);padding:1px 5px;border-radius:3px}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+<marker id="ah" viewBox="0 0 6 6" refX="5" refY="3" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L6,3 L0,6 z" fill="currentColor"/></marker>
+<pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="6" stroke="currentColor" stroke-width="1" stroke-opacity=".5"/></pattern>
+</defs></svg>
+
+<div class="wrap">
+<header>
+  <div class="eyebrow">Beeline route solver · beeline_engine · working tree 040be30 · 15 Oct 2026</div>
+  <h1>Beeline Solver Explained</h1>
+  <p class="lede">How the route is found, what the ₹ it minimises is made of, and what three of the known gaps mean. Written for a reader who knows transmission lines, not search algorithms.</p>
+  <p class="lede"><a href="solver-sim.html" style="color:var(--accent-ink);font-weight:600">Open the animated simulator</a> to watch the same method run on a sample corridor, stage by stage.</p>
+</header>
+
+<section>
+  <div class="sechead"><h2>What kind of algorithm is running</h2></div>
+  <div class="answer">
+    <p><b>A cheapest-path search on a grid, solved exactly by dynamic programming, on the GPU.</b> The band between A and B is covered with candidate tower positions every 50 m. Every allowed span between two positions is a move with a price. The solver works through the grid once, from A towards B, keeping for every position the cheapest way to reach it, and then reads the cheapest chain back from B. It is the same family as the shortest-path routines in a satnav (a Viterbi / DAG shortest path), not a genetic algorithm, not simulated annealing, not an LLM. For the grid it is given, the answer is provably the cheapest; the tests check it against a brute-force search.</p>
+    <p style="margin-top:8px">Two things make it feel smart. First, every rule is turned into geometry before the search starts, so the search never has to "know" the rules, only the prices and the forbidden cells. Second, the grid answer is only a draft: a second, finer search and a tower-by-tower polish bring it down to real tower positions and a real price.</p>
+  </div>
+</section>
+
+<section>
+  <div class="sechead"><h2>Step by step</h2><p>Six pictures. The pipeline in code: compile → solve → refine → forest cap → spot → log.</p></div>
+
+  <div class="panel">
+    <div class="fig"><svg viewBox="0 0 440 200" role="img" aria-label="Band rotated along the bee-line">
+      <rect x="20" y="40" width="400" height="120" style="fill:var(--accent-soft);stroke:var(--accent-line)"/>
+      <line class="dim" x1="40" y1="100" x2="400" y2="100" style="stroke-dasharray:5 4"/>
+      <circle cx="40" cy="100" r="5" class="twr"/><text x="36" y="88">A</text><circle cx="400" cy="100" r="5" class="twr"/><text x="396" y="88">B</text>
+      <g class="grid">
+        <line x1="20" y1="60" x2="420" y2="60"/><line x1="20" y1="80" x2="420" y2="80"/><line x1="20" y1="120" x2="420" y2="120"/><line x1="20" y1="140" x2="420" y2="140"/>
+        <line x1="60" y1="40" x2="60" y2="160"/><line x1="100" y1="40" x2="100" y2="160"/><line x1="140" y1="40" x2="140" y2="160"/><line x1="180" y1="40" x2="180" y2="160"/><line x1="220" y1="40" x2="220" y2="160"/><line x1="260" y1="40" x2="260" y2="160"/><line x1="300" y1="40" x2="300" y2="160"/><line x1="340" y1="40" x2="340" y2="160"/><line x1="380" y1="40" x2="380" y2="160"/>
+      </g>
+      <line class="dim" x1="430" y1="40" x2="430" y2="160" marker-start="url(#ah)" marker-end="url(#ah)"/><text x="434" y="104" transform="rotate(90 434 104)" text-anchor="middle">band ± up to 25 km</text>
+      <line class="dim" x1="40" y1="175" x2="400" y2="175" marker-start="url(#ah)" marker-end="url(#ah)"/><text x="220" y="190" text-anchor="middle">chainage, the bee-line, becomes the x-axis</text>
+      <text class="lbl" x="24" y="54">20 m cells</text>
+    </svg></div>
+    <div><div class="n">1</div><h3>Straighten the map</h3>
+      <p>The map is rotated so the straight line from A to B runs left to right. Everything inside the band is drawn on a 20 m grid in that frame. "Forward" now simply means "to the right", which is what lets the search be exact and fast.</p>
+      <p>The cost of this: the route can wander sideways as much as it likes, but it can never go backwards along the bee-line. A U-shaped detour round a block wider than the band cannot be found.</p></div>
+  </div>
+
+  <div class="panel">
+    <div class="fig"><svg viewBox="0 0 440 200" role="img" aria-label="Rule masks and price map">
+      <rect x="20" y="30" width="400" height="150" style="fill:var(--surface-2);stroke:var(--rule)"/>
+      <path class="feat" d="M60,60 L120,55 L130,100 L70,105 z"/><rect class="ban" x="45" y="42" width="100" height="78" rx="8"/><text class="lbl" x="48" y="135">village: no tower, no wire</text>
+      <path class="water" d="M190,30 L205,30 L230,180 L215,180 z"/><rect class="cban" x="170" y="30" width="80" height="150"/><text class="lbl" x="172" y="195">river: 150 m bank buffer</text>
+      <rect class="forest hatch" style="color:var(--forest)" x="290" y="70" width="110" height="90"/><rect x="290" y="70" width="110" height="90" style="fill:none;stroke:var(--forest)"/><text class="lbl" x="294" y="66">forest: priced per m², capped</text>
+      <line class="theirs" x1="20" y1="150" x2="170" y2="130"/><text class="lbl" x="24" y="166">existing line: crossing direction</text>
+      <text x="300" y="46" style="fill:var(--nogo)">■ tower forbidden</text><text x="300" y="60" style="fill:var(--cond)">■ conductor forbidden</text>
+    </svg></div>
+    <div><div class="n">2</div><h3>Turn every rule into a picture</h3>
+      <p>Each of the 52 rules is compiled into one of a few things on that grid: cells where no tower may stand, cells no wire may pass over, cells where only a straight-line tower may stand, a price per m² of corridor (land compensation, forest diversion), a foundation multiplier (soil), and for crossable features the direction of the thing being crossed.</p>
+      <p>Buffers come from distance transforms, accurate to about one cell. The tower spotting later re-checks every tower against the exact vector shapes, so a buffer that is off by a few metres on the grid is corrected at the end.</p></div>
+  </div>
+
+  <div class="panel">
+    <div class="fig"><svg viewBox="0 0 440 200" role="img" aria-label="Candidate sites and the fan of allowed spans">
+      <g id="sites"></g>
+      <g class="fan" id="fan"></g>
+      <circle cx="100" cy="100" r="5" class="twr"/>
+      <text x="92" y="88">here</text>
+      <text class="lbl" x="24" y="190">sites every 50 m · spans 100–400 m · forward only · heading within ± 60°</text>
+    </svg></div>
+    <div><div class="n">3</div><h3>Lay down the candidate positions</h3>
+      <p>Candidate tower sites sit every 50 m along and across the band. From any site, the next tower can be any site that is at least 100 m and at most the design span away (400 m at 765 kV), ahead rather than behind, and not too far off to the side. That fan of allowed moves is the same at every site, which is what lets the GPU evaluate millions of them at once.</p>
+      <p>A move is thrown away if the span would pass over a conductor-forbidden cell, if the target site is tower-forbidden, or if it crosses a river, road, railway or line at an angle or length the crossing rule does not allow.</p></div>
+  </div>
+
+  <div class="panel" style="grid-template-columns:1fr">
+    <div><div class="n">4</div><h3>Price every move</h3>
+      <p>Each move from one tower to the next carries three prices, all in rupees, all taken from the Costs screen. This is the quantity the search minimises: the sum of these three over the whole chain from gantry A to gantry B.</p>
+      <div class="formula">
+        <div class="term"><div class="sym">S</div><h3>Standing here</h3><p>What this spot adds regardless of tower type: the foundation extra for the soil (black cotton ×1.55, rock ×1.2, marsh and piles ×1.85) and the tower-base land compensation. Infinite if the spot is forbidden.</p></div>
+        <div class="term"><div class="sym">T</div><h3>The bend</h3><p>The tower's own price, chosen by how sharply the line turns here: A for a straight run, B1 to 15°, C1 to 30°, D45, D60. At 765 kV that is ₹0.48 Cr for an A and ₹1.11 Cr for a D60. A crossing that forces a heavier type pays the heavier price. Over 60° is not allowed.</p></div>
+        <div class="term"><div class="sym">E</div><h3>The span</h3><p>Length × line cost per metre (₹2.35 Cr/km at 765 kV) plus the right-of-way strip under it: length × corridor width × the price per m² of the ground it crosses, averaged along the span. Agricultural land pays 30 % of land value; reserve forest pays NPV, afforestation, plans and land.</p></div>
+      </div>
+      <p style="margin-top:10px">On top of these the search adds <b>steering</b> prices that are later removed again: a 20 % discount near existing lines, a surcharge on hill ground, a graded penalty for crossing a power line away from its null point, and on routes 2 and 4 a penalty for sideways offset or for copying route 1. They move the route; they never appear in the reported ₹.</p></div>
+  </div>
+
+  <div class="demo">
+    <div class="bar"><button id="play" class="primary">Play the sweep</button><button id="step">Step one column</button><button id="reset">Reset</button><span class="status" id="status">Press Play. A toy version: 14 columns, 7 rows, three move directions.</span></div>
+    <div class="fig"><svg id="dp" viewBox="0 0 760 300" role="img" aria-label="Dynamic-programming sweep on a toy grid"></svg></div>
+    <div class="legend"><span><i style="background:var(--nogo);opacity:.4"></i>forbidden cell</span><span><i style="background:var(--forest);opacity:.45"></i>dear ground</span><span><i style="background:var(--accent);opacity:.25"></i>column being solved</span><span>number in a cell = cheapest cost to reach it so far</span><span><i style="border-top:3px solid var(--accent);height:0"></i>cheapest chain, read back from B</span></div>
+    <div style="margin-top:10px"><div class="n">5</div><h3>Sweep once, left to right</h3>
+      <p>The solver takes the columns in order. For each site in a column it asks: of all the moves that could land here, which one gives the lowest total so far? It stores that number and remembers where it came from. The state it keeps is not just the site but the site plus the direction it arrived from, because the price of the next bend depends on the incoming direction. The whole column is computed at once on the GPU.</p>
+      <p style="margin-top:8px">When the sweep reaches B, the cheapest total is known and the chain is read back through the remembered "came from" links. There is no guessing and no random restarts. Different routes come from running the same sweep again with a different steering price, not from a different method.</p></div>
+  </div>
+
+  <div class="panel">
+    <div class="fig"><svg viewBox="0 0 440 200" role="img" aria-label="From the grid draft to spotted towers">
+      <polyline style="fill:none;stroke:var(--faint);stroke-width:2;stroke-dasharray:3 3" points="30,120 80,110 130,100 180,100 230,90 280,80 330,80 380,70 410,70"/>
+      <text class="lbl" x="30" y="140">grid draft, 50 m then 25 m</text>
+      <polyline class="line" points="30,120 180,100 410,70"/>
+      <path class="twr" d="M24,128 L30,112 L36,128z"/><path class="twr" d="M174,108 L180,92 L186,108z"/><path class="twr" d="M404,78 L410,62 L416,78z"/>
+      <path class="twr" d="M100,118 L105,106 L110,118z" style="fill:var(--muted)"/><path class="twr" d="M255,97 L260,85 L265,97z" style="fill:var(--muted)"/><path class="twr" d="M330,87 L335,75 L340,87z" style="fill:var(--muted)"/>
+      <text x="180" y="84" text-anchor="middle">angle point, B1</text>
+      <text class="lbl" x="100" y="170">string-pulled legs · exact buffers · 10 m tower programme · section points · DEM clearance · polish</text>
+    </svg></div>
+    <div><div class="n">6</div><h3>Make it real, then price it honestly</h3>
+      <p>The grid chain is a draft at 50 m resolution. A second sweep on a 25 m lattice, confined to 300 m either side of the draft, tightens it. If a strict route carries more than 5 ha of reserve forest, the sweep repeats with forest priced up until it does not.</p>
+      <p>Then the tower spotting takes over: runs of grid towers become straight legs between angle points, every tower is checked against the exact vector buffers and nudged if needed, towers along each leg are placed by a 10 m cost programme, crossing towers are slid into their windows, section towers added, ground clearance checked on the DEM, and bends merged or moved where that is cheaper. The ₹ you see is recomputed from these final towers with the true prices, never the search price.</p></div>
+  </div>
+</section>
+
+<section>
+  <div class="sechead"><h2>What the reported ₹ is made of</h2><p>Illustrative split for a 765 kV D/C route on mostly agricultural land; widths are indicative, not a measured run.</p></div>
+  <div class="stack">
+    <div style="flex:46;background:var(--accent)">towers by type</div>
+    <div style="flex:34;background:var(--cond)">line per km</div>
+    <div style="flex:9;background:var(--feature)">RoW strip</div>
+    <div style="flex:6;background:var(--forest)">forest</div>
+    <div style="flex:5;background:var(--cross)">soil, ext.</div>
+  </div>
+  <div class="stacklegend">
+    <div><i style="background:var(--accent)"></i>Towers: A 0.48, B1 0.69, C1 0.78, D45 0.98, D60 1.11 ₹ Cr each, normal foundation included</div>
+    <div><i style="background:var(--cond)"></i>Line: conductor, insulators, accessories, stringing, 2.35 ₹ Cr/km</div>
+    <div><i style="background:var(--feature)"></i>Right of way: 30 % of land value across the 67 m corridor, 200 % under each tower base</div>
+    <div><i style="background:var(--forest)"></i>Forest diversion: NPV 8.61 + CA 1.1 + plans 1.6 ₹ L/ha, plus reserve-forest land; ×5 in a sanctuary, ×10 in a park</div>
+    <div><i style="background:var(--cross)"></i>Foundation extra by soil and +18 m body extensions at 9.4 % of the tower</div>
+  </div>
+  <div class="nudges">
+    <div class="nudge"><h3>Search-only, removed from the ₹</h3><p>Near-existing-line discount 20 %, hill surcharge ₹2 Cr/km + ₹1 Cr/tower, off-null-point crossing penalty up to 20 % of a tower, crossing-window overrun 100 % of a tower per 25 m, route-2 lateral penalty, route-4 overlap penalty, forest-cap multiplier.</p></div>
+    <div class="nudge"><h3>No crossing charges</h3><p>Route Cost Parameters 3 dropped them. A crossing costs what its heavier towers cost, nothing more.</p></div>
+    <div class="nudge"><h3>Not yet signed off</h3><p>The line, foundation, buildings and tower categories are marked "awaiting TCC"; the report names them.</p></div>
+  </div>
+</section>
+
+<section>
+  <div class="sechead"><h2>Three of the known gaps, explained</h2></div>
+
+  <div class="gap">
+    <div class="fig"><svg viewBox="0 0 440 210" role="img" aria-label="Towers n-1, n, n+1 around a power-line crossing">
+      <line class="theirs" x1="220" y1="20" x2="220" y2="150"/><text class="lbl" x="226" y="32">existing line</text>
+      <polyline class="line" points="30,140 110,130 190,110 260,100 330,90 410,120"/>
+      <path class="twr" d="M104,138 L110,122 L116,138z"/><text x="110" y="156" text-anchor="middle">n−1</text>
+      <path class="twr" d="M184,118 L190,102 L196,118z" style="fill:var(--accent)"/><text x="190" y="136" text-anchor="middle" style="fill:var(--accent)">n</text>
+      <path class="twr" d="M254,108 L260,92 L266,108z" style="fill:var(--accent)"/><text x="260" y="126" text-anchor="middle" style="fill:var(--accent)">n+1</text>
+      <path class="twr" d="M324,98 L330,82 L336,98z"/><text x="330" y="116" text-anchor="middle">n+2</text>
+      <path d="M190,110 L240,110 A50,50 0 0,0 236,99 z" style="fill:var(--cross);fill-opacity:.25;stroke:var(--cross)"/><text x="244" y="118" style="fill:var(--cross)">≤ 45°</text>
+      <text class="cap" x="30" y="190">The crossing span runs from tower n to tower n+1. Each of those two may turn at most 45°.</text>
+    </svg></div>
+    <div><span class="tag fixed">now enforced · README line is stale</span><h3>"n±1 deviation" at power-line crossings</h3>
+      <p>Call the span that passes over the existing line "span n". The towers at its two ends are the crossing towers, which the AESL sheet calls n and n+1 (or "n±1" seen from the crossing point). The rule says those two towers should not be sharp angle points: the line should arrive at the crossing straight and leave it straight, so the crossing towers can be the standard type and the conductor sits squarely over the other line.</p>
+      <p>Until 13 October the engine only wrote a warning when one of them turned hard. Since then the cap is a real rule: each crossing tower may turn at most 45° (the "Max deviation at the two crossing towers" parameter on every crossing rule). The search uses a reduced bend table on crossing spans, the spotting records a violation named <code>crossing_deviation</code> if a tower still exceeds it, and a repair step shares the turn with a neighbour moved up to 200 m. The README sentence calling it a warning predates this change.</p></div>
+  </div>
+
+  <div class="gap">
+    <div class="fig"><svg viewBox="0 0 440 210" role="img" aria-label="CRZ measured from the sea polygon instead of the high tide line">
+      <path class="water" d="M0,60 Q60,80 120,70 T240,90 T440,70 L440,210 L0,210 z"/>
+      <text class="lbl" x="300" y="150">sea polygon (delivered)</text>
+      <path d="M0,40 Q60,60 120,50 T240,70 T440,50" style="fill:none;stroke:var(--nogo);stroke-width:2;stroke-dasharray:6 4"/><text x="8" y="34" style="fill:var(--nogo)">HTL, high tide line (not delivered)</text>
+      <path d="M0,60 Q60,80 120,70 T240,90 T440,70" style="fill:none;stroke:var(--tower);stroke-width:2"/>
+      <path d="M0,26 Q60,46 120,36 T240,56 T440,36" style="fill:none;stroke:var(--tower);stroke-width:1.5;stroke-dasharray:3 3"/><text x="300" y="22" style="fill:var(--tower)">buffer: CHW 33.5 m from the sea edge</text>
+      <text class="cap" x="8" y="200">CRZ I–IV zones (0–500 m landward of the HTL, by category) are not in the data yet.</text>
+    </svg></div>
+    <div><span class="tag open">data pending</span><h3>CRZ measured from the sea polygon, not the HTL</h3>
+      <p>Coastal Regulation Zone rules are defined from the High Tide Line, the legal line the coastal authority draws, and split the land behind it into zones I to IV with different restrictions. The delivered CRZ file so far contains only the sea and Gulf water polygon. The HTL line and the zone polygons have not been delivered.</p>
+      <p>So the engine takes the edge of the water polygon as a stand-in for the HTL and keeps towers and conductor the corridor half-width back from it (33.5 m at 765 kV), crossable only on the relaxed route with 12 months' approval. The layer already has class slots for the zones, so they switch on when the data arrives. There is also no money attached: the cost sheet of 7 October removed the environment / CRZ clearance item, so entering the zone adds nothing to the ₹.</p></div>
+  </div>
+
+  <div class="gap">
+    <div class="fig"><svg viewBox="0 0 440 210" role="img" aria-label="Wetland cross-section with the 10-year high flood level">
+      <path d="M0,150 L80,140 L140,160 L220,170 L300,160 L360,140 L440,130 L440,210 L0,210 z" style="fill:var(--feature-soft);stroke:var(--feature)"/>
+      <path d="M100,152 L140,160 L220,170 L300,160 L340,146 L340,150 L100,150z" style="fill:var(--water);fill-opacity:.5"/>
+      <line x1="40" y1="120" x2="400" y2="120" style="stroke:var(--nogo);stroke-width:2;stroke-dasharray:6 4"/><text x="44" y="114" style="fill:var(--nogo)">10-year mean high flood level (no data)</text>
+      <line class="dim" x1="60" y1="120" x2="60" y2="146" marker-end="url(#ah)"/><text x="64" y="140">50 m foundation setback, not applied</text>
+      <path class="twr" d="M212,168 L220,120 L228,168z" style="fill:var(--ink)"/><rect x="214" y="168" width="12" height="26" style="fill:var(--cross);fill-opacity:.6"/><text x="234" y="190" style="fill:var(--cross)">piles, foundation ×1.85</text>
+      <text class="cap" x="8" y="206">Today a tower may stand anywhere on wetland, on piles; the flood-level rule waits for hydrology data.</text>
+    </svg></div>
+    <div><span class="tag open">data pending</span><h3>Wetland: the 50 m high-flood-level setback</h3>
+      <p>The AESL rule table says wetland is routable, but no foundation may be placed within 50 m of the 10-year mean High Flood Level, the water level a once-in-ten-years flood reaches. That line is a hydrology product: it needs flood records or a flood model per wetland, and no such layer has been delivered for Gujarat.</p>
+      <p>Without it the engine cannot draw the setback. What it does instead: towers on wetland are allowed, every one of them is costed on a pile foundation (×1.85 the normal foundation), and the wetland polygon itself carries no buffer. Where an HFL layer arrives, the rule needs one new buffer parameter and no engine change.</p></div>
+  </div>
+</section>
+
+<footer>Source: beeline_engine/compile.py, solver.py, spotting.py, pipeline.py; config/rules.yaml, engine.yaml, costs.yaml. Companion page: rule-map.html.</footer>
+</div>
+
+<script>
+(function(){
+'use strict';
+/* fan of allowed spans (panel 3) */
+(function(){
+  const g=document.getElementById('sites'), f=document.getElementById('fan'); let s='',fs='';
+  for(let c=0;c<=10;c++) for(let r=0;r<=5;r++){ s+=`<circle class="site" cx="${40+c*36}" cy="${40+r*24}" r="2.2"/>`; }
+  const ox=100, oy=100;
+  for(let c=1;c<=8;c++) for(let r=-3;r<=3;r++){ const dx=c*36, dy=r*24; const L=Math.hypot(dx,dy); if(L<70||L>290) continue; if(Math.abs(Math.atan2(dy,dx))>Math.PI/3) continue; fs+=`<line x1="${ox}" y1="${oy}" x2="${ox+dx}" y2="${oy+dy}"/>`; }
+  g.innerHTML=s; f.innerHTML=fs;
+})();
+
+/* toy dynamic programme */
+const COLS=14, ROWS=7, CW=50, CH=36, X0=30, Y0=20;
+const site=[];   // site cost per cell; -1 = forbidden
+const seed=[[0,3,0],[1,3,0],[2,3,0],[3,2,0],[3,3,0],[3,4,0]];
+for(let c=0;c<COLS;c++){ site.push([]); for(let r=0;r<ROWS;r++){ let v=1; if((c>=4&&c<=5&&r>=2&&r<=4)||(c>=9&&c<=9&&r<=2)) v=-1; else if(c>=7&&c<=11&&r>=4) v=4; else if((c*7+r*3)%5===0) v=2; site[c].push(v);} }
+site[0][3]=0; site[COLS-1][3]=0;
+const DIRS=[-1,0,1]; const MOVE=[1.4,1,1.4]; const BEND=0.8;
+let best, from, col, playing=false, timer=null;
+function reset(){ best=[];from=[]; for(let c=0;c<COLS;c++){best.push([]);from.push([]);for(let r=0;r<ROWS;r++){best[c].push([Infinity,Infinity,Infinity]);from[c].push([null,null,null]);}} best[0][3]=[0,0,0]; col=0; draw(null); setStatus('Column 0 is A. Costs: standing 1 / 2 / 4, move 1 straight or 1.4 diagonal, a bend 0.8.'); }
+function stepCol(){ if(col>=COLS-1) return false; const c=col+1;
+  for(let r=0;r<ROWS;r++){ if(site[c][r]<0) continue; for(let k=0;k<3;k++){ const pr=r-DIRS[k]; if(pr<0||pr>=ROWS) continue; for(let pk=0;pk<3;pk++){ const prev=best[c-1][pr][pk]; if(!isFinite(prev)) continue; const tot=prev+MOVE[k]+site[c][r]+(pk!==k?BEND:0); if(tot<best[c][r][k]){best[c][r][k]=tot; from[c][r][k]=[pr,pk];} } } }
+  col=c; draw(col>=COLS-1?backtrack():null); setStatus(col>=COLS-1?'Done. B reached; the chain is read back through the remembered links.':`Column ${col} solved: each cell keeps the cheapest way in, per arrival direction.`); return true; }
+function backtrack(){ let r=3, k=0, bv=Infinity; for(let kk=0;kk<3;kk++) if(best[COLS-1][3][kk]<bv){bv=best[COLS-1][3][kk];k=kk;} const pts=[[COLS-1,r]]; let c=COLS-1; while(c>0){ const f=from[c][r][k]; if(!f) break; r=f[0]; k=f[1]; c--; pts.push([c,r]); } return pts.reverse(); }
+function draw(path){ let s='';
+  for(let c=0;c<COLS;c++) for(let r=0;r<ROWS;r++){ const x=X0+c*CW,y=Y0+r*CH; let fill='var(--surface-2)'; if(site[c][r]<0) fill='var(--nogo-soft)'; else if(site[c][r]===4) fill='var(--go-soft)'; else if(site[c][r]===2) fill='var(--surface)';
+    s+=`<rect class="cell" x="${x}" y="${y}" width="${CW}" height="${CH}" style="fill:${fill}"/>`; if(c===col&&col>0) s+=`<rect class="cur" x="${x}" y="${y}" width="${CW}" height="${CH}"/>`;
+    if(site[c][r]>=0) s+=`<text class="cost" x="${x+4}" y="${y+11}">${site[c][r]}</text>`; const b=Math.min(...best[c][r]); if(isFinite(b)) s+=`<text class="reach" x="${x+CW/2}" y="${y+CH/2+8}" text-anchor="middle">${b.toFixed(1)}</text>`; }
+  s+=`<text x="${X0+CW/2}" y="${Y0-6}" text-anchor="middle">A</text><text x="${X0+(COLS-0.5)*CW}" y="${Y0-6}" text-anchor="middle">B</text>`;
+  if(path){ s+=`<polyline class="path" points="${path.map(([c,r])=>`${X0+c*CW+CW/2},${Y0+r*CH+CH/2}`).join(' ')}"/>`; for(const [c,r] of path) s+=`<circle cx="${X0+c*CW+CW/2}" cy="${Y0+r*CH+CH/2}" r="4" style="fill:var(--accent)"/>`; }
+  document.getElementById('dp').innerHTML=s; }
+function setStatus(t){ document.getElementById('status').textContent=t; }
+function play(){ if(playing){ stop(); return; } playing=true; document.getElementById('play').textContent='Pause'; const reduce=window.matchMedia('(prefers-reduced-motion: reduce)').matches; if(reduce){ while(stepCol()){} stop(); return; } timer=setInterval(()=>{ if(!stepCol()) stop(); },420); }
+function stop(){ playing=false; document.getElementById('play').textContent='Play the sweep'; if(timer){clearInterval(timer);timer=null;} }
+document.getElementById('play').addEventListener('click',play);
+document.getElementById('step').addEventListener('click',()=>{ stop(); stepCol(); });
+document.getElementById('reset').addEventListener('click',()=>{ stop(); reset(); });
+reset();
+})();
+</script>
+</body>
+</html>

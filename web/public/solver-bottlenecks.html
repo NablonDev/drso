@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Beeline Solver Bottlenecks</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo+Narrow:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: a reading document. Evidence first (one real solve, measured), then the problems, then the fixes ranked on an effort × gain grid, then the literature. */
+:root{
+  --ground:#F4F4F5; --surface:#FFFFFF; --surface-2:#F9F9FA; --ink:#141316; --ink-2:#333336; --muted:#5E5F63; --faint:#86878B;
+  --rule:#D2D3D5; --rule-2:#E6E7E8; --accent:#8E278F; --accent-ink:#6B1D6C; --accent-soft:#F5EAF5;
+  --nogo:#A33A31; --nogo-soft:#F7E6E3; --cross:#9E6811; --cross-soft:#FAF0DC; --go:#3B7350; --go-soft:#E5F0E7; --locked:#46596A; --locked-soft:#E7EBEF;
+  --display:"Archivo Narrow","Arial Narrow",system-ui,sans-serif; --body:"IBM Plex Sans",system-ui,sans-serif; --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --ground:#121113; --surface:#1C1A1D; --surface-2:#242126; --ink:#F3F2F4; --ink-2:#D4D3D6; --muted:#A3A1A6; --faint:#76747A;
+  --rule:#3A373C; --rule-2:#2C292E; --accent:#C77BC8; --accent-ink:#E2B0E3; --accent-soft:#2E1F2E;
+  --nogo:#E07B70; --nogo-soft:#3A2220; --cross:#D9A24A; --cross-soft:#372B16; --go:#7FBF93; --go-soft:#1E2F23; --locked:#9DB1C2; --locked-soft:#232B33; color-scheme:dark }}
+:root[data-theme="dark"]{
+  --ground:#121113; --surface:#1C1A1D; --surface-2:#242126; --ink:#F3F2F4; --ink-2:#D4D3D6; --muted:#A3A1A6; --faint:#76747A;
+  --rule:#3A373C; --rule-2:#2C292E; --accent:#C77BC8; --accent-ink:#E2B0E3; --accent-soft:#2E1F2E;
+  --nogo:#E07B70; --nogo-soft:#3A2220; --cross:#D9A24A; --cross-soft:#372B16; --go:#7FBF93; --go-soft:#1E2F23; --locked:#9DB1C2; --locked-soft:#232B33; color-scheme:dark }
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--ground);color:var(--ink);font-family:var(--body);font-size:15px;line-height:1.5}
+img{max-width:100%}[hidden]{display:none!important}
+.wrap{max-width:1000px;margin:0 auto;padding-block:22px 60px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+h1,h2,h3{font-family:var(--display);text-wrap:balance;margin:0}
+h1{font-size:36px;font-weight:700;line-height:1.05}
+h2{font-size:24px;font-weight:600}
+h3{font-size:17px;font-weight:600}
+.eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+p{margin:0;max-width:72ch;color:var(--ink-2)}
+p+p{margin-top:8px}
+.lede{font-size:16.5px;color:var(--ink)}
+header{border-bottom:2px solid var(--ink);padding-bottom:16px;display:flex;flex-direction:column;gap:8px}
+section{margin-top:44px}
+.sechead{border-bottom:1px solid var(--rule);padding-bottom:8px;margin-bottom:16px;display:flex;flex-direction:column;gap:4px}
+.answer{background:var(--accent-soft);border-left:4px solid var(--accent);padding:14px 16px;border-radius:0 6px 6px 0;margin-top:16px}
+.answer p{color:var(--ink);max-width:none}
+.answer b{color:var(--accent-ink)}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+table{border-collapse:collapse;width:100%;font-size:13.5px}
+th,td{text-align:left;padding:7px 9px;border-bottom:1px solid var(--rule-2);vertical-align:top}
+th{font-family:var(--mono);font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);font-weight:500}
+td.num,th.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap}
+.tblwrap{overflow-x:auto;background:var(--surface);border:1px solid var(--rule);border-radius:6px;padding:4px 8px;margin-top:12px}
+.timebar{display:flex;height:30px;border-radius:5px;overflow:hidden;border:1px solid var(--rule);margin-top:12px}
+.timebar div{display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:11px;color:#fff;min-width:0;overflow:hidden;white-space:nowrap}
+.tlegend{display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:8px;font-size:12.5px;color:var(--ink-2)}
+.tlegend i{display:inline-block;width:11px;height:11px;border-radius:2px;vertical-align:-1px;margin-right:5px}
+.prob{background:var(--surface);border:1px solid var(--rule);border-radius:6px;padding:14px 16px;margin-top:12px}
+.prob h3{margin-bottom:6px}
+.prob .ev{font-family:var(--mono);font-size:12.5px;color:var(--accent-ink);background:var(--accent-soft);padding:6px 10px;border-radius:4px;margin:8px 0;display:inline-block}
+.prob p{font-size:14px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px}
+@media (max-width:720px){.grid{grid-template-columns:1fr}}
+.cell{border:1px solid var(--rule);border-radius:6px;padding:12px 14px;min-width:0}
+.cell.now{background:var(--go-soft);border-color:var(--go)}
+.cell.next{background:var(--cross-soft);border-color:var(--cross)}
+.cell.later{background:var(--locked-soft);border-color:var(--locked)}
+.cell.avoid{background:var(--surface-2)}
+.cell h3{font-family:var(--mono);font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin-bottom:8px}
+.cell ol{margin:0;padding-left:18px;font-size:13.5px;color:var(--ink)}
+.cell li{margin-bottom:6px}
+.fix{background:var(--surface);border:1px solid var(--rule);border-radius:6px;padding:14px 16px;margin-top:12px;display:grid;grid-template-columns:auto 1fr;gap:4px 14px}
+.fix .n{font-family:var(--display);font-size:26px;font-weight:700;color:var(--accent);line-height:1;grid-row:span 3}
+.fix h3{font-size:17px}
+.fix .meta{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-family:var(--mono);font-size:10.5px;padding:2px 8px;border-radius:3px;background:var(--surface-2);border:1px solid var(--rule);color:var(--ink-2)}
+.chip.gain{background:var(--go-soft);color:var(--go);border-color:transparent}
+.chip.effort{background:var(--cross-soft);color:var(--cross);border-color:transparent}
+.chip.where{background:var(--locked-soft);color:var(--locked);border-color:transparent}
+.fix p{font-size:14px;max-width:none}
+.fix ul{margin:4px 0 0;padding-left:18px;font-size:13.5px;color:var(--ink-2)}
+.fix li{margin-bottom:3px}
+code{font-family:var(--mono);font-size:.92em;background:var(--surface-2);padding:1px 5px;border-radius:3px}
+.lit p{font-size:14px}
+.lit h3{margin-top:14px}
+.lit ul{padding-left:18px;font-size:13.5px;color:var(--ink-2)}
+.lit li{margin-bottom:6px}
+footer{margin-top:40px;border-top:1px solid var(--rule);padding-top:10px;font-size:11.5px;color:var(--muted);font-family:var(--mono)}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="eyebrow">Beeline route solver · analysis of one measured solve · 15 Oct 2026 · working tree 040be30</div>
+  <h1>Beeline Solver Bottlenecks</h1>
+  <p class="lede">Where the route search loses money and time, measured on the latest full solve, and the fixes ranked by what they return for the effort. Companion pages: <a href="solver-explained.html">how the solver works</a>, <a href="solver-sim.html">the animated simulator</a>, <a href="rule-map.html">the rule map</a>.</p>
+</header>
+
+<section>
+  <div class="sechead"><h2>The evidence: solve 89 on BHU-SHI-0224</h2><p>One route (least cost), 765 kV D/C, 102.8 km bee-line, 112.8 km of route, 317 towers, 55 crossings. Numbers from the worker log and the solve result.</p></div>
+  <div class="timebar">
+    <div style="flex:167;background:var(--locked)">compile 167 s</div>
+    <div style="flex:50;background:var(--accent)">search 50</div>
+    <div style="flex:300;background:var(--cross)">forest-cap passes 6 × 50 s</div>
+    <div style="flex:222;background:var(--accent-ink)">refine 25 m 222 s</div>
+    <div style="flex:881;background:var(--nogo)">spotting 881 s</div>
+    <div style="flex:60;background:var(--faint)">rest</div>
+  </div>
+  <div class="tlegend"><span>total 1,945 s = 32.4 min</span><span>the GPU search itself is 50 s of that</span><span>CPU spotting is 45 %</span><span>cap passes 15 %</span><span>compile 9 % with every raster already cached</span></div>
+  <div class="tblwrap"><table>
+    <thead><tr><th>Measure</th><th class="num">Value</th><th>What it says</th></tr></thead>
+    <tbody>
+      <tr><td>Search price after the 25 m pass</td><td class="num">₹566.98 Cr</td><td rowspan="2">The search ranks routes on a price 10 % below what gets built. Steering discounts and suspension-tower site figures are in the search price; true tower types, extensions and exact strips are not.</td></tr>
+      <tr><td>True cost of the spotted route</td><td class="num">₹628.31 Cr</td></tr>
+      <tr><td>Tower mix</td><td class="num">214 A · 46 B1 · 30 C1 · 23 D45 · 4 D60</td><td>103 tension towers on 113 km, one every 1.1 km. 93 angle points. The search sees a bend wherever the lattice cannot draw a straight line.</td></tr>
+      <tr><td>Towers with a +18 m body extension</td><td class="num">112 of 317</td><td>35 % of towers raised for ground clearance. At 9.4 % of the tower price that is roughly ₹5 Cr, and it says the search's terrain model and the spotting disagree.</td></tr>
+      <tr><td>Crossings outside their preferred window</td><td class="num">50 of 55</td><td>Almost every crossing is "relaxed": off the null point, off 90°, or with a crossing tower beyond 123 m. The log shows 5 power-line crossings where the refinement found no legal layout within its reach.</td></tr>
+      <tr><td>Violations left after spotting</td><td class="num">8</td><td>3 crossing-deviation, 2 tower-buffer, 1 conductor-buffer, 1 crossing-angle, 1 dead-end deviation. The independent checker on the previous solve also found rule breaks the engine did not flag (a 66 kV crossing at 68.8°, a canal parallel run).</td></tr>
+      <tr><td>Spotting polish gain</td><td class="num">₹8.6 Cr</td><td>Straighten 4.84, vertex descent 1.15, polish 1.65, merges 0.53, re-spot 0.57. Local moves find ₹8.6 Cr the search missed: a measure of how far the grid answer is from a tuned alignment.</td></tr>
+      <tr><td>Forest cap outcome</td><td class="num">2.0 ha of a 5 ha cap at ×35</td><td>Six search passes to land at ×35, and the route then uses less than half the allowance. The cap is met by over-pricing, not by finding the cheapest route that fits.</td></tr>
+      <tr><td>Compile with 61 cache hits, 0 misses</td><td class="num">167 s</td><td>Every raster came from the cache and the compile still took nearly three minutes: the cost is in rasterising and unioning, not in distance transforms.</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section>
+  <div class="sechead"><h2>The problems, in order of money lost</h2></div>
+
+  <div class="prob"><h3>1. The lattice cannot draw a straight line at most angles</h3>
+    <span class="ev">93 angle points · 103 tension towers · heading step 7.1° at 400 m</span>
+    <p>Sites are 50 m apart and a span is at most 400 m, so the search can only head in directions whose tangent is a multiple of 50/400. A line at 3° is drawn as alternating 0° and 7.1° spans, and every alternation is priced as a B1 tower (₹0.69 Cr instead of ₹0.48 Cr). The search therefore believes any route not aligned with the bee-line costs ₹0.2 Cr per tower more than it does, and prefers routes that hug the grid directions. The <code>heading_slack</code> option that priced small bends as straight was switched off on 6 October because it over-corrected by ₹27–32 Cr: the slack let real small bends go free too.</p>
+    <p>String-pulling repairs some of this afterwards (₹4.8 Cr of straighten moves on this solve), but it can only straighten what the search already chose. Routes the search never ranked first because of phantom bends are never seen.</p></div>
+
+  <div class="prob"><h3>2. The search prices one thing and the spotting builds another</h3>
+    <span class="ev">₹567 Cr searched → ₹628 Cr built</span>
+    <p>Three sources of drift. Steering: the 20 % near-line discount and the hill surcharge are in the search price. Towers: site costs use the suspension tower's foundation and base area for every type, and a forced crossing type is approximated. Terrain: the search prices one +18 m extension where a span fails clearance; the spotting then raises 112 towers and adds towers on ridges. The drift is not the problem by itself. The problem is that it is not uniform, so two routes ₹5 Cr apart in the search can swap places once built, and nothing feeds the built price back into the search.</p></div>
+
+  <div class="prob"><h3>3. Two stages, repaired locally</h3>
+    <span class="ev">14.7 min of spotting · 8 violations left · 50 relaxed crossings</span>
+    <p>Rules are rasterised at 20 m for the search and checked exactly in spotting. Where the two disagree the spotting nudges, slides, splits turns and re-spots crossings. On this solve the crossing refinement alone ran seven minutes and still reported "no legal layout within the refinement reach" at five power-line crossings. Every repair is local and greedy: it fixes one tower given its neighbours, and stops at the first legal cheaper candidate. The 45 straightening, merge and vertex moves that followed are hill-climbing on top of that.</p></div>
+
+  <div class="prob"><h3>4. The forest cap is a price search, not a constrained search</h3>
+    <span class="ev">6 passes · 300 s · landed at 2.0 ha of 5</span>
+    <p>Bisection on a multiplier finds the smallest multiplier whose grid line is under the cap minus a 1 ha margin. That is a Lagrangian relaxation with one multiplier for the whole route: the result is feasible but not the cheapest feasible route, and when the forest polygons are lumpy the route jumps from well over the cap to well under it, as here. Six GPU passes are spent to find a number that a second resource in the state could carry in one.</p></div>
+
+  <div class="prob"><h3>5. Time is spent where it does not change the answer</h3>
+    <span class="ev">compile 167 s with a warm cache · refine 222 s on 318 towers, 318 kept · spotting single-threaded</span>
+    <p>The refinement re-searches a 600 m corridor along the whole route, but the 50 m and 25 m answers had the same tower count and most of the route is straight runs where 25 m changes nothing. The compile rebuilds the rule rasters per solve even when nothing about the rules or layers changed. Spotting is pure Python and Shapely on one core while the GPU idles, and the previous job died of a CUDA out-of-memory in the refinement chunking before the fix in 040be30.</p></div>
+
+  <div class="prob"><h3>6. Structural limits of the frame</h3>
+    <span class="ev">no backward detours · ±60° headings · band chosen by hand · height outside the search</span>
+    <p>The frame rotated along the bee-line is what makes the exact search cheap, and it is also what rules out a U-turn round a block wider than the band, a leg that runs backwards to reach a crossing at 90°, and any route outside the band the drafter drew. Tower height is chosen after the route, so the search cannot trade a taller tower for a shorter detour. These are the right calls for v1 and they are limits, not bugs.</p></div>
+</section>
+
+<section>
+  <div class="sechead"><h2>Fixes on the effort × gain grid</h2><p>Gain is in rupees on the reported route, in minutes per solve, or in violations removed. Effort is engineering days in this codebase.</p></div>
+  <div class="grid">
+    <div class="cell now"><h3>Do now · small effort, high gain</h3><ol>
+      <li><b>Straight-run primitives</b>: multi-span collinear edges in the lattice so fine headings are priced as A towers (fix 1).</li>
+      <li><b>One backward pass of the same search</b>: gives the forest-cap gap closure and the alternative routes from one extra 50 s pass (fix 10).</li>
+      <li><b>One re-priced search pass</b> with the spotted route's true prices fed back (fix 2).</li>
+      <li><b>Refine only round bends and crossings</b>, not the whole route (fix 3).</li>
+      <li><b>Spot crossings in parallel processes</b> (fix 4).</li>
+      <li><b>Coarse 100 m pass first</b> on wide bands, then the 50 m search in its corridor (fix 11).</li>
+    </ol></div>
+    <div class="cell next"><h3>Do next · medium effort, high gain</h3><ol>
+      <li><b>Leg-graph vertex siting</b>: straight legs priced by the exact tower programme, replacing string-pulling and the local moves (fix 12).</li>
+      <li><b>Clearance height per edge on the GPU</b>, priced into the span before the search (fix 5).</li>
+      <li><b>Forest hectares as a second resource</b> if the backward pass leaves a gap (fix 6).</li>
+      <li><b>Cache the compiled rule set</b> keyed by rules, costs and layer versions (fix 7).</li>
+      <li><b>Checker rules into spotting</b> (fix 8) and <b>a local lattice at each crossing</b> (fix 9).</li>
+    </ol></div>
+    <div class="cell later"><h3>Later · large effort, high gain</h3><ol>
+      <li><b>Non-monotone detector</b>: a coarse turn-aware search; only where it back-tracks, segment the band and re-run the monotone search piecewise.</li>
+      <li><b>Tower height in the state</b>: type × extension, so clearance and detour trade in the search exactly.</li>
+      <li><b>Cost-versus-hectares frontier</b> for the client instead of one cap (bi-objective labels).</li>
+    </ol></div>
+    <div class="cell avoid"><h3>Not worth it now</h3><ol>
+      <li>Finer global lattice (25 m everywhere): memory ×4 and time ×8 for the same phantom-bend problem.</li>
+      <li>Turning <code>heading_slack</code> back on: it under-prices real bends (measured ₹27–32 Cr).</li>
+      <li>A metaheuristic (GA, annealing) on top: slower than the exact search and no guarantee.</li>
+    </ol></div>
+  </div>
+
+  <div class="fix"><div class="n">1</div><h3>Straight-run primitives in the lattice</h3>
+    <div class="meta"><span class="chip gain">gain: fewer phantom bends, ₹5–15 Cr on a 100 km route</span><span class="chip effort">effort: 2–3 days</span><span class="chip where">solver.make_grid · transition_matrix · _edge_geom</span></div>
+    <p>The lattice already uses every span vector in the 100–400 m annulus, which is what the ETH/Gilytics optimiser does too, so any heading a single span can draw continues straight at no bend price. The gap is the headings a single span cannot draw: between 0° and 7.1° there is nothing. Add edges that stand for two or three collinear spans, for example (16, 1) sites = two 400 m spans at 3.6°, or (24, 1) = three spans at 2.4°. The intermediate tower is an A tower whose site must be legal, and the edge's strip cost is sampled along the whole run. Headings then come in steps of 2.4° wherever the ground is straight enough, and the DP prices such a run as suspension towers, which is what the spotting would build. This is the state-lattice "closed under continue-straight" property from robot path planning; the DP stays exact.</p>
+    <ul><li>Keep the bend price between a primitive and its neighbours on the true angle difference.</li><li>Forbid primitives across crossings so the crossing rules keep their single-span checks.</li><li>Measure on BHU-SHI-0224: angle points should drop well below 93 and the straighten moves below ₹4.8 Cr.</li></ul></div>
+
+  <div class="fix"><div class="n">2</div><h3>One re-priced pass: search → spot → correct → search</h3>
+    <div class="meta"><span class="chip gain">gain: closes the 10 % search/true gap, better route ranking</span><span class="chip effort">effort: 2 days</span><span class="chip where">pipeline.run_solve · solver.SolverParams</span></div>
+    <p>After the first spotting, compute per-component correction factors from the built route: tower price by type including extensions, strip per class, site cost by soil. Scale the search prices by those factors, drop the steering discounts to half, and search once more inside a 1 km corridor of the first route. Keep whichever spotted route is cheaper. Two passes are enough; the gain comes from the search ranking the alternatives at the price they will actually cost.</p></div>
+
+  <div class="fix"><div class="n">3</div><h3>Refine where it matters</h3>
+    <div class="meta"><span class="chip gain">gain: 2–3 min per route</span><span class="chip effort">effort: half a day</span><span class="chip where">pipeline.refine_pass · solver.refine</span></div>
+    <p>The 25 m pass re-searched the entire 113 km corridor and kept 318 of 318 towers. Restrict its column window to 1 km either side of each angle point and each controlled crossing of the 50 m solution; straight runs between them keep the 50 m answer. The per-column row window already exists, so this is a column mask on top of it.</p></div>
+
+  <div class="fix"><div class="n">4</div><h3>Spot crossings in parallel</h3>
+    <div class="meta"><span class="chip gain">gain: 4–6 min per route</span><span class="chip effort">effort: 1–2 days</span><span class="chip where">spotting._refine_crossings · _crossing_side_fix</span></div>
+    <p>The crossing refinement took seven of the fifteen spotting minutes, one crossing at a time, each a search over candidate tower pairs with exact Shapely checks. Crossings more than two spans apart are independent. Run them in a process pool over a pickled slice of the checker, merge the results, then run the chain-wide checks once. The straighten, merge and vertex passes can also be batched by independent runs.</p></div>
+
+  <div class="fix"><div class="n">5</div><h3>Clearance height per edge, priced before the search</h3>
+    <div class="meta"><span class="chip gain">gain: ₹2–5 Cr less in extensions, fewer ridge towers, height becomes a search price</span><span class="chip effort">effort: 1 day for the steps, 3–4 days for the per-edge height</span><span class="chip where">solver._edge_block clearance · SolverParams.extension_m</span></div>
+    <p>The search knows one extension of 18 m and prices a span either clear or +18 m on one tower. The spotting has 3, 6, 18, 33 and 45 m steps and chooses the cheapest that clears. First step: carry the shortfall from the search's clearance sample and price the nearest step, so a 4 m shortfall costs ₹0.8 L, not ₹4.5 L, and the search stops detouring round small rises. Second step, which no published method has done jointly with routing either: precompute on the GPU, per lattice edge, the cheapest tower-height pair that clears the DEM profile with the sag template, and fold that price into the edge. Height then enters the search as a price and the leg programme resolves it exactly.</p></div>
+
+  <div class="fix"><div class="n">10</div><h3>One backward pass: cap gap closure and alternatives for free</h3>
+    <div class="meta"><span class="chip gain">gain: replaces 6 cap passes and 3 penalty re-runs with one 50 s pass; cheapest route under the cap; alternatives with a quality bound</span><span class="chip effort">effort: 3–4 days</span><span class="chip where">solver.solve (reverse sweep) · pipeline forest_cap · routes 2–4</span></div>
+    <p>Run the same column sweep once from B back to A. Every state then has a cost-from-A and a cost-to-B, and their sum is the price of the best route through that state. Two things fall out. For the forest cap: enumerate routes whose sum is within the current Lagrangian gap of the best, and keep the cheapest with at most 5 ha. That is the Carlyle–Royset–Wood gap closure, and it turns the bisection's "a feasible route" into "the cheapest feasible route" with two forward passes and one backward. For alternatives: rank states by their sum, filter by how much of route 1 they share and by stretch, and string-pull the survivors. That is the via-node method of Abraham, Delling, Goldberg and Werneck, and it replaces the lateral, relaxed and overlap re-runs with alternatives that carry a provable bound.</p></div>
+
+  <div class="fix"><div class="n">11</div><h3>Coarse pass first on wide bands</h3>
+    <div class="meta"><span class="chip gain">gain: search time ÷ 5 or better on a 50 km band, no measured cost loss above 5 %</span><span class="chip effort">effort: 1–2 days</span><span class="chip where">pipeline.run_solve · solver.solve corridor</span></div>
+    <p>Edge count grows with the fourth power of resolution. A 100 m pass over the full band, then the 50 m search confined to a 2 km corridor of its answer, is what the ETH work measured at under 13 % of the run time for under 5 % cost change. The corridor mechanism already exists for the 25 m pass.</p></div>
+
+  <div class="fix"><div class="n">12</div><h3>Leg-graph vertex siting with the exact tower programme as edge cost</h3>
+    <div class="meta"><span class="chip gain">gain: search and spotted price coincide by construction; replaces string-pulling, merges and vertex descent</span><span class="chip effort">effort: 2–3 weeks</span><span class="chip where">new module between solver and spotting</span></div>
+    <p>Inside the 50 m corridor, candidate angle-point sites form a graph. An edge is a straight leg of any length up to a few kilometres, priced by running the existing 1-D tower programme along it, batched on the GPU for thousands of legs at once. A node pays the exact angle tower for its deflection. A shortest path on the edge-based graph then picks the angle points and every tower between them in one exact pass. This is the 2019 Santos–de Queiroz three-stage formulation that beat a built 525 kV design by 14 %. Keep the single-tower polish afterwards; drop the greedy moves.</p></div>
+
+  <div class="fix"><div class="n">6</div><h3>Forest hectares as a second resource</h3>
+    <div class="meta"><span class="chip gain">gain: 5 min per capped route; the cheapest route under the cap instead of a feasible one</span><span class="chip effort">effort: 4–6 days</span><span class="chip where">solver.solve · pipeline forest_cap</span></div>
+    <p>Add a forest-area bucket to the state: six buckets of 1 ha for a 5 ha cap. A span adds its forest metres × corridor width to the bucket; states over the cap are dropped. Memory grows by the bucket count on the ring buffer only, since the DP keeps a few columns at a time. One pass replaces six, and the answer is the true constrained optimum. Keep the multiplier loop as the fallback when the bucket count would blow memory on a very wide band.</p></div>
+
+  <div class="fix"><div class="n">7</div><h3>Cache the compiled rule set</h3>
+    <div class="meta"><span class="chip gain">gain: 2.5 min per solve, more on re-solves</span><span class="chip effort">effort: 1–2 days</span><span class="chip where">compile.compile_rules · rastercache</span></div>
+    <p>Key the whole compiled output (masks, strip, site cost, crossing rasters) on a hash of the resolved rules, the cost sheet, the layer version ids and the frame. A re-solve with a rule change still recompiles, but the four routes, the cap passes and the re-priced pass share one compile, and a re-solve with only a cost change skips it.</p></div>
+
+  <div class="fix"><div class="n">8</div><h3>Close the checker-only gaps</h3>
+    <div class="meta"><span class="chip gain">gain: violations the client's reviewer would otherwise find</span><span class="chip effort">effort: 1–2 days</span><span class="chip where">spotting.Checker · scripts/independent_check.py</span></div>
+    <p>The independent checker on solve 87 flagged a 66 kV crossing at 68.8° where the span crosses two features and the engine measured only one, and a canal parallel run at 19 m inside the 45 m buffer. Measure the crossing angle at every feature a span crosses, run the parallel check on canals whether or not the span also crosses one, and make the checker part of the test suite so each spot is verified before export.</p></div>
+
+  <div class="fix"><div class="n">9</div><h3>A local lattice at each power-line crossing</h3>
+    <div class="meta"><span class="chip gain">gain: more crossings at the null point and 90°, fewer relaxed crossings than 50 of 55</span><span class="chip effort">effort: 3–4 days</span><span class="chip where">spotting._refine_crossings</span></div>
+    <p>Replace the sliding repair with a small exact search: a 10 m lattice of candidate positions for the two crossing towers inside the 87–123 m window, the angle window and the null-point band, scored with the true tower prices and the neighbours' resulting deflections. It is a few thousand candidate pairs per crossing, cheap in NumPy, and it finds the legal layout the greedy slide reported missing.</p></div>
+</section>
+
+<section class="lit" id="lit">
+  <div class="sechead"><h2>What the literature says</h2><p>A research pass on 15 Oct 2026 over transmission-line routing, tower spotting, constrained and alternative shortest paths. Papers marked read were opened in full; the rest from abstracts.</p></div>
+  <h3>The lattice search is the right design</h3>
+  <p>Wiedemann and Adjiashvili (2021, arXiv 2101.03388, ETH Zurich with Gilytics, open source as lion-sp; read) search directly on a graph of candidate pylon sites with every span vector in an annulus and an angle cost between consecutive spans, restricted to a DAG along A–B. On their instances the direct pylon search beat route-then-spot by 10–20 % and angle cost fell by more than half. Our engine already does this. Their multi-scale result, under 13 % of run time for under 5 % cost change, is fix 11. Pivtoraiko, Knepper and Kelly (2009, J. Field Robotics; abstract) give the property our lattice lacks between 0° and 7.1°: the heading set must be closed under "continue straight", which fix 1 restores.</p>
+  <h3>Unifying search price and built price</h3>
+  <p>Santos, de Lima and de Queiroz (2019, Electric Power Systems Research 176; read) use three stages: a raster guideline, vertex siting on a graph of candidate angle points whose edges are straight legs priced exactly, and a dynamic-programme tower spotting over chainage and height with mandatory towers at angle points and crossings. On the 525 kV Machadinho–Campos Novos line it was 14 % cheaper than the built design, in about five minutes of single-threaded C. Medeiros et al. (2021, Int. Trans. Electr. Energy Syst.; abstract) is the reference formulation for the spotting programme with land use, slope, geotechnics and tension ratings, 3.8 % saving on 39 km. These are fix 12 and the benchmark that says our 15 minutes of Python spotting has headroom.</p>
+  <h3>The forest cap and the alternatives share one trick</h3>
+  <p>Carlyle, Royset and Wood (2008, Networks 52; read) solve the constrained shortest path by Lagrangian relaxation, then close the duality gap by enumerating near-shortest paths from forward and backward distances. On a 450 × 300 grid they reached a 0.5 % gap in 0.3 s. Dumitrescu and Boland (2003, Networks 42; abstract) is the exact label-setting alternative, which on our DAG is the forest bucket in the state, fix 6. Abraham, Delling, Goldberg and Werneck (2010, arXiv 1002.4330; read) define an admissible alternative as sharing at most 80 % of the optimum with bounded stretch and local optimality, found through via-nodes scored by forward plus backward distance. Kobitzsch, Radermacher and Schieferdecker (2013, ATMOS; read) give the penalty settings if re-runs are kept: a 4 % additive factor on the shared edges plus a rejoin penalty. Together these are fix 10.</p>
+  <h3>Backward detours and height</h3>
+  <p>Monteiro, Ramírez-Rosado and Miranda (2005, IEEE Trans. Power Delivery 20; read) iterate a label-correcting search on a raster with direction-change costs to a fixed point, which allows non-monotone routes, and derive economic corridors. Wiedemann restricts to a DAG and reports no loss, which suggests back-tracking is rare and a coarse detector is enough. No published method searches route and tower height jointly; Wiedemann lists it as open. The pieces exist: the chainage × height spotting programme (Mitra 1968, Medeiros 2021) and, recently, profile-peak candidate sites with a metaheuristic for heights (Li et al. 2026, IET GTD; abstract). Fix 5 takes the practical route of pricing height into the edge.</p>
+  <h3>Checked and set aside</h3>
+  <p>Field D*, Theta* and ANYA give continuous headings on cost rasters but apply to raster corridors, not to a span lattice, and ANYA assumes uniform cost. Multicriteria raster least-cost-path papers (Bagli, Geneletti and Orsi 2011; Biasotto et al. 2022) stop at the corridor. Gilytics Pathfinder has no methodology paper beyond the ETH work. Metaheuristics (GA, annealing, RRT*) give no guarantee and are slower than the exact search we already have.</p>
+</section>
+
+<footer>Sources: data/logs/worker.log (job 210), /api/solves/89 result and timings, data/logs/independent_check/BHU-SHI-0222_87, beeline_engine/solver.py, spotting.py, pipeline.py, config/engine.yaml.</footer>
+</div>
+</body>
+</html>
