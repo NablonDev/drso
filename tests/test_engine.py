@@ -142,8 +142,9 @@ def test_railway_crossing_angle_and_span():
 
 def test_wide_river_needs_long_span():
     """240 m of water + 150 m bank buffers each side: a single span of 540 m or more, longer than the
-    400 m span cap. Crossing spans go to 600 m (Vivek, 13 Oct 2026; was 720) and the TSD wind span is
-    ≤ 400 m, so the crossing towers' other spans are short and the towers are tension type."""
+    400 m span cap. River crossing spans go to the river rule's max span (720 m, the TSD single-span ceiling,
+    audit H1 17 Oct 2026; 600 m from 13 Oct) and the TSD wind span is ≤ 400 m, so the crossing towers'
+    other spans are short and the towers are tension type."""
     f = frame()
     c = f.length_m / 2
     river = frame_geom(f, box(c - 120, -3000, c + 120, 3000))
@@ -154,8 +155,12 @@ def test_wide_river_needs_long_span():
     S, T = r["spans"], r["towers"]
     long_ix = [i for i, s in enumerate(S) if s["length_m"] > 400]       # 765 kV span cap 400 m (9 Oct 2026)
     assert long_ix and all(any(cr["rule"] == "river" for cr in S[i]["crossings"]) for i in long_ix)
+    from beeline_engine.config import load_engine, load_rules
+    river_rule = next(r for g in load_rules()["groups"] for r in g["rules"] if r["id"] == "river")
+    river_cap = min(float(next(p["value"] for p in river_rule["params"] if p["key"] == "max_span_m")),
+                    float(load_engine()["spans"]["river_crossing_max_span_m"]))
     for i in long_ix:
-        assert S[i]["length_m"] <= 600 + 1e-6
+        assert S[i]["length_m"] <= river_cap + 1e-6
         assert (S[i - 1]["length_m"] + S[i]["length_m"]) / 2 <= 400 + 1e-6
         assert (S[i]["length_m"] + S[i + 1]["length_m"]) / 2 <= 400 + 1e-6
         assert T[i]["type"] != "A" and T[i + 1]["type"] != "A"
