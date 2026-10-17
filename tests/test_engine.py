@@ -1405,3 +1405,50 @@ def test_checker_dem_set_late_clears_the_hilly_memo():
     assert chk.is_hilly(p, q) is True                    # the DEM's answer, not the memo's
     chk.dem = None
     assert chk.is_hilly(p, q) is False
+
+
+def test_vector_forest_area_counts_overlaps_once_and_follows_the_corridor():
+    """Forest-cap experiment (17 Oct 2026): the exact cap measure unions overlapping forest polygons, follows a rotated
+    corridor (flat caps, mitre joins) and counts a sliver by its true area, where the all-touched raster counts cells."""
+    from beeline_engine.pipeline import forest_union_frame, vector_line_forest_ha
+    f = frame()
+    c = f.length_m / 2
+    big = frame_geom(f, box(c - 2000, -1500, c + 2000, 1500))
+    half = frame_geom(f, box(c - 2000, -1500, c, 1500))                       # overlaps the left half of `big`
+    layers = {"reserve_forest": LayerInput("reserve_forest", gdf([big, half], "reserve_forest"), "auto", "", 1.0, None, None),
+              "forest_in_pa": LayerInput("forest_in_pa", gdf([half], "reserve_forest"), "auto", "", 1.0, None, None)}
+    u = forest_union_frame(layers, f)
+    assert abs(u.area - 4000 * 3000) < 1.0                                    # overlaps once
+    th = math.radians(37)
+    line = LineString([(c - 800 * math.cos(th), -800 * math.sin(th)), (c + 800 * math.cos(th), 800 * math.sin(th))])
+    assert abs(vector_line_forest_ha(u, line, 33.5) - 1600 * 67 / 1e4) < 1e-3 # rotated corridor, fully inside
+    bent = LineString([(c - 1000, 0), (c, 0), (c + 700, 700)])
+    expect = bent.buffer(33.5, cap_style="flat", join_style="mitre").area / 1e4
+    assert abs(vector_line_forest_ha(u, bent, 33.5) - expect) < 1e-6         # mitre join, flat caps
+    sliver = frame_geom(f, box(c - 0.5, -1500, c + 0.5, 1500))                # 1 m wide strip across the corridor
+    us = forest_union_frame({"reserve_forest": LayerInput("reserve_forest", gdf([sliver], "reserve_forest"), "auto", "", 1.0, None, None)}, f)
+    assert abs(vector_line_forest_ha(us, LineString([(c - 500, 0), (c + 500, 0)]), 33.5) - 67 / 1e4) < 1e-4
+    assert vector_line_forest_ha(None, line, 33.5) == 0.0
+
+
+def test_forest_cap_vector_mode_decides_on_the_exact_area(monkeypatch):
+    """Forest-cap experiment (17 Oct 2026): with engine forest_cap.area_method = vector, the cap trigger, the search
+    candidates and the spotted acceptance use the exact corridor ∩ forest area; the route meets the cap by that
+    measure and the cap event says which measure decided."""
+    import copy
+    from beeline_engine import pipeline as PL
+    eng = copy.deepcopy(PL.load_engine())
+    eng["forest_cap"]["area_method"] = "vector"
+    monkeypatch.setattr(PL, "load_engine", lambda: eng)
+    f = frame()
+    c = f.length_m / 2
+    rf = frame_geom(f, box(c, -2600, c + 200, 1700))
+    layers = {"reserve_forest": gdf([rf], "reserve_forest", "Test RF")}
+    res = run_solve(solve_input(layers, overrides={"forest": {"params": {"max_area_ha": 1}}}))
+    assert res["feasible"]
+    r = res["routes"][0]
+    assert r["stats"]["forest_ha_vector"] <= 1.0, r["stats"]
+    ev = [e for e in r["events"] if e["type"] == "FOREST_CAP"]
+    assert ev, [e["type"] for e in r["events"]]
+    data = ev[0].get("data") or ev[0]
+    assert data.get("area_method") == "vector" and data["ha"] <= 1.0, data

@@ -15,7 +15,7 @@ import numpy as np
 from rasterio import features as rfeatures
 from shapely import STRtree
 from shapely.geometry import LineString, Point, box
-from shapely.ops import unary_union
+from shapely.ops import transform as shp_transform, unary_union
 
 from . import dem as demmod
 from .compile import COST_CLASS_CODES, merge_approach, attach_terrain, attach_hill_area, compile_rules
@@ -271,6 +271,30 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
     hilly_m = float(rules["design_span"].params["hilly_m"])
     _fr = rules.get("forest")
     forest_cap = float((_fr.params.get("max_area_ha") if _fr is not None and _fr.enabled else 0) or 0)
+    # forest-cap area measure (experiment, 17 Oct 2026): "raster" = the cost raster's forest cells (forest polygons
+    # rasterised all-touched on the 20 m grid, the historical measure); "vector" = the exact intersection of the RoW
+    # corridor (half-width, flat caps, mitre joins) with the union of the reserve_forest + forest_in_pa polygons.
+    # Used for every cap decision: the base trigger, each search candidate, spotted acceptance and the cap event.
+    # Forest prices, costs and approval estimates stay on the raster.
+    cap_area_method = str((eng.get("forest_cap") or {}).get("area_method", "raster") or "raster")
+    _forest_vec: dict = {}
+
+    def _vector_forest_ha(line_frame) -> float:
+        if "u" not in _forest_vec:
+            _forest_vec["u"] = forest_union_frame(inp.layers, frame)
+        return vector_line_forest_ha(_forest_vec["u"], line_frame, comp.half_width_m)
+
+    def cap_line_ha(comp_, line_frame) -> float:
+        return _vector_forest_ha(line_frame) if cap_area_method == "vector" else _line_forest_ha(comp_, line_frame)
+
+    def cap_sr_ha(sr_) -> float:
+        if sr_ is None:
+            return 0.0
+        if cap_area_method == "vector":
+            if "forest_ha_vector" not in sr_.stats:
+                sr_.stats["forest_ha_vector"] = round(_vector_forest_ha(LineString([(t.x, t.y) for t in sr_.towers])), 4)
+            return float(sr_.stats["forest_ha_vector"])
+        return float(sr_.stats.get("forest_ha", 0) or 0)
     hilly_rise = float(rules["design_span"].params.get("hilly_rise_m", 10))
     ext_pct = float(costs["tower"]["extension_pct"]) / 100.0
     # AESL Tower Spotting Data (765 kV D/C, 8 Oct 2026): span tables, wind / weight span, extension steps
@@ -480,7 +504,7 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
         # 2026: rev 39 spent 30 min refining and spotting an 18 ha line that the cap loop then replaced)
         skip_base = False
         if out.feasible and forest_cap > 0 and not var.get("relaxed"):
-            base_grid_ha = _line_forest_ha(cv, _outcome_line(out))
+            base_grid_ha = cap_line_ha(cv, _outcome_line(out))
             skip_base = base_grid_ha > forest_cap + 2.0 * float((cap_cfg.get("grid_margin_ha", 1.0) or 0.0))
         if not skip_base:
             out = refine_pass(_srch(cv, var), out)
@@ -520,14 +544,14 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
         spot_s = time.time() - t
         forest_ev = None
         cap_passes: list = []
-        if forest_cap > 0 and not var.get("relaxed") and (sr is None or sr.stats.get("forest_ha", 0) > forest_cap):
+        if forest_cap > 0 and not var.get("relaxed") and (sr is None or cap_sr_ha(sr) > forest_cap):
             # forest cap (Vivek, 10 Oct 2026): price forest up in the search until the route stays under
             # the cap; the towers are then spotted and costed on the true-price compile. 11 Oct: start
             # at the multiplier an earlier route met the cap with; spot a pass only when the search
             # corridor's forest is near the cap (the last multiplier always).
-            ha0 = sr.stats["forest_ha"] if sr is not None else base_grid_ha
+            ha0 = cap_sr_ha(sr) if sr is not None else base_grid_ha
             best = (sr, out, solve_s, spot_s, None)
-            best_ha = lambda: best[0].stats.get("forest_ha", 0) if best[0] is not None else ha0
+            best_ha = lambda: cap_sr_ha(best[0]) if best[0] is not None else ha0
             met = False
             # every multiplier in order (11 Oct 2026: starting at the one an earlier route met the cap
             # with lost R4's ×10 route — the cap multiplier is not transferable between routes, and a
@@ -550,7 +574,7 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
                     out_ = solve(_srch(cvp_, var), p, cancel_check=check_cancel, progress=sub)     # hill surcharge kept (audit, 14 Oct 2026)
                     rec_ = {"mult": round(mult, 3), "solve_s": round(time.time() - t2_, 1), "feasible": out_.feasible, "spotted": False}
                     if out_.feasible:
-                        rec_["grid_ha"] = round(_line_forest_ha(cv, _outcome_line(out_)), 2)
+                        rec_["grid_ha"] = round(cap_line_ha(cv, _outcome_line(out_)), 2)
                     cap_passes.append(rec_)
                     return cvp_, out_, rec_
 
@@ -582,12 +606,12 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
                     if "cost_polish" in sr2.stats:
                         stats2["cost_polish"] = sr2.stats["cost_polish"]
                     sr2 = SpottedRoute(sr2.towers, sr2.spans, cost2, stats2, sr2.method)
-                    rec.update(spotted=True, spot_s=round(time.time() - t3, 1), ha=sr2.stats.get("forest_ha"))
+                    rec.update(spotted=True, spot_s=round(time.time() - t3, 1), ha=round(cap_sr_ha(sr2), 2))
                     spots += 1
-                    if best[0] is None or sr2.stats.get("forest_ha", 0) < best_ha() or \
-                            (sr2.stats.get("forest_ha", 0) <= forest_cap and best_ha() <= forest_cap):
+                    if best[0] is None or cap_sr_ha(sr2) < best_ha() or \
+                            (cap_sr_ha(sr2) <= forest_cap and best_ha() <= forest_cap):
                         best = (sr2, out2, rec["solve_s"], time.time() - t3, hi_m)
-                    if sr2.stats.get("forest_ha", 0) <= forest_cap:
+                    if cap_sr_ha(sr2) <= forest_cap:
                         met = True
                     else:
                         lo_m = hi_m                            # the spotted route grew back over the cap: price higher
@@ -602,7 +626,7 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
                   cap_passes.append(rec)
                   if not out2.feasible:
                       continue
-                  grid_ha = _line_forest_ha(cv, _outcome_line(out2))
+                  grid_ha = cap_line_ha(cv, _outcome_line(out2))
                   rec["grid_ha"] = round(grid_ha, 2)
                   if cap_margin > 0 and grid_ha > forest_cap * cap_margin and mult != mults[-1]:
                       rec["spotted"] = False
@@ -616,10 +640,10 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
                   if "cost_polish" in sr2.stats:
                       stats2["cost_polish"] = sr2.stats["cost_polish"]
                   sr2 = SpottedRoute(sr2.towers, sr2.spans, cost2, stats2, sr2.method)
-                  rec.update(spotted=True, spot_s=round(time.time() - t3, 1), ha=sr2.stats.get("forest_ha"))
-                  if best[0] is None or sr2.stats.get("forest_ha", 0) < best_ha():
+                  rec.update(spotted=True, spot_s=round(time.time() - t3, 1), ha=round(cap_sr_ha(sr2), 2))
+                  if best[0] is None or cap_sr_ha(sr2) < best_ha():
                       best = (sr2, out2, t3 - t2, time.time() - t3, mult)
-                  if sr2.stats.get("forest_ha", 0) <= forest_cap:
+                  if cap_sr_ha(sr2) <= forest_cap:
                       met = True
                       break
             sr, out, solve_s, spot_s, mult_used = best
@@ -630,7 +654,7 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
                 spot_s = time.time() - t
             forest_ev = event("FOREST_CAP" if met else "FOREST_CAP_UNMET",
                               {"route": var["id"], "cap": forest_cap, "mult": mult_used if mult_used is not None else mults[-1],
-                               "ha": sr.stats["forest_ha"], "ha0": ha0})
+                               "ha": round(cap_sr_ha(sr), 2), "ha0": ha0, "area_method": cap_area_method})
         line = LineString([(tw.x, tw.y) for tw in sr.towers])
         _approvals(sr, cv, rules)
         used = sr.stats.get("precedent_items") or []
@@ -877,6 +901,28 @@ def _forest_priced(base, mult: float):
                        for k, v in base.costs["forest"].items()}
     c.costs = costs
     return c
+
+
+def forest_union_frame(layers: dict, frame) -> object:
+    """Union of the reserve_forest + forest_in_pa polygons in frame coordinates (overlaps counted once), or None."""
+    parts = []
+    for key in ("reserve_forest", "forest_in_pa"):
+        li = layers.get(key)
+        if li is not None and li.gdf is not None and len(li.gdf):
+            parts += [g for g in li.gdf.to_crs(frame.epsg).geometry if g is not None and not g.is_empty]
+    if not parts:
+        return None
+    u = unary_union(parts).buffer(0)
+    return shp_transform(lambda x, y, z=None: frame.utm_to_frame(np.asarray(x), np.asarray(y)), u)
+
+
+def vector_line_forest_ha(union_frame, line_frame, half_width_m: float) -> float:
+    """Exact forest area (ha) under the RoW corridor of a frame-coordinate line: the line buffered by the half-width
+    with flat caps and mitre joins (as _line_forest_ha and route_cost), intersected with the forest union."""
+    if union_frame is None or line_frame is None or line_frame.is_empty:
+        return 0.0
+    corridor = line_frame.buffer(half_width_m, cap_style="flat", join_style="mitre")
+    return float(corridor.intersection(union_frame).area) / 1e4
 
 
 def _line_forest_ha(comp, line_frame) -> float:
