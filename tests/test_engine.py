@@ -104,10 +104,16 @@ def test_avoids_village_cluster_with_buffers():
     assert res["feasible"]
     r = res["routes"][0]
     vf = Point(f.length_m / 2, 0).buffer(600)
+    # 18 Oct 2026: 200 m normal, 100 m the hard limit (a breach costs the search ₹0.5 Cr per span and is warned)
     for x, y in towers_frame(f, r):
-        assert vf.distance(Point(x, y)) >= 120 - 0.5          # tower buffer 120 m
+        assert vf.distance(Point(x, y)) >= 100 - 0.5
     line = LineString(towers_frame(f, r))
-    assert line.distance(vf) >= 120 - 0.5                     # conductor buffer 120 m
+    assert line.distance(vf) >= 100 - 0.5
+    pts = towers_frame(f, r)
+    for i in range(1, len(pts) - 2):
+        d = LineString([pts[i], pts[i + 1]]).distance(vf)
+        warned = any(w.startswith("cluster_breach") for w in r["towers"][i]["warnings"])
+        assert warned == (d < 200 - 1.0) or abs(d - 200) < 2.0, (i, d, r["towers"][i]["warnings"])
     assert any(e["type"] == "BEELINE_BLOCKER" for e in res["events_global"])
     assert any(e["type"] == "TURN_TO_AVOID" and "Testpur" in e["text"] for e in r["events"])
 
@@ -1457,3 +1463,31 @@ def test_forest_cap_vector_mode_decides_on_the_exact_area(monkeypatch):
     assert ev, [e["type"] for e in r["events"]]
     data = ev[0].get("data") or ev[0]
     assert data.get("area_method") == "vector" and data["ha"] <= 1.0, data
+
+
+def test_village_breach_band_is_priced_and_warned():
+    """Vivek, 18 Oct 2026: village clusters keep 200 m normally; down to breach_min_m (100 m) is allowed at a search
+    cost per breached span (₹0.5 Cr); the band's span is warned; breach_min_m = the normal value switches it off."""
+    from beeline_engine.spotting import Checker, SpotParams, _chain_cost, build_route
+    f = frame()
+    c = f.length_m / 2
+    village = frame_geom(f, Point(c, 400).buffer(150))
+    comp, rules, costs = _comp16(f, {"clusters": gdf([village], "builtup_cluster", "Testpur")})
+    assert comp.breach_band is not None and abs(comp.breach_rs - 0.5e7) < 1 and comp.breach_normal_m == 200
+    tower = [vr for vr in comp.tower_nogo if vr.rule_id == "clusters"]
+    assert tower and abs(tower[0].d - 100.0) < 1e-6
+    tc = {t: costs["towers"][t]["price_rs"] for t in TOWER_TYPES}
+    sp = SpotParams(design_span_m=400, span_max_m=400, min_span_m=100, max_dev_deg=60,
+                    type_bands={"A": 2, "B1": 15, "C1": 30, "D45": 45, "D60": 60}, section_km=5, parallel_angle_deg=30,
+                    tower_cost_rs=tc, ground_clearance_m=18.15, lowest_attachment_m=32.6, sag_at_design_m=14.278, go_radius_m=150)
+    near = [(c - 400, 130.0), (c, 130.0), (c + 400, 130.0)]          # 120 m from the village edge
+    far = [(c - 400, 0.0), (c, 0.0), (c + 400, 0.0)]                # 250 m from it
+    assert abs(_chain_cost(comp, sp, near, ["A"]) - _chain_cost(comp, sp, far, ["A"]) - 2 * 0.5e7) < 2e5
+    chk = Checker(comp, sp)
+    pts = [(0.0, 0.0), (c - 800, 130.0)] + near + [(c + 800, 130.0), (f.length_m, 0.0)]
+    sr = build_route(chk, pts, set(), sp)
+    warned = [t.no for t in sr.towers if any(w.startswith("cluster_breach") for w in t.warnings)]
+    assert warned and sr.stats.get("cluster_breach_spans", 0) >= 2
+    off = resolve_rules(LineSpec(765, "dc"), {"clusters": {"params": {"breach_min_m": 200}}})
+    comp2 = compile_rules(f, {"clusters": gdf([village], "builtup_cluster")}, off, costs, 765, 33.5, 150, 400, tower_cost_rs=tc)
+    assert comp2.breach_band is None and abs([vr for vr in comp2.tower_nogo if vr.rule_id == "clusters"][0].d - 200.0) < 1e-6

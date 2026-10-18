@@ -606,6 +606,19 @@ def _leg_model(chk: Checker, p, q, sp: SpotParams, design: float, hilly_leg: boo
     steps_a = _ext_steps(sp, "A")
     f = chk.c.frame
     _site: dict = {}
+    # village-cluster breach band along the leg (Vivek, 18 Oct 2026): a candidate span pays the breach charge
+    # when any 10 m sample between its towers lies in the band (prefix counts make each span O(1))
+    br_rs = float(getattr(chk.c, "breach_rs", 0.0) or 0.0)
+    br_pref = None
+    if br_rs > 0 and getattr(chk.c, "breach_band", None) is not None:
+        nb = max(2, int(d // 10.0) + 2)
+        tb = np.linspace(0.0, d, nb)
+        bx = p[0] + (q[0] - p[0]) * tb / d
+        by = p[1] + (q[1] - p[1]) * tb / d
+        bc = np.clip(((bx - f.x0) / f.res_m).astype(int), 0, f.width - 1)
+        brw = np.clip(((f.y_top - by) / f.res_m).astype(int), 0, f.height - 1)
+        hitb = chk.c.breach_band[brw, bc].astype(np.int32)
+        br_pref = (tb, np.concatenate([[0], np.cumsum(hitb)]))
     # span-band features (SH) the leg crosses: (distance from p, band, penalty) — 16 Oct 2026
     band_x = []
     if _band_index(chk.c):
@@ -631,6 +644,11 @@ def _leg_model(chk: Checker, p, q, sp: SpotParams, design: float, hilly_leg: boo
         for sx, lo, hi, pen in band_x:
             if pos[i] < sx < pos[j] and not (lo - 1e-3 <= L <= hi + 1e-3):
                 c += pen
+        if br_pref is not None:
+            tb_, cs_ = br_pref
+            ia = int(np.searchsorted(tb_, pos[i], side="left")); ib = int(np.searchsorted(tb_, pos[j], side="right"))
+            if cs_[ib] - cs_[ia] > 0:
+                c += br_rs
         if z is not None:
             hilly_span = sp.hilly_rise_m is not None and abs(z[j] - z[i]) > sp.hilly_rise_m
             if hilly_leg and L > sp.design_span_m + 1e-3 and not hilly_span:
@@ -831,7 +849,24 @@ def _chain_cost(comp: Compiled, sp: SpotParams, pts, inner_types) -> float:
             span_c *= 1.0 - sp.proximity_discount * float(comp.near_existing[row, col].mean())
         c += span_c
         c += _band_penalty(comp, (x0, y0), (x1, y1), L)
+        c += _breach_rs(comp, (x0, y0), (x1, y1))
     return c
+
+
+def _breach_rs(comp: Compiled, a, b) -> float:
+    """Village-cluster breach charge of one span (Vivek, 18 Oct 2026): the span's centre line sampled on the band
+    raster, as the search does; search price only."""
+    band = getattr(comp, "breach_band", None)
+    rs = float(getattr(comp, "breach_rs", 0.0) or 0.0)
+    if band is None or rs <= 0:
+        return 0.0
+    f = comp.frame
+    L = math.hypot(b[0] - a[0], b[1] - a[1])
+    n = max(2, int(math.ceil(L / (f.res_m / 2))) + 1)
+    t = np.linspace(0, 1, n)
+    col = np.clip(((a[0] + t * (b[0] - a[0]) - f.x0) / f.res_m).astype(int), 0, f.width - 1)
+    row = np.clip(((f.y_top - (a[1] + t * (b[1] - a[1]))) / f.res_m).astype(int), 0, f.height - 1)
+    return rs if bool(band[row, col].any()) else 0.0
 
 
 def _band_index(comp: Compiled):
@@ -1045,6 +1080,22 @@ def build_route(chk: Checker, pts: list[tuple[float, float]], angle_set: set[int
             towers[i if i > 0 else 1].violations.append("conductor_buffer")
         if gantry_span and L < sp.gantry_min_span_m - 1e-6:
             towers[1 if i == 0 else n - 2].violations.append(f"gantry_span:{L:.0f}m")
+    # village clusters inside the normal distance (Vivek, 18 Oct 2026): a warning with the exact distance
+    bg = getattr(comp, "breach_geoms", None)
+    breaches = 0
+    if bg and getattr(comp, "breach_normal_m", 0) > 0:
+        from shapely import STRtree
+        btree = comp.__dict__.get("_breach_tree")
+        if btree is None:
+            btree = comp.__dict__["_breach_tree"] = STRtree([g for g, _ in bg])
+        lim = float(comp.breach_normal_m)
+        for i in range(1, n - 2):
+            seg = LineString([pts[i], pts[i + 1]])
+            for j in btree.query(seg.buffer(lim)):
+                dd = bg[j][0].distance(seg)
+                if dd < lim - 1e-6:
+                    towers[i].warnings.append(f"cluster_breach:{bg[j][1]} {dd:.0f}m")
+                    breaches += 1
     # road structures with no NH / SH on them (Vivek, 17 Oct 2026): a warning to classify the structure
     us = getattr(comp, "unclassified_structures", None)
     if us:
@@ -1135,6 +1186,8 @@ def build_route(chk: Checker, pts: list[tuple[float, float]], angle_set: set[int
     if sp.tsd:
         _tsd_checks(towers, spans, sp)
     cost, stats = route_cost(comp, towers, spans, sp)
+    if bg:
+        stats["cluster_breach_spans"] = breaches
     if polish is not None:
         stats["cost_polish"] = polish
     return SpottedRoute(towers, spans, cost, stats, "pulled" if angle_set is None else "grid")

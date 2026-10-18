@@ -169,6 +169,12 @@ class Compiled:
     # road structures (bridge / flyover / underpass) with no NH / SH line on them, frame coords + label: a span over
     # one is flagged "classify this structure" (Vivek, 17 Oct 2026: bridges inherit the road they carry)
     unclassified_structures: list = field(default_factory=list)
+    # village clusters (Vivek, 18 Oct 2026): the hard buffer is the breach distance; inside the normal distance a
+    # span costs the search breach_rs (raster band, sampled along the span like the crossings) and is flagged
+    breach_band: np.ndarray | None = None       # bool: within the normal distance of a cluster
+    breach_rs: float = 0.0                      # ₹ search cost per breached span
+    breach_normal_m: float = 0.0
+    breach_geoms: list = field(default_factory=list)   # [(frame geometry, label)] of the clusters
     near_existing: np.ndarray | None = None  # bool raster: within reach of an existing line (search discount)
     # last-resort relaxations taken in this compile: (VecRule of what was opened, approval months, label)
     relaxed_items: list = field(default_factory=list)
@@ -801,6 +807,7 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
 
     crossings: list[CrossingRaster] = []
     parallels: list[ParallelRaster] = []
+    breach: dict = {"band": None, "rs": 0.0, "normal": 0.0, "geoms": []}
     tol = single_angle_tol_deg
 
     for r in rules.values():
@@ -824,6 +831,25 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
         if p.get("min_area_m2"):
             from dataclasses import replace as _replace
             r = _replace(r, layer=R.filtered(r.layer, float(p["min_area_m2"])))
+        if r.id == "clusters" and p.get("breach_min_m") is not None:
+            # village clusters (Vivek, 18 Oct 2026): hard buffer at the breach distance, the band up to the normal
+            # distance priced per span in the search and flagged in the result
+            normal = max(float(p.get("tower_setback_m", 0) or 0), float(p.get("conductor_buffer_m", 0) or 0))
+            bmin = float(p["breach_min_m"])
+            if 0.0 <= bmin < normal - 1e-6:
+                cl_dist = R.dist(r.layer, r.classes)
+                if cl_dist is not None:
+                    breach["band"] = _within(cl_dist, normal)
+                    breach["rs"] = float(p.get("breach_cost_cr_per_span", 0) or 0) * 1e7
+                    breach["normal"] = normal
+                    fg = R.frame_geoms(r.layer, r.classes)
+                    sub_ = R.subset(r.layer, r.classes)
+                    if fg is not None and sub_ is not None:
+                        for g_, (_, row_) in zip(fg, sub_.iterrows()):
+                            if g_ is not None and not g_.is_empty:
+                                breach["geoms"].append((g_, str(row_.get("src_id") or row_.get("name") or "cluster")))
+                p = {**p, "tower_setback_m": min(float(p.get("tower_setback_m", 0) or 0), bmin),
+                     "conductor_buffer_m": min(float(p.get("conductor_buffer_m", 0) or 0), bmin)}
         if p.get("_width_part"):
             # river / small river (Vivek, 16 Oct 2026): each rule reads its own reaches of the river polygons
             from dataclasses import replace as _replace
@@ -1379,7 +1405,9 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
                     terminal_zone=zone, terminal_yards=yards, terminal_cond=terminal_cond, relaxed=relaxed, relaxed_items=relaxed_items,
                     rasterizer=R, go_overlap=go_overlap, go_conductor=go_conductor,
                     precedent_items=list(precedent_items.values()), near_existing=near_existing,
-                    unclassified_structures=unclassified)
+                    unclassified_structures=unclassified,
+                    breach_band=breach["band"], breach_rs=breach["rs"], breach_normal_m=breach["normal"],
+                    breach_geoms=breach["geoms"])
 
 
 def _airport_zone(R: "_Rasterizer", frame: Frame, layer: str, classes, d: float, funnel_m: float):

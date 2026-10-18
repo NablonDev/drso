@@ -174,12 +174,15 @@ def add(kind, no, rule, check, measured, limit, unit='m', severity='violation', 
                      limit=limit, unit=unit, severity=severity, layer=layer, cls=cls, feature=feature,
                      in_go_zone=in_go, note=note, engine_flag='', status=''))
 
+# village clusters (18 Oct 2026): 200 m normal, down to 100 m allowed at a search cost -> 100-200 m is a warning
+CLUSTER_NORMAL, CLUSTER_BREACH_MIN = 200.0, 100.0
+
 # ----------------------------------------------------------------------------------------------- 1. tower setbacks
 # (rule_id, layer, classes, setback) ; 'CHW' = corridor half-width (27 m in the approach section)
 TOWER_SETBACKS = [
     ('airport_prohibition', 'aviation', ['airport'], 6000.0),
     ('buildings', 'buildings', None, 'CHW'),
-    ('clusters', 'clusters', None, 200.0),
+    ('clusters', 'clusters', None, CLUSTER_BREACH_MIN),   # 18 Oct 2026: hard limit = the breach distance
     ('plotted_land', 'plotted', None, 100.0),
     ('substations', 'substations_nonterminal', None, 100.0),
     ('dams', 'dams', ['dam'], 500.0),
@@ -260,7 +263,7 @@ for i in range(1, N - 1):
 COND_BUFFERS = [
     ('airport_prohibition', 'aviation', ['airport'], 6000.0),
     ('buildings', 'buildings', None, 'CHW'),
-    ('clusters', 'clusters', None, 200.0),
+    ('clusters', 'clusters', None, CLUSTER_BREACH_MIN),   # 18 Oct 2026: hard limit = the breach distance
     ('plotted_land', 'plotted', None, 100.0),
     ('substations', 'substations_nonterminal', None, 'CHW'),
     ('substations', 'substations', None, 'CHW'),      # terminal yards too, all spans but the gantry span
@@ -596,6 +599,17 @@ for si, s in enumerate(S):
                 add('tower', ti, rule, 'crossing_deviation', t['deflection_deg'], 45, unit='deg', span=(a, b), feature=tag)
             if rule == 'bridges' and rec.get('cls') == 'flyover' and t['extension_m'] < 18.0:
                 add('tower', ti, rule, 'flyover_extension', t['extension_m'], 18, span=(a, b), feature=tag)
+
+# village-cluster breaches (warnings): spans whose conductor comes inside the normal distance
+_ixc = idx('clusters')
+if _ixc.tree is not None:
+    for si, s_ in enumerate(S):
+        if si == 0 or si == len(S) - 1:
+            continue
+        for dist, j in _ixc.within(span_lines[si], CLUSTER_NORMAL):
+            if CLUSTER_BREACH_MIN - TOL <= dist < CLUSTER_NORMAL - TOL:
+                add('span', s_['a'], 'clusters', 'cluster_breach', dist, CLUSTER_NORMAL, severity='warning',
+                    feature=fname(_ixc.g, j), span=(s_['a'], s_['b']), note='allowed down to 100 m at a search cost (18 Oct 2026)')
 
 # ----------------------------------------------------------------------------------------------- 4. deflection, types, wind span, hilly, sections
 SPAN_SUM = {

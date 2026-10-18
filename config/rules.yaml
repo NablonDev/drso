@@ -111,12 +111,14 @@ groups:
 
       - id: clusters
         name: "Built-up cluster (village)"
-        note: "Cluster detection threshold is an AESL assumption, not a regulation"
+        note: "Cluster detection threshold is an AESL assumption, not a regulation. Vivek, 18 Oct 2026: 200 m is the normal distance for towers and conductor; the route may come as close as the breach distance (100 m) where it pays: every span whose conductor or end tower comes inside the normal distance costs the search the breach charge (₹0.5 Cr per span, search only — not in the reported cost) and is shown as a warning"
         layer: clusters
         mechanism: nogo
         params:
-          - {key: tower_setback_m, label: "Tower buffer", type: num, unit: m, value: 200}
-          - {key: conductor_buffer_m, label: "Conductor buffer", type: num, unit: m, value: 200}
+          - {key: tower_setback_m, label: "Tower buffer (normal)", type: num, unit: m, value: 200}
+          - {key: conductor_buffer_m, label: "Conductor buffer (normal)", type: num, unit: m, value: 200}
+          - {key: breach_min_m, label: "Breach: closest allowed, tower and conductor (= the normal value: no breach)", type: num, unit: m, value: 100}
+          - {key: breach_cost_cr_per_span, label: "Breach: search cost per span inside the normal distance", type: num, unit: "₹ Cr", value: 0.5}
           - {key: max_spacing_m, label: "Max spacing between buildings", type: num, unit: m, value: 50}
           - {key: min_area_m2, label: "Minimum cluster area", type: num, unit: "m²", value: 9000}
 
