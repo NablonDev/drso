@@ -1640,3 +1640,17 @@ def test_450m_rule_wind_span_at_a_moved_tower():
     tsd470 = {**tsd, "wind_span_m": {**tsd["wind_span_m"], "base": 470}}
     _, _, chk2, sp2 = _span450(tsd=tsd470, span_max_m=600.0, plain_span_max_m=600.0)
     assert _legal_here(chk2, pts_for(470.0), 3, sp2, pts_for(470.0)[3])
+
+
+def test_reference_lines_never_affect_a_route():
+    """Vivek, 18 Oct 2026: the reference_lines layer is for comparison only — a line right across the bee-line and a
+    village on it change nothing: same towers, same cost, no event cites it."""
+    f = frame()
+    c = f.length_m / 2
+    village = frame_geom(f, Point(c, 0).buffer(300))
+    ref = gpd.GeoDataFrame({"class": ["reference_line"], "name": ["Proposed line"], "confidence": [1.0]},
+                           geometry=[frame_geom(f, LineString([(0, 0), (f.length_m, 0)]))], crs=4326)
+    a = run_solve(solve_input({"clusters": gdf([village], "builtup_cluster")}))["routes"][0]
+    b = run_solve(solve_input({"clusters": gdf([village], "builtup_cluster"), "reference_lines": ref}))["routes"][0]
+    assert a["cost"]["total"] == b["cost"]["total"] and len(a["towers"]) == len(b["towers"])
+    assert not any("Proposed line" in e.get("text", "") for e in b["events"])

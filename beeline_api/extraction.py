@@ -209,6 +209,8 @@ def _extract_one(run, k, lay, mode, src, band, img, rules, progress, rep):
         elif lay["producer"] == "lulc_model":
             auto_gdf, auto_cov, m2 = _lulc_model_layer(run, k, lay, band, progress, rep)
             meta.update(m2)
+        elif lay["producer"] == "user":
+            auto_gdf, auto_cov = None, None          # hand-added shapes only (reference lines, 18 Oct 2026)
         elif lay["producer"] == "model":
             plugin = models.get(lay["model"])
             ctx = models.ModelContext(layer_key=k, band=band, imagery=img or {}, progress=progress, cancelled=rep.cancelled)

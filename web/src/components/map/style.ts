@@ -5,6 +5,7 @@ export const ESRI_MAX_ZOOM = 18;
 
 /** Layer colours from the prototype's MLAY array, keyed by API layer key. */
 export const LAYER_COLOURS: Record<string, string> = {
+  reference_lines: "#FF3FD2",
   lulc: "#8FA36B",
   buildings: "#FF5B3A",
   clusters: "#A33A31",
@@ -141,6 +142,7 @@ export const LAYER_ORDER = [
   "telecom",
   "wind_turbines",
   "monuments",
+  "reference_lines",
 ];
 
 export const DEFAULT_ON = new Set([
@@ -181,6 +183,7 @@ export const DEFAULT_ON = new Set([
   "approach",
   "substations",
   "solar",
+  "reference_lines",
 ]);
 
 /** Layers the route map shows under "No-Go features". */

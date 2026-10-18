@@ -285,6 +285,18 @@ layers:
     default_confidence: 0.95
     classes: [platform, platform_crossing_zone]
 
+  # Vivek, 18 Oct 2026: lines kept on a run for comparison only (e.g. another party's proposed alignment). No rule
+  # reads this layer and the solver drops it before compiling, so it never affects a route; drawn on the map.
+  - key: reference_lines
+    name: "Reference lines (comparison only)"
+    kind: any
+    producer: user
+    desc: "Comparison only: alignments drawn or loaded for reference; ignored by every rule and by the solver"
+    optional: true
+    minutes_per_km2: 0.0001
+    default_confidence: 1.0
+    classes: [reference_line, reference_point]
+
   # Forest package (transfers/Forests/gj_forest_delivery.gpkg, Gujarat statewide): five layers, no
   # generic forest / protected layer (Vivek, 6 Oct 2026). OSM PA gap-fills left out; the notified-
   # wetlands layer is retired (Ramsar sanctuaries sit in wildlife_sanctuary, NWIA wetlands in wet_land).

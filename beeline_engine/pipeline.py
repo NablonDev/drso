@@ -140,9 +140,15 @@ def _source(it: dict | None, layers: dict[str, LayerInput]) -> dict | None:
 
 
 # ----------------------------------------------------------------------------------------
+REFERENCE_ONLY_LAYERS = {"reference_lines"}     # comparison only: never compiled, never cited (Vivek, 18 Oct 2026)
+
+
 def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
     t_start = time.time()
     timings = {}
+    if any(k in inp.layers for k in REFERENCE_ONLY_LAYERS):
+        from dataclasses import replace as _replace_inp
+        inp = _replace_inp(inp, layers={k: v for k, v in inp.layers.items() if k not in REFERENCE_ONLY_LAYERS})
 
     def prog(frac, stage):
         if progress:
