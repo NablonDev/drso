@@ -148,9 +148,9 @@ def test_railway_crossing_angle_and_span():
 
 def test_wide_river_needs_long_span():
     """240 m of water + 150 m bank buffers each side: a single span of 540 m or more, longer than the
-    400 m span cap. River crossing spans go to the river rule's max span (720 m, the TSD single-span ceiling,
-    audit H1 17 Oct 2026; 600 m from 13 Oct) and the TSD wind span is ≤ 400 m, so the crossing towers'
-    other spans are short and the towers are tension type."""
+    450 m span cap (18 Oct 2026; 400 m before). River crossing spans go to the river rule's max span (720 m, the TSD
+    single-span ceiling, audit H1 17 Oct 2026; 600 m from 13 Oct) and the TSD wind span is ≤ 450 m, so the crossing
+    towers' other spans are short and the towers are tension type."""
     f = frame()
     c = f.length_m / 2
     river = frame_geom(f, box(c - 120, -3000, c + 120, 3000))
@@ -159,7 +159,7 @@ def test_wide_river_needs_long_span():
     assert res["feasible"]
     r = res["routes"][0]
     S, T = r["spans"], r["towers"]
-    long_ix = [i for i, s in enumerate(S) if s["length_m"] > 400]       # 765 kV span cap 400 m (9 Oct 2026)
+    long_ix = [i for i, s in enumerate(S) if s["length_m"] > 450]       # 765 kV span cap 450 m (18 Oct 2026)
     assert long_ix and all(any(cr["rule"] == "river" for cr in S[i]["crossings"]) for i in long_ix)
     from beeline_engine.config import load_engine, load_rules
     river_rule = next(r for g in load_rules()["groups"] for r in g["rules"] if r["id"] == "river")
@@ -167,8 +167,8 @@ def test_wide_river_needs_long_span():
                     float(load_engine()["spans"]["river_crossing_max_span_m"]))
     for i in long_ix:
         assert S[i]["length_m"] <= river_cap + 1e-6
-        assert (S[i - 1]["length_m"] + S[i]["length_m"]) / 2 <= 400 + 1e-6
-        assert (S[i]["length_m"] + S[i + 1]["length_m"]) / 2 <= 400 + 1e-6
+        assert (S[i - 1]["length_m"] + S[i]["length_m"]) / 2 <= 450 + 1e-6
+        assert (S[i]["length_m"] + S[i + 1]["length_m"]) / 2 <= 450 + 1e-6
         assert T[i]["type"] != "A" and T[i + 1]["type"] != "A"
     for x, y in towers_frame(f, r)[1:-1]:
         assert not (c - 120 - 150 + 0.5 < x < c + 120 + 150 - 0.5)
@@ -293,7 +293,7 @@ def test_hilly_ground_takes_tension_towers_and_longer_spans(monkeypatch):
     res = _solve_on_dem(monkeypatch, grade)
     r = res["routes"][0]
     inner = r["spans"][1:-1]
-    assert max(s["length_m"] for s in inner) <= 400.0 + 1e-6            # span cap 400 m (9 Oct 2026)
+    assert max(s["length_m"] for s in inner) <= 450.0 + 1e-6            # span cap 450 m (18 Oct 2026), hilly too
     T = r["towers"]
     up = [t for t in T if t["chainage_km"] * 1000 > half + 400 and t["type"] != "G"]
     assert up and all(t["type"] != "A" for t in up), [t["type"] for t in up]
@@ -303,9 +303,9 @@ def test_hilly_ground_takes_tension_towers_and_longer_spans(monkeypatch):
 
 
 def test_design_span_is_the_hard_maximum_and_editable():
-    """Rule 'Design span' caps every span in the search and the spotting (gantry slack spans and
-    river crossings aside); changing it on the Rules screen changes the cap."""
-    for override, cap in ((None, 400.0), ({"design_span": {"params": {"plain_m": 350}}}, 350.0)):
+    """Rule 'Design span' — its longest span (max_span_m, 18 Oct 2026) — caps every span in the search and the
+    spotting (gantry slack spans and river crossings aside); changing it on the Rules screen changes the cap."""
+    for override, cap in ((None, 450.0), ({"design_span": {"params": {"max_span_m": 350}}}, 350.0)):
         r = run_solve(solve_input({}, overrides=override))["routes"][0]
         inner = r["spans"][1:-1]
         assert max(s["length_m"] for s in inner) <= cap + 1e-6, (cap, max(s["length_m"] for s in inner))
@@ -533,8 +533,8 @@ def test_nalla_keeps_towers_40m_away_and_is_spanned():
 
 # ---- AESL Tower Spotting Data + Route_Rules.xlsx (8 Oct 2026) ---------------------------------
 def test_tsd_span_tables_hold_on_a_solved_route():
-    """765 kV: no span over the 370 m normal span; every tower's wind span (mean of its two spans)
-    ≤ 400 m; every angle tower's span pair fits its type's adjacent-span allowance; tension towers at
+    """765 kV: no span over the 450 m longest span; every tower's wind span (mean of its two spans)
+    ≤ 450 m (18 Oct 2026); every angle tower's span pair fits its type's adjacent-span allowance; tension towers at
     most 15 spans apart."""
     from beeline_engine.config import load_engine
     from beeline_engine.solver import span_sum_limit
@@ -543,10 +543,11 @@ def test_tsd_span_tables_hold_on_a_solved_route():
     r = run_solve(solve_input({"clusters": gdf([village], "builtup_cluster")}))["routes"][0]
     tsd = load_engine()["tsd"]["765"]
     T, S = r["towers"], r["spans"]
-    assert max(s["length_m"] for s in S[1:-1]) <= 400.0 + 1e-6          # span cap 400 m (9 Oct 2026)
+    assert max(s["length_m"] for s in S[1:-1]) <= 450.0 + 1e-6          # span cap 450 m (18 Oct 2026)
+    assert float(tsd["wind_span_m"]["base"]) == 450.0
     for i in range(2, len(T) - 2):
         L1, L2 = S[i - 1]["length_m"], S[i]["length_m"]
-        assert (L1 + L2) / 2 <= 400.0 + 1e-6
+        assert (L1 + L2) / 2 <= 450.0 + 1e-6
         lim = span_sum_limit(tsd["span_sum"], T[i]["type"], T[i]["deflection_deg"])
         assert L1 + L2 <= lim + 1e-6 and max(L1, L2) <= 0.6 * lim + 1e-6, (i, T[i]["type"], T[i]["deflection_deg"], L1, L2)
     idx = [i for i, t in enumerate(T) if t["type"] != "A"]
@@ -1450,6 +1451,10 @@ def test_forest_cap_vector_mode_decides_on_the_exact_area(monkeypatch):
     from beeline_engine import pipeline as PL
     eng = copy.deepcopy(PL.load_engine())
     eng["forest_cap"]["area_method"] = "vector"
+    # 18 Oct 2026: with the 1 ha cap the default 1 ha search margin left a target of 0 ha, so a search line whose
+    # corridor grazed the forest corner by 0.01 ha (the 450 m rule's charge bends the detour by 50 m) ended the
+    # bisection before any spot; half a hectare keeps the test on what it checks, the measure that decides
+    eng["forest_cap"]["grid_margin_ha"] = 0.5
     monkeypatch.setattr(PL, "load_engine", lambda: eng)
     f = frame()
     c = f.length_m / 2
@@ -1491,3 +1496,120 @@ def test_village_breach_band_is_priced_and_warned():
     off = resolve_rules(LineSpec(765, "dc"), {"clusters": {"params": {"breach_min_m": 200}}})
     comp2 = compile_rules(f, {"clusters": gdf([village], "builtup_cluster")}, off, costs, 765, 33.5, 150, 400, tower_cost_rs=tc)
     assert comp2.breach_band is None and abs([vr for vr in comp2.tower_nogo if vr.rule_id == "clusters"][0].d - 200.0) < 1e-6
+
+
+# ---- 450 m spans (Vivek, 18 Oct 2026) ----------------------------------------------------------------------------
+def _span450(layers=None, **kw):
+    """Empty 765 kV compile and spot params as the pipeline builds them for the 450 m rule: design 400 m, longest
+    450 m, ₹0.05 Cr per 10 m over the design span (search only)."""
+    from beeline_engine.spotting import Checker, SpotParams
+    f = frame()
+    comp, rules, costs = _comp16(f, layers or {})
+    ds = rules["design_span"].params
+    tc = {t: costs["towers"][t]["price_rs"] for t in TOWER_TYPES}
+    args = dict(design_span_m=float(ds["plain_m"]), span_max_m=float(ds["max_span_m"]), plain_span_max_m=float(ds["max_span_m"]),
+                excess_span_rs_per_m=float(ds["excess_cost_cr_per_10m"]) * 1e7 / 10.0, min_span_m=100, max_dev_deg=60,
+                type_bands={"A": 2, "B1": 15, "C1": 30, "D45": 45, "D60": 60}, section_km=5, parallel_angle_deg=30,
+                tower_cost_rs=tc, ground_clearance_m=18.15, lowest_attachment_m=32.6, sag_at_design_m=14.278, go_radius_m=150)
+    args.update(kw)
+    sp = SpotParams(**args)
+    return f, comp, Checker(comp, sp), sp
+
+
+def test_450m_rule_params_and_the_excess_charge():
+    """The design_span rule carries the longest span (765 / 400 kV 450 m; 220 / 132 kV their plain value) and the
+    search charge per 10 m; a 430 m span passes the exact checks and costs the search ₹0.05 Cr x 3 more than the same
+    geometry without the charge; the solver's tensor charge agrees."""
+    import torch
+    from dataclasses import replace
+    from beeline_engine.solver import SolverParams, excess_span_rs, excess_span_rs_t
+    from beeline_engine.spotting import _chain_cost
+    for kv, mx in ((765, 450), (400, 450), (220, 350), (132, 320)):
+        ds = resolve_rules(LineSpec(kv, "dc")).get("design_span").params
+        assert float(ds["max_span_m"]) == mx and abs(float(ds["excess_cost_cr_per_10m"]) - 0.05) < 1e-12
+        if kv in (220, 132):
+            assert float(ds["max_span_m"]) == float(ds["plain_m"])          # nothing changes there
+    f, comp, chk, sp = _span450()
+    c = f.length_m / 2
+    assert sp.design_span_m == 400 and sp.span_max_m == 450 and abs(sp.excess_span_rs_per_m - 0.05e6) < 1e-6
+    ok, _ = chk.span_crossings((c - 215, 0.0), (c + 215, 0.0))                  # 430 m
+    assert ok
+    one = [(c - 215, 0.0), (c + 215, 0.0)]
+    d1 = _chain_cost(comp, sp, one, []) - _chain_cost(comp, replace(sp, excess_span_rs_per_m=0.0), one, [])
+    assert abs(d1 - 0.05e7 * 3) < 1.0
+    two = [(c - 430, 0.0), (c, 0.0), (c + 400, 0.0)]                           # 430 m + 400 m: only the first pays
+    d2 = _chain_cost(comp, sp, two, ["A"]) - _chain_cost(comp, replace(sp, excess_span_rs_per_m=0.0), two, ["A"])
+    assert abs(d2 - 0.05e7 * 3) < 1.0
+    assert excess_span_rs(400.0, 400, 450, 0.05e6) == 0.0 and abs(excess_span_rs(445.0, 400, 450, 0.05e6) - 0.225e7) < 1e-3
+    assert abs(excess_span_rs(700.0, 400, 450, 0.05e6) - 0.25e7) < 1e-3     # a long river span: capped at the longest
+    p = SolverParams(site_spacing_m=50, span_min_m=100, span_max_m=450, max_dev_deg=60, type_bands={}, tower_cost_rs={},
+                     design_span_m=400, excess_span_rs_per_m=0.05e6)
+    L = torch.tensor([300.0, 400.0, 430.0, 450.0, 600.0])
+    assert torch.allclose(excess_span_rs_t(L, p), torch.tensor([excess_span_rs(float(x), 400, 450, 0.05e6) for x in L]))
+
+
+def test_450m_rule_rejects_a_460m_ordinary_span():
+    f, comp, chk, sp = _span450()
+    c = f.length_m / 2
+    ok, _ = chk.span_crossings((c - 230, 0.0), (c + 230, 0.0))                  # 460 m, no river
+    assert not ok
+    assert chk.span_crossings((c - 225, 0.0), (c + 225, 0.0))[0]                # 450 m exactly
+
+
+def test_450m_rule_charge_stays_out_of_the_route_cost():
+    """The search charge on spans over 400 m never reaches route_cost: a spotted line with 430 m spans reports the
+    same cost with and without the charge."""
+    from dataclasses import replace
+    from beeline_engine.spotting import build_route, route_cost
+    f, comp, chk, sp = _span450()
+    L = f.length_m
+    c = L / 2
+    mid = [c - 670.0, c - 240.0, c + 190.0, c + 620.0]                       # three 430 m spans
+    left = [c - 670.0 - 400.0 * k for k in range(math.ceil((c - 670.0 - 400.0) / 400), 0, -1)]
+    right = [c + 620.0 + 400.0 * k for k in range(1, math.ceil((L - c - 620.0 - 400.0) / 400) + 1)]
+    xs = [0.0] + left + mid + right + [L]
+    assert all(100 <= b - a <= 450 for a, b in zip(xs[:-1], xs[1:]))
+    sr = build_route(chk, [(x, 0.0) for x in xs], set(), sp)
+    assert sum(1 for s in sr.spans if 400 < s.length_m <= 450 + 1e-6) >= 3
+    assert not any("span_rule" in t.violations for t in sr.towers)
+    c0, _ = route_cost(comp, sr.towers, sr.spans, replace(sp, excess_span_rs_per_m=0.0))
+    assert abs(sr.cost["total"] - c0["total"]) < 1.0
+
+
+def test_450m_rule_leg_programme_weighs_a_tower_against_the_charge():
+    """Straight leg between fixed anchors: fewer, longer spans when their charge is below a suspension tower
+    (₹0.4765 Cr), more, shorter spans when it is not — 1,640 m: 4 spans (40 m over, ₹0.2 Cr) beat 5; 1,760 m: 4 spans
+    would pay ₹0.8 Cr, so 5 spans (one more tower) win. The pick matches the programme's own prices."""
+    from beeline_engine.spotting import _spot_leg, _leg_objective
+    f, comp, chk, sp = _span450()
+    c = f.length_m / 2
+    for d, want_inner in ((1640.0, 3), (1760.0, 4)):
+        p, q = (c - d / 2, 0.0), (c + d / 2, 0.0)
+        new = _spot_leg(chk, p, q, sp, exact=True)
+        assert new is not None and len(new) == want_inner, (d, len(new or []))
+        seq = [p] + list(new) + [q]
+        assert max(math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in zip(seq[:-1], seq[1:])) <= 450 + 1e-6
+        even = lambda n: [p] + [(p[0] + d * k / n, 0.0) for k in range(1, n)] + [q]
+        c4, c5 = _leg_objective(chk, sp, even(4)), _leg_objective(chk, sp, even(5))
+        assert (c4 < c5) == (want_inner == 3), (d, c4, c5)
+        assert _leg_objective(chk, sp, seq) <= min(c4, c5) + 1.0
+
+
+def test_450m_rule_wind_span_at_a_moved_tower():
+    """_legal_here keeps the TSD wind span (mean of the two spans) at 450 m (18 Oct 2026; 400 before): a tower with
+    430 + 450 m spans (440 m) is accepted, one with 470 + 450 m (460 m) is not. The span cap is lifted to 600 m here so
+    that the wind span alone decides."""
+    from beeline_engine.config import load_engine
+    from beeline_engine.spotting import _legal_here
+    tsd = load_engine()["tsd"]["765"]
+    f, comp, chk, sp = _span450(tsd=tsd, span_max_m=600.0, plain_span_max_m=600.0)
+    c = f.length_m / 2
+    pts_for = lambda L1: [(c - L1 - 800, 0.0), (c - L1 - 400, 0.0), (c - L1, 0.0), (c, 0.0), (c + 450, 0.0),
+                          (c + 850, 0.0), (c + 1250, 0.0)]
+    for L1, ok in ((430.0, True), (470.0, False)):
+        pts = pts_for(L1)
+        assert _legal_here(chk, pts, 3, sp, pts[3]) is ok, (L1, ok)
+    # the 460 m case fails on the wind span alone: a 470 m wind limit accepts it
+    tsd470 = {**tsd, "wind_span_m": {**tsd["wind_span_m"], "base": 470}}
+    _, _, chk2, sp2 = _span450(tsd=tsd470, span_max_m=600.0, plain_span_max_m=600.0)
+    assert _legal_here(chk2, pts_for(470.0), 3, sp2, pts_for(470.0)[3])

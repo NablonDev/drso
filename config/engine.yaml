@@ -30,7 +30,8 @@ grid:
 spans:
   # min span comes from the rule "Span limits at a crossing — Minimum span" (100 m default)
   # max span = the rule "Design span" (plain / hilly), a hard maximum in the search and the spotting
-  # (Vivek, 6 Oct 2026; was 1.125 x design span in the search only)
+  # (Vivek, 6 Oct 2026; was 1.125 x design span in the search only). 18 Oct 2026: the hard maximum is the
+  # rule's "Longest span allowed" (765 kV 450 m); spans over the plain design span pay a search-only charge
   # Long spans are allowed only where the span crosses a river (best guess, AESL to confirm)
   # TSD span tables (8 Oct 2026): one span ≤ 60 % of the 1,200 m adjacent-span sum → 720 m
   river_crossing_max_span_m: 720          # audit H1 (17 Oct 2026): the TSD single-span ceiling, so the river rule's 720 m can be used; each rule's own max_span_m still caps its crossings (NH 250, pipeline 600, ...)
@@ -119,8 +120,8 @@ tsd:
       D45: [[32, 1200], [33, 1195], [34, 1161], [35, 1128], [36, 1095], [37, 1061], [38, 1028], [39, 995], [40, 962], [41, 930], [42, 897], [43, 864], [44, 832], [45, 800]]
       D60: [[45, 800], [46, 758], [47, 716], [48, 674], [49, 633], [50, 592], [51, 551], [52, 510], [53, 469], [54, 428], [55, 388], [56, 348], [57, 308], [58, 268], [59, 228], [60, 189]]
     single_span_fraction: 0.6
-    # wind span = mean of the two adjacent spans; base towers 400 m; D with body extensions
-    wind_span_m: {base: 400, d18: 300, d33: 270, d45: 250}
+    # wind span = mean of the two adjacent spans; base towers 450 m (Vivek, 18 Oct 2026; was 400); D with body extensions
+    wind_span_m: {base: 450, d18: 300, d33: 270, d45: 250}
     # weight span limits (m), both spans [min, max]; H/w of the conductor at 0 °C nil wind
     # (2,013 kg / 1.254 kg/m) for the weight-span arithmetic
     weight_span_m: {A: [200, 600], B1: [0, 600], C1: [0, 600], D45: [-200, 600], D60: [-200, 600]}

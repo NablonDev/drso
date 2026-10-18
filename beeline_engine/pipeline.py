@@ -163,7 +163,11 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
     # Shortest span = the rule's crossing minimum (falling-tower distance). Short spans are
     # allowed anywhere; their extra tower cost is what keeps them rare.
     smin = float(rules["crossing_span_limits"].params["min_span_m"])
-    smax = design          # "Design span" is the hard maximum span (hilly value applied on hilly ground)
+    # longest span (Vivek, 18 Oct 2026): the rule's max_span_m is the hard maximum (765 kV 450 m); every span over the
+    # plain design span pays a search-only charge per metre of excess (excess_cost_cr_per_10m), never in the reported cost
+    _ds0 = rules["design_span"].params
+    smax = float(_ds0.get("max_span_m") or design)
+    excess_rs_m = float(_ds0.get("excess_cost_cr_per_10m", 0) or 0) * RS_PER_CR_ / 10.0
     bands = {k: float(rules["tower_type_bands"].params[k]) for k in TOWER_TYPES}
     max_dev = float(rules["max_deviation"].params["limit_deg"])
     if not rules["max_deviation"].enabled:
@@ -313,8 +317,11 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
     else:
         ext_zero_tol = ext_round_tol = 0.0
     # with terrain, hilly spans (all-tension) may be longer than plain ones: the grid offers up to the
-    # longer of the two and the edge test keeps non-hilly spans within the plain value
-    smax_search = max(smax, hilly_m) if terrain else smax
+    # longer of the two and the edge test keeps non-hilly spans within the plain value. 18 Oct 2026: hilly spans
+    # take the same longest span (max_span_m) and the same search charge over the plain design span; a hilly
+    # value set above it still lets hilly spans go further
+    hilly_max = max(hilly_m, smax)
+    smax_search = max(smax, hilly_max) if terrain else smax
     angle_point_rs = float(rules["design_span"].params.get("angle_point_surcharge_cr", 0) or 0) * RS_PER_CR_
     base = SolverParams(site_spacing_m=eng["grid"]["site_spacing_m"], span_min_m=smin, span_max_m=smax_search,
                         angle_tower_penalty_rs=angle_point_rs,
@@ -334,7 +341,7 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
                         design_span_m=design, extension_m=ext_max_abc,
                         extension_cost_rs=tower_cost["A"] * ext_pct * ext_max_abc / 18.0,
                         extension_cost_hilly_rs=tower_cost["B1"] * ext_pct * ext_max_abc / 18.0,
-                        hilly_span_max_m=hilly_m, plain_span_max_m=smax,
+                        hilly_span_max_m=hilly_max, plain_span_max_m=smax, excess_span_rs_per_m=excess_rs_m,
                         hilly_tower_extra_rs=max(0.0, tower_cost["B1"] - tower_cost["A"]),
                         hilly_rise_m=hilly_rise, extension_pct=ext_pct * 100.0,
                         span_sum=tsd["span_sum"] if tsd else None,
@@ -347,7 +354,7 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
                         proximity_tower_discount=prox_tdisc, gantry_min_span_m=gantry_min,
                         ext_zero_tol_m=ext_zero_tol, ext_round_tol_m=ext_round_tol,
                         crossing_dev_max_deg=_crossing_dev_cap(rules))
-    sp = SpotParams(design_span_m=design, span_max_m=smax_search,
+    sp = SpotParams(design_span_m=design, span_max_m=smax_search, plain_span_max_m=smax, excess_span_rs_per_m=excess_rs_m,
                     raster_prefilter=bool(eng["grid"].get("raster_prefilter", True)), gantry_min_span_m=gantry_min,
                     min_span_m=float(rules["crossing_span_limits"].params["min_span_m"]),
                     max_dev_deg=max_dev, type_bands=bands,

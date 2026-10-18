@@ -76,6 +76,9 @@ class SolverParams:
     extension_cost_hilly_rs: float = 0.0     # one body extension on a hilly-ground (B1) tower
     hilly_span_max_m: float | None = None
     plain_span_max_m: float | None = None    # spans with no hilly ground stay within this (hilly may be longer)
+    # longest span (Vivek, 18 Oct 2026): search-only ₹ per metre of a span over design_span_m (the plain design
+    # span), up to span_max_m (a long river-crossing span pays the charge of the longest ordinary span); 0 = off
+    excess_span_rs_per_m: float = 0.0
     hilly_tower_extra_rs: float = 0.0        # hilly ground: towers are tension (B1), ₹ over an A per span
     hilly_surcharge_rs_per_m: float = 0.0    # search-only: avoid hills (Vivek, 14 Oct 2026)
     hilly_tower_surcharge_rs: float = 0.0
@@ -339,6 +342,9 @@ def _edge_geom(compiled: Compiled, grid: Grid, p: SolverParams, rasters: "_Raste
         fac = 1.0 - p.proximity_discount * rasters.near[row, col].mean(dim=-1)
         E = E * fac
         A = A * fac                                  # … times the same discount
+    if p.excess_span_rs_per_m > 0:
+        # longest span (Vivek, 18 Oct 2026): a span over the plain design span pays the search charge pro rata
+        E = E + excess_span_rs_t(length, p).expand(C, R, K)
     if rasters.z is not None and not require_river:
         # ground clearance of this span over the DEM (towers at standard height): extensions cost
         # steel; a span that extensions on both towers cannot clear is not allowed (a tower must
@@ -567,6 +573,19 @@ def span_sum_limit(table: dict, t: str, d: float) -> float | None:
     return float(rows[-1][1])
 
 
+def excess_span_rs(L: float, design_m: float, cap_m: float, rs_per_m: float) -> float:
+    """Search-only charge of one span (Vivek, 18 Oct 2026): ₹ per metre over the plain design span, counted up to
+    cap_m (the longest ordinary span) — e.g. ₹0.05 Cr per 10 m: a 430 m span over 400 m pays ₹0.15 Cr."""
+    if rs_per_m <= 0:
+        return 0.0
+    return max(0.0, min(L, cap_m) - design_m) * rs_per_m
+
+
+def excess_span_rs_t(length: torch.Tensor, p: "SolverParams") -> torch.Tensor:
+    """excess_span_rs on a tensor of span lengths."""
+    return (length.clamp(max=p.span_max_m) - p.design_span_m).clamp(min=0.0) * p.excess_span_rs_per_m
+
+
 def fit_type_for_spans(table: dict, t: str, d: float, L1: float, L2: float, frac: float) -> str | None:
     """Lightest type from t upward whose adjacent-span allowance at deviation d takes spans L1, L2."""
     from .config import TOWER_TYPES
@@ -670,7 +689,8 @@ def gantry_seeds(compiled: Compiled, grid: Grid, p: SolverParams, S_np: np.ndarr
                 continue
             if any((a[row, col] >= 0).any() for a in cross):
                 continue
-            seeds[c, r] = S_np[c, r] + dead_end_rs + L * (compiled.conductor_rs_per_m + float(strip_np[row, col].mean()))
+            seeds[c, r] = S_np[c, r] + dead_end_rs + L * (compiled.conductor_rs_per_m + float(strip_np[row, col].mean())) + \
+                excess_span_rs(L, p.design_span_m, p.span_max_m, p.excess_span_rs_per_m)
     return seeds
 
 

@@ -658,11 +658,15 @@ groups:
 
       - id: design_span
         name: "Design span"
-        note: "Hard maximum span per voltage. 765 kV: 400 m (Vivek, 9 Oct 2026 — the TSD wind span of the base towers; the TSD normal span of 370 m stays the sag reference). Hilly = the ground rises more than 10 m between adjacent towers (Route_Rules 3); towers on a hilly span are tension towers (B1 at least). The TSD span tables (sum of adjacent spans by deviation, wind span ≤ 400 m) apply on top. River crossings excepted."
+        note: "Design span per voltage. 765 kV: 400 m (Vivek, 9 Oct 2026 — the TSD wind span of the base towers; the TSD normal span of 370 m stays the sag reference). Vivek, 18 Oct 2026: an ordinary span may be up to the longest span allowed (765 kV: 450 m); every span longer than the plain design span costs the search ₹0.05 Cr per 10 m over it, pro rata (search only, never in the reported cost); hilly spans take the same maximum and the same charge; the TSD wind span of the base towers is 450 m. Crossing span limits (SH 400 m, NH 250 m, railway, river 720 m), the approach-section span and the TSD adjacent-span tables are unchanged. Hilly = the ground rises more than 10 m between adjacent towers (Route_Rules 3); towers on a hilly span are tension towers (B1 at least). The TSD span tables (sum of adjacent spans by deviation, wind span ≤ 450 m) apply on top. River crossings excepted."
         mechanism: geometry
         params:
           - {key: plain_m, label: "Plain terrain", type: num, unit: m, value: {765: 400, 400: 400, 220: 350, 132: 320}}
           - {key: hilly_m, label: "Hilly terrain", type: num, unit: m, value: {765: 400, 400: 400, 220: 350, 132: 320}}
+          # Vivek, 18 Oct 2026: spans up to max_span_m; over the plain design span each one pays a search-only charge,
+          # pro rata per metre (a 430 m span ₹0.15 Cr); 220 / 132 kV keep their plain value, so nothing changes there
+          - {key: max_span_m, label: "Longest span allowed (spans over the plain design span pay the search charge below)", type: num, unit: m, value: {765: 450, 400: 450, 220: 350, 132: 320}}
+          - {key: excess_cost_cr_per_10m, label: "Search cost per 10 m over the design span", type: num, unit: "₹ Cr", value: 0.05}
           - {key: hilly_rise_m, label: "Hilly: ground rise between towers over", type: num, unit: m, value: 10}
           # Vivek, 14 Oct 2026: avoid hills — towers there are hard to build. Hill ground from the DEM: relief
           # (highest minus lowest ground within the radius) AND mean slope over the window; small patches dropped.

@@ -5,7 +5,8 @@
    straight leg is not dearer than the grid towers it replaces (towers, foundations, land, RoW
    strip incl. forest): a cost-blind straightening cut corners through forest and rock and made
    a hill route ₹14 Cr dearer than the search had priced it (6 Oct 2026).
-2. Spot suspension towers along each leg at equal spans (design span or shorter).
+2. Spot suspension towers along each leg at equal spans (design span or shorter; up to the longest span
+   allowed where that is cheaper at the search charge per metre over the design span, 18 Oct 2026).
 3. Section points: upgrade a suspension tower to B1 where tension towers are further apart
    than the section interval (the hilly interval once the stretch includes a hilly span).
    Hilly: the DEM slope reaches hilly_slope_deg over 90 m somewhere on the span / leg; hilly legs
@@ -79,6 +80,11 @@ class SpotParams:
     section_spans: int | None = None       # TSD D: ≤ 15 spans between section points (plain)
     hilly_section_spans: int | None = None # ≤ 10 spans (hilly)
     pull_cost_tol: float = 0.01          # a straightened leg may cost at most this much more than the grid towers it replaces
+    # longest span (Vivek, 18 Oct 2026): ordinary spans on plain ground up to plain_span_max_m (None = design_span_m;
+    # hilly ground up to span_max_m); each span over design_span_m pays excess_span_rs_per_m per metre, search only
+    # (chain costs and the leg programme, never route_cost), counted up to span_max_m
+    plain_span_max_m: float | None = None
+    excess_span_rs_per_m: float = 0.0
 
 
 @dataclass
@@ -114,6 +120,17 @@ class SpottedRoute:
     cost: dict[str, float]
     stats: dict
     method: str                    # pulled | grid
+
+
+def _plain_max(sp: SpotParams) -> float:
+    """Longest ordinary span on plain ground (rule design_span.max_span_m, 765 kV 450 m; 18 Oct 2026)."""
+    return float(sp.plain_span_max_m) if sp.plain_span_max_m else float(sp.design_span_m)
+
+
+def _excess_rs(sp: SpotParams, L: float) -> float:
+    """Search-only charge of a span over the plain design span (Vivek, 18 Oct 2026), as the search prices it."""
+    from .solver import excess_span_rs
+    return excess_span_rs(L, sp.design_span_m, sp.span_max_m, sp.excess_span_rs_per_m)
 
 
 # ----------------------------------------------------------------------------------------
@@ -427,12 +444,13 @@ class Checker:
                 if width >= cr.major_threshold_m:
                     item.update(major=True, min_type=cr.major_type, cost_rs=cr.major_cost_rs)
             out.append(item)
-        # hard maximum: the plain design span, or the (longer) hilly one on hilly ground; rivers excepted
+        # hard maximum: the longest plain span (18 Oct 2026: max_span_m, over the design span at a search charge),
+        # or the (longer) hilly one on hilly ground; rivers excepted
         limit = self.sp.span_max_m
         if self.sp.approach_span_m is not None and self.in_approach(p, q):
             limit = min(limit, self.sp.approach_span_m)
-        if L > self.sp.design_span_m + 1e-3 and not self.is_hilly(p, q):
-            limit = self.sp.design_span_m
+        if L > _plain_max(self.sp) + 1e-3 and not self.is_hilly(p, q):
+            limit = min(limit, _plain_max(self.sp))
         if L > limit + 1e-3:
             if L > self.sp.river_max_span_m + 1e-3 or not any(c.get("long_span") and c.get("geom_crossed") is not False for c in out):
                 ok = False
@@ -474,15 +492,19 @@ def _spot_leg(chk: Checker, p, q, sp: SpotParams, exact: bool = False):
     the best straighten candidates): Vivek, 14 Oct 2026, no preference for even spacing — the towers stand
     wherever the checks allow at the positions that make the leg cheapest (suspension towers, site extras,
     the body extensions each span's clearance needs, the B1 upgrade on a hilly span): a 1-D programme over
-    10 m positions, spans between the minimum and the design span; a span the crossing checks reject is
-    struck and the programme repeated. A single long crossing span is tried first either way."""
+    10 m positions, spans between the minimum and the longest span (over the design span at the search charge,
+    18 Oct 2026); a span the crossing checks reject is struck and the programme repeated. A single long crossing
+    span is tried first either way."""
     if not chk.conductor_ok(p, q):
         return None
     d = math.hypot(q[0] - p[0], q[1] - p[1])
     design = sp.design_span_m
+    leg_max = _plain_max(sp)
     hilly_leg = bool(sp.hilly_design_span_m) and chk.is_hilly(p, q)
     if hilly_leg:
         design = sp.hilly_design_span_m
+        leg_max = sp.span_max_m
+    design = min(design, leg_max)
     ok1, items1 = chk.span_crossings(p, q)
     if ok1 and d <= design + 1e-6:
         return []
@@ -490,16 +512,23 @@ def _spot_leg(chk: Checker, p, q, sp: SpotParams, exact: bool = False):
         return []                             # one long span over the crossing
     if exact:
         return _leg_dp(chk, p, q, sp, design, hilly_leg)
-    n0 = max(1, math.ceil(d / design - 1e-9), math.ceil(d / sp.span_max_m - 1e-9))
-    for n in range(n0, n0 + 5):
+    tA = float(sp.tower_cost_rs.get("A", 0.0) or 0.0)
+    if ok1 and d <= leg_max + 1e-6 and _excess_rs(sp, d) <= tA:
+        return []                             # one span over the design span: its search charge is below a tower
+    # tower counts from the design span up, and (18 Oct 2026) fewer, longer spans up to the longest span, tried in
+    # the order of their price — suspension towers plus the search charge of the even spans
+    n0 = max(1, math.ceil(d / design - 1e-9))
+    n_lo = max(1, math.ceil(d / leg_max - 1e-9))
+    counts = sorted(range(min(n_lo, n0), n0 + 5), key=lambda n: ((n - 1) * tA + n * _excess_rs(sp, d / n), n))
+    for n in counts:
         span = d / n
         if span < sp.min_span_m and n > 1:
-            break
+            continue
         pts = [(p[0] + (q[0] - p[0]) * i / n, p[1] + (q[1] - p[1]) * i / n) for i in range(1, n)]
         if _even_leg_ok(chk, p, q, pts, span, n, hilly_leg, sp):
             return pts
         if 1 < n <= min(n0 + 1, UNEVEN_MAX_SPANS):
-            un = _uneven_leg(chk, p, q, n, design, sp)
+            un = _uneven_leg(chk, p, q, n, design if n >= n0 else leg_max, sp)
             if un is not None:
                 return un
     return None
@@ -512,7 +541,7 @@ def _even_leg_ok(chk: Checker, p, q, pts, span: float, n: int, hilly_leg: bool, 
     if sp.approach_span_m is not None and span > sp.approach_span_m + 1e-3 and \
             any(chk.in_approach(a, b) for a, b in zip(seq[:-1], seq[1:])):
         return False      # approach section: 250 m spans
-    if hilly_leg and span > sp.design_span_m + 1e-3 and n > 1 and \
+    if hilly_leg and span > _plain_max(sp) + 1e-3 and n > 1 and \
             not all(chk.is_hilly(a, b) for a, b in zip(seq[:-1], seq[1:])):
         return False      # a span longer than the plain value must itself be on hilly ground
     return all(chk.span_crossings(a, b)[0] for a, b in zip(seq[:-1], seq[1:]))
@@ -591,7 +620,8 @@ def _leg_model(chk: Checker, p, q, sp: SpotParams, design: float, hilly_leg: boo
     """Cost pieces of a straight leg p->q with candidate tower positions `pos` (m from p, 0 and d included):
     tower_rs(j) = a suspension tower at pos[j] (price + site extras); span_rs(i, j) = the body extensions the
     span's ground clearance needs on both towers (closest step; None = needs a taller type), the B1 upgrade
-    when the ground rises more than the hilly limit, and the plain-span rule on hilly legs."""
+    when the ground rises more than the hilly limit, the plain-span rule on hilly legs, and (18 Oct 2026) the
+    search charge of a span over the plain design span."""
     d = math.hypot(q[0] - p[0], q[1] - p[1])
     pos = np.asarray(pos, float)
     at = lambda t: (p[0] + (q[0] - p[0]) * t / d, p[1] + (q[1] - p[1]) * t / d)
@@ -651,7 +681,7 @@ def _leg_model(chk: Checker, p, q, sp: SpotParams, design: float, hilly_leg: boo
                 c += br_rs
         if z is not None:
             hilly_span = sp.hilly_rise_m is not None and abs(z[j] - z[i]) > sp.hilly_rise_m
-            if hilly_leg and L > sp.design_span_m + 1e-3 and not hilly_span:
+            if hilly_leg and L > _plain_max(sp) + 1e-3 and not hilly_span:
                 return None                   # a span longer than the plain value must itself be on hilly ground
             sag = sp.sag_at_design_m * (L / (sp.sag_ref_span_m or sp.design_span_m)) ** 2
             t = (pos[i:j + 1] - pos[i]) / L
@@ -665,11 +695,11 @@ def _leg_model(chk: Checker, p, q, sp: SpotParams, design: float, hilly_leg: boo
             c += 2 * tA * sp.extension_pct / 100.0 * ext / 18.0
             if hilly_span:
                 c += tB - tA
-        elif hilly_leg and L > sp.design_span_m + 1e-3:
+        elif hilly_leg and L > _plain_max(sp) + 1e-3:
             return None
         if sp.approach_span_m is not None and L > sp.approach_span_m + 1e-3 and chk.in_approach(at(pos[i]), at(pos[j])):
             return None
-        return c
+        return c + _excess_rs(sp, L)
     return at, tower_rs, span_rs
 
 
@@ -686,12 +716,25 @@ def _leg_objective(chk: Checker, sp: SpotParams, seq) -> float:
         if sc is None:
             return float("inf")
         tot += sc + (tower_rs(j) if j < len(pos) - 1 else 0.0)
+    if sp.tsd and sp.tsd.get("span_sum") and sp.span_max_m > sp.design_span_m:
+        # 18 Oct 2026: with spans over 400 m two neighbours can pass the A table (863 m at 0°); the type the
+        # TSD check will give that suspension tower is priced here, so a re-spot is kept only when it truly pays
+        from .solver import fit_type_for_spans
+        tA = sp.tower_cost_rs.get("A", 0.0)
+        frac = float(sp.tsd.get("single_span_fraction", 0.6))
+        for j in range(1, len(pos) - 1):
+            t = fit_type_for_spans(sp.tsd["span_sum"], "A", 0.0, pos[j] - pos[j - 1], pos[j + 1] - pos[j], frac)
+            if t is None:
+                return float("inf")
+            if t != "A":
+                tot += sp.tower_cost_rs.get(t, tA) - tA
     return tot
 
 
 def _leg_dp(chk: Checker, p, q, sp: SpotParams, design: float, hilly_leg: bool, step: float = 10.0):
     d = math.hypot(q[0] - p[0], q[1] - p[1])
-    lo, hi = sp.min_span_m, min(design, sp.span_max_m)
+    # spans up to the longest span (18 Oct 2026): over the design span each pays the search charge (span_rs)
+    lo, hi = sp.min_span_m, (sp.span_max_m if hilly_leg else min(_plain_max(sp), sp.span_max_m))
     if d > hi + 1e-6 and d < 2 * lo - 1e-6:
         return None
     m = int(d // step)
@@ -850,6 +893,7 @@ def _chain_cost(comp: Compiled, sp: SpotParams, pts, inner_types) -> float:
         c += span_c
         c += _band_penalty(comp, (x0, y0), (x1, y1), L)
         c += _breach_rs(comp, (x0, y0), (x1, y1))
+        c += _excess_rs(sp, L)                      # span over the plain design span (search only, 18 Oct 2026)
     return c
 
 
@@ -971,7 +1015,7 @@ def _tsd_leg_ok(chk: Checker, sp: SpotParams, prev, start, inner, q, is_last: bo
         d, _ = _deflection(prev, start, first)
         L1 = math.hypot(start[0] - prev[0], start[1] - prev[1])
         L2 = math.hypot(first[0] - start[0], first[1] - start[1])
-        long_span = max(L1, L2) > sp.design_span_m + 1e-3
+        long_span = max(L1, L2) > sp.span_max_m + 1e-3          # a long crossing span (river)
         if not long_span:
             t = tower_type_for(d, sp.type_bands) or "D60"
             if fit_type_for_spans(T["span_sum"], t, d, L1, L2, float(T.get("single_span_fraction", 0.6))) is None:
@@ -2245,7 +2289,7 @@ def _refine_crossings(chk: Checker, pts, sp: SpotParams):
 
 
 def _wind_span_fix(chk: Checker, pts, sp: SpotParams):
-    """TSD wind span ≤ 400 m: next to a span longer than the design span (a river crossing), put a
+    """TSD wind span ≤ 450 m (base): next to a span longer than the longest span (a river crossing), put a
     tower on the neighbouring span close enough that the crossing tower's mean span stays within the
     limit (e.g. 700 m crossing → neighbour ≤ 100 m). Gantry spans are left alone."""
     wind = float((sp.tsd.get("wind_span_m") or {}).get("base", 400))
@@ -2254,7 +2298,7 @@ def _wind_span_fix(chk: Checker, pts, sp: SpotParams):
     while i < len(pts) - 2:
         p, q = pts[i], pts[i + 1]
         L = math.hypot(q[0] - p[0], q[1] - p[1])
-        if L <= sp.design_span_m + 1e-3:
+        if L <= sp.span_max_m + 1e-3:
             i += 1
             continue
         w = wind
@@ -2379,7 +2423,8 @@ def _split_hilly(chk: Checker, pts, sp: SpotParams):
     for i in range(n - 1):
         p, q = pts[i], pts[i + 1]
         L = math.hypot(q[0] - p[0], q[1] - p[1])
-        if 0 < i < n - 2 and sp.hilly_design_span_m < L <= sp.span_max_m + 1e-3 and chk.is_hilly(p, q):
+        # 18 Oct 2026: a hilly span up to the longest plain span stays (it pays the search charge instead)
+        if 0 < i < n - 2 and max(sp.hilly_design_span_m, _plain_max(sp)) < L <= sp.span_max_m + 1e-3 and chk.is_hilly(p, q):
             k = math.ceil(L / sp.hilly_design_span_m - 1e-9)
             for j in range(1, k):
                 base = j / k
@@ -2570,7 +2615,7 @@ def _raise(tw, need_m: float, sp: SpotParams, reason: str) -> None:
 def _tsd_checks(towers: list[Tower], spans: list[Span], sp: SpotParams) -> None:
     """AESL Tower Spotting Data checks on the spotted line (8 Oct 2026):
     - sum of adjacent spans by tower type and deviation, one span ≤ 60 % of it;
-    - wind span (mean of the adjacent spans) ≤ 400 m, D with +18/+33/+45 m: 300/270/250 m;
+    - wind span (mean of the adjacent spans) ≤ 450 m (base, 18 Oct 2026), D with +18/+33/+45 m: 300/270/250 m;
     - weight span within the type's limits — a tower in a dip (uplift) is upgraded to a type
       whose limit holds (A → B1 → D45), else flagged;
     - dead-end towers: deviation ≤ 15° line side + 30° slack side (note J).

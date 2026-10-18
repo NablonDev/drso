@@ -11,6 +11,8 @@ Rule parameters (setbacks, windows, side distances) are copied from config/rules
 span <= 400 m, 240-260 m without approval; D towers both sides of crossed lines above 66 kV.
 17 Oct: no NH / SH parallel buffer; canal = 45 m tower setback from the centreline only; bridges keep only "no tower
 on the structure" — the road carried brings its NH / SH crossing rules).
+18 Oct: ordinary spans up to 450 m (MAX_SPAN_ORD); 400-450 m is reported as 'info' (excess span: the search paid
+₹0.05 Cr per 10 m over the 400 m design span); TSD wind span base 450 m.
 """
 import sys, json, math, csv, collections
 from pathlib import Path
@@ -43,11 +45,12 @@ YARD_R = 150.0             # terminal yard: substation within this of the gantry
 GANTRY_BUF = 10.0
 GO_HALF_DIAG = math.sqrt(784.0) / math.sqrt(2.0)   # D60 base 784 m2 -> centre to corner 19.8 m
 PARALLEL_ANGLE = 30.0      # engine.yaml: span within this angle of the feature = parallel run
-DESIGN_SPAN = 400.0
+DESIGN_SPAN = 400.0        # plain design span: longer spans pay a search charge (Vivek, 18 Oct 2026)
+MAX_SPAN_ORD = 450.0       # longest ordinary span (rules design_span.max_span_m, 18 Oct 2026)
 MIN_SPAN = 100.0
 LONG_SPAN = 600.0
 RAIL_SPAN = 300.0
-WIND_SPAN = 400.0
+WIND_SPAN = 450.0          # TSD wind span, base towers (18 Oct 2026; was 400)
 TYPE_BANDS = [('A', 2.0), ('B1', 15.0), ('C1', 30.0), ('D45', 45.0), ('D60', 60.0)]
 RANK = {'A': 0, 'B1': 1, 'C1': 2, 'D45': 3, 'D60': 4, 'G': 9}
 TOL = 0.05                 # metres, numeric slack
@@ -507,7 +510,7 @@ for si, s in enumerate(S):
         crossings_found.append(rec)
     crossed_rules = {r['rule'] for r in crossed}
     # --- span length
-    lim = DESIGN_SPAN
+    lim = MAX_SPAN_ORD
     note = ''
     if crossed_rules & LONG_SPAN_RULES:
         lim = LONG_SPAN
@@ -517,6 +520,13 @@ for si, s in enumerate(S):
         note = 'railway crossing'
     if Lm > lim + TOL:
         add('span', a, 'design_span', 'span_too_long', Lm, lim, span=(a, b), note=note)
+    elif lim == MAX_SPAN_ORD and Lm > DESIGN_SPAN + TOL:
+        if min(line.centroid.distance(gantry[0]), line.centroid.distance(gantry[1])) <= APPROACH_LEN:
+            # the approach section keeps the design span (rules approach_section.span_m empty = design span)
+            add('span', a, 'approach_section', 'approach_span', Lm, DESIGN_SPAN, span=(a, b))
+        else:
+            add('span', a, 'design_span', 'excess_span', Lm, DESIGN_SPAN, span=(a, b), severity='info',
+                note=f"over the {DESIGN_SPAN:.0f} m design span, within {MAX_SPAN_ORD:.0f} m: search charge only (18 Oct 2026)")
     if Lm < MIN_SPAN - TOL:
         add('span', a, 'crossing_span_limits' if not gantry_span else 'substations', 'span_too_short' if not gantry_span else 'gantry_span_short', Lm, MIN_SPAN, span=(a, b))
     # --- crossing checks
@@ -583,8 +593,8 @@ for si, s in enumerate(S):
         if rule == 'state_highway' and not (SH_BAND[0] - TOL <= Lm <= SH_BAND[1] + TOL):
             add('span', a, rule, 'sh_span_band', Lm, f"{SH_BAND[0]:.0f}-{SH_BAND[1]:.0f}", span=(a, b), feature=tag,
                 severity='approval', note='allowed with an approval record (16 Oct 2026)')
-        if rule in ('power_line', 'power_line_lt') and Lm > DESIGN_SPAN + TOL:
-            add('span', a, rule, 'crossing_span', Lm, DESIGN_SPAN, span=(a, b), feature=tag, note='power-line crossing span is not a long-span crossing')
+        if rule in ('power_line', 'power_line_lt') and Lm > MAX_SPAN_ORD + TOL:
+            add('span', a, rule, 'crossing_span', Lm, MAX_SPAN_ORD, span=(a, b), feature=tag, note='power-line crossing span is not a long-span crossing')
         # tower type and deviation at the two crossing towers
         need = min_type_for(rule, rec.get('kv'))
         if rule == 'river' and rec.get('width', 0) >= 600.0:
@@ -651,7 +661,7 @@ for i in range(1, N - 1):
     ext = float(t.get('extension_m') or 0)
     wlim = 250.0 if ext >= 45 else 270.0 if ext >= 33 else 300.0 if ext >= 18 else WIND_SPAN
     if ws > wlim + TOL:
-        add('tower', i, 'design_span', 'wind_span', ws, wlim, note=f"spans {L1:.0f} + {L2:.0f}; extension {ext:.0f} m (TSD wind span base 400, +18 m 300, +33 m 270, +45 m 250)")
+        add('tower', i, 'design_span', 'wind_span', ws, wlim, note=f"spans {L1:.0f} + {L2:.0f}; extension {ext:.0f} m (TSD wind span base 450, +18 m 300, +33 m 270, +45 m 250)")
     # TSD table 3: permissible sum of adjacent spans by type and deviation; one span <= 0.6 x the sum
     lim = span_sum_limit(t['type'], d)
     if lim is not None and t['type'] != 'G':
