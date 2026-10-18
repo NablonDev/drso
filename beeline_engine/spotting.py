@@ -1140,6 +1140,19 @@ def build_route(chk: Checker, pts: list[tuple[float, float]], angle_set: set[int
                 if dd < lim - 1e-6:
                     towers[i].warnings.append(f"cluster_breach:{bg[j][1]} {dd:.0f}m")
                     breaches += 1
+    # small ponds spanned (Vivek, 18 Oct 2026): a warning on each span over or within the pond buffer of one
+    spd = getattr(comp, "small_ponds", None)
+    if spd:
+        from shapely import STRtree
+        ptree = comp.__dict__.get("_pond_tree")
+        if ptree is None:
+            ptree = comp.__dict__["_pond_tree"] = STRtree([g for g, _ in spd])
+        wm = float(getattr(comp, "small_pond_warn_m", 0.0) or 0.0)
+        for i in range(1, n - 2):
+            seg = LineString([pts[i], pts[i + 1]])
+            for j in ptree.query(seg.buffer(max(wm, 0.01))):
+                if spd[j][0].distance(seg) < wm + 1e-6:
+                    towers[i].warnings.append(f"small_pond_spanned:{spd[j][1]}")
     # road structures with no NH / SH on them (Vivek, 17 Oct 2026): a warning to classify the structure
     us = getattr(comp, "unclassified_structures", None)
     if us:

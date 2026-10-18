@@ -82,7 +82,7 @@ for r in L.run_layers(RUN):
     layers[r['layer_key']] = g.reset_index(drop=True)
 # small rivers (16 Oct 2026): reaches narrower than 50 m across the channel are a separate canal-like rule. A point is
 # in a wide reach when a 50 m disc fits in the polygon round it; shaved corner slivers of a wide reach stay wide.
-SMALL_RIVER_W = 50.0
+SMALL_RIVER_W = 150.0   # 18 Oct 2026: narrow river < 150 m (was the < 50 m small river)
 if layers.get('river') is not None:
     _wide, _narrow = [], []
     _r = SMALL_RIVER_W / 2.0 - 0.01
@@ -108,6 +108,14 @@ if layers.get('river') is not None:
         return df.set_geometry(gpd.GeoSeries([gm for _, gm in rows], crs=EPSG))
     layers['river'], layers['small_river'] = _gdf(_wide), _gdf(_narrow)
     layer_notes.append(f"river: {len(_narrow)} feature(s) with reaches narrower than {SMALL_RIVER_W:.0f} m -> small_river rule")
+# small ponds (18 Oct 2026): polygons of at most 1 ha may be spanned (tower buffer kept, wire may pass over; warning)
+SMALL_POND_HA = 1.0
+if layers.get('pond') is not None:
+    _pa = layers['pond'].area.values
+    _sm = layers['pond'].geometry.geom_type.isin(['Polygon', 'MultiPolygon']).values & (_pa > 0) & (_pa <= SMALL_POND_HA * 1e4 + 1e-6)
+    layers['pond_small'] = layers['pond'][_sm].reset_index(drop=True)
+    layers['pond'] = layers['pond'][~_sm].reset_index(drop=True)
+    layer_notes.append(f"pond: {int(_sm.sum())} pond(s) of at most {SMALL_POND_HA:g} ha -> spannable (tower buffer only)")
 for k in ('defence', 'monuments', 'lulc'):
     if k not in layers:
         layer_notes.append(f"{k}: no layer in this run (rule cannot be checked)")
@@ -194,6 +202,7 @@ TOWER_SETBACKS = [
     ('reservoir', 'reservoir', None, 200.0),
     ('lake', 'lake', None, 'CHW'),
     ('pond', 'pond', None, 30.0),
+    ('pond', 'pond_small', None, 30.0),   # 18 Oct 2026: ponds <= 1 ha keep the tower buffer only
     ('other_water', 'other_water', ['beach', 'coral_reef', 'lagoon', 'mud_flat', 'salt_marsh', 'mangrove', 'detected_water', 'marine_buffer'], 0.0),
     ('protected_areas', 'national_park', None, 0.0),
     ('protected_areas', 'wildlife_sanctuary', None, 0.0),
@@ -210,7 +219,7 @@ TOWER_SETBACKS = [
     ('state_highway', 'roads', ['sh'], 87.0),
     ('bridges', 'bridges', ['road_bridge', 'rail_bridge', 'flyover', 'underpass'], 0.0),
     ('river', 'river', None, 150.0),
-    ('small_river', 'small_river', None, 30.0),   # 16 Oct 2026: 30 m from the banks
+    ('small_river', 'small_river', None, 150.0),  # 18 Oct 2026: narrow river, 150 m from the banks
     ('canal', 'canal', None, 45.0),          # 17 Oct 2026: the only canal rule, 45 m from the centreline
     ('nalla', 'nalla', None, 40.0),          # 16 Oct 2026: the only nalla rule
     ('power_line', 'power', ['power_tower'], 72.5),
@@ -388,9 +397,9 @@ def min_type_for(rule, kv=None):
 LONG_SPAN_RULES = {'river', 'national_highway', 'pipeline_crossing'}
 ANGLE_MIN = {'railway': 80.0, 'national_highway': 80.0, 'state_highway': 60.0, 'bridges': 80.0, 'river': 75.0,
              'pipeline_crossing': 75.0, 'power_line': 70.0, 'power_line_lt': 70.0, 'small_river': None}
-SIDE_MIN = {'railway': 86.0, 'national_highway': 92.5, 'state_highway': 87.0, 'river': 150.0, 'small_river': 30.0,
+SIDE_MIN = {'railway': 86.0, 'national_highway': 92.5, 'state_highway': 87.0, 'river': 150.0, 'small_river': 150.0,
             'pipeline_crossing': 30.0}
-MAX_SPAN = {'railway': RAIL_SPAN, 'state_highway': 400.0, 'small_river': 400.0}
+MAX_SPAN = {'railway': RAIL_SPAN, 'state_highway': 400.0}   # narrow river: the ordinary maximum (18 Oct 2026)
 SH_BAND = (240.0, 260.0)           # 16 Oct 2026: SH crossing span without an approval record
 NO_DEV_LIMIT = {'small_river'}     # no turn limit at the crossing towers
 
@@ -620,6 +629,16 @@ if _ixc.tree is not None:
             if CLUSTER_BREACH_MIN - TOL <= dist < CLUSTER_NORMAL - TOL:
                 add('span', s_['a'], 'clusters', 'cluster_breach', dist, CLUSTER_NORMAL, severity='warning',
                     feature=fname(_ixc.g, j), span=(s_['a'], s_['b']), note='allowed down to 100 m at a search cost (18 Oct 2026)')
+
+# small ponds spanned (warnings)
+_ixp = idx('pond_small')
+if _ixp.tree is not None:
+    for si, s_ in enumerate(S):
+        if si == 0 or si == len(S) - 1:
+            continue
+        for dist, j in _ixp.within(span_lines[si], 30.0):
+            add('span', s_['a'], 'pond', 'small_pond_spanned', dist, 30.0, severity='warning', feature=fname(_ixp.g, j),
+                span=(s_['a'], s_['b']), note='pond of at most 1 ha spanned in one span (18 Oct 2026)')
 
 # ----------------------------------------------------------------------------------------------- 4. deflection, types, wind span, hilly, sections
 SPAN_SUM = {

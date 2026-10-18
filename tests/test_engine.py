@@ -1294,33 +1294,60 @@ def test_nalla_is_a_tower_setback_only():
     assert not [vr for vr in comp.conductor_nogo if vr.rule_id == "nalla"]
 
 
-def test_river_has_no_parallel_buffer_and_small_reaches_are_canal_like():
-    """Vivek, 16 Oct 2026: no parallel buffer along rivers; a reach narrower than 50 m across the channel is a
-    small river (towers 30 m from the banks, any angle, ordinary types, no turn limit, 400 m span max); the
-    wide reach keeps the river rule (150 m from the banks); exactly 50 m wide stays a river."""
+def test_river_has_no_parallel_buffer_and_narrow_reaches_are_canal_like():
+    """Vivek, 16 Oct 2026: no parallel buffer along rivers. 18 Oct 2026: a reach narrower than 150 m across the channel
+    is a narrow river — the 150 m bank buffer stays, crossed like a canal (any angle, ordinary types, no turn limit,
+    no long span); the wider reach keeps the river rule; exactly 150 m wide stays a river."""
     f = frame()
     c = f.length_m / 2
-    wide = box(c - 100, -2500, c + 100, 0)                 # 200 m wide
-    narrow = box(c - 15, 0, c + 15, 2500)                   # 30 m wide
-    fifty = box(c + 3000, -2500, c + 3050, 2500)            # exactly 50 m wide
-    g = gdf([frame_geom(f, wide.union(narrow)), frame_geom(f, fifty)], "river")
+    wide = box(c - 150, -2500, c + 150, 0)                  # 300 m wide
+    narrow = box(c - 50, 0, c + 50, 2500)                   # 100 m wide
+    edge = box(c + 3000, -2500, c + 3150, 2500)             # exactly 150 m wide
+    g = gdf([frame_geom(f, wide.union(narrow)), frame_geom(f, edge)], "river")
     comp, rules, _ = _comp16(f, {"river": g})
-    assert "small_river" in rules and rules["small_river"].params["max_span_m"] == 400
+    assert "small_river" in rules and "max_span_m" not in rules["small_river"].params
+    assert rules["small_river"].params["tower_setback_m"] == 150
     assert not comp.parallels
     small = [cr for cr in comp.crossings if cr.rule_id == "small_river"]
     big = [cr for cr in comp.crossings if cr.rule_id == "river"]
     assert small and big
-    assert all(cr.window is None and cr.min_type == "A" and cr.max_dev_deg is None and not cr.long_span for cr in small)
+    assert all(cr.window is None and cr.min_type == "A" and cr.max_dev_deg is None and not cr.long_span
+               and cr.max_span_m is None for cr in small)
     assert all(cr.max_dev_deg == 45 for cr in big)
     st = [vr for vr in comp.tower_nogo if vr.rule_id == "small_river"]
     rv = [vr for vr in comp.tower_nogo if vr.rule_id == "river"]
-    assert st and abs(st[0].d - 30.0) < 1e-6 and rv and abs(rv[0].d - 150.0) < 1e-6
-    # beside the narrow reach, 60 m off its bank: only the small-river setback (30 m) applies, it is clear
-    assert not any(vr.hits(Point(c + 75, 1500)) for vr in st + rv)
-    assert any(vr.hits(Point(c + 140, -1500)) for vr in rv)          # beside the wide reach: 150 m holds
-    # the 50 m channel stays a river (150 m from its banks)
-    assert any(vr.hits(Point(c + 3050 + 140, 0)) for vr in rv)
-    assert not any(vr.hits(Point(c + 3050 + 140, 0)) for vr in st)
+    assert st and abs(st[0].d - 150.0) < 1e-6 and rv and abs(rv[0].d - 150.0) < 1e-6
+    assert any(vr.hits(Point(c + 50 + 140, 1500)) for vr in st)          # 140 m off the narrow reach's bank
+    assert not any(vr.hits(Point(c + 50 + 160, 1500)) for vr in st + rv)  # 160 m off it: clear
+    # the 150 m channel stays a river
+    assert any(vr.hits(Point(c + 3150 + 140, 0)) for vr in rv)
+    assert not any(vr.hits(Point(c + 3150 + 140, 0)) for vr in st)
+
+
+def test_small_ponds_are_spanned_with_a_warning():
+    """Vivek, 18 Oct 2026: a pond of at most 1 ha may be spanned in one span — towers keep 30 m from its edge, the wire
+    may pass over it, the span carries a warning; a larger pond keeps the 30 m conductor buffer."""
+    from beeline_engine.spotting import Checker, SpotParams, build_route
+    f = frame()
+    c = f.length_m / 2
+    small = frame_geom(f, box(c - 30, -30, c + 30, 30))                 # 0.36 ha, on the bee-line
+    large = frame_geom(f, box(c + 3000 - 75, -1000, c + 3000 + 75, -900))  # 1.5 ha, off the line
+    comp, rules, costs = _comp16(f, {"pond": gdf([small, large], "pond")})
+    pt = [vr for vr in comp.tower_nogo if vr.rule_id == "pond"]
+    pc = [vr for vr in comp.conductor_nogo if vr.rule_id == "pond"]
+    assert any(vr.hits(Point(c + 55, 0)) for vr in pt) and not any(vr.hits(Point(c + 65, 0)) for vr in pt)
+    assert not any(vr.hits(LineString([(c - 200, 0), (c + 200, 0)])) for vr in pc)            # wire over the small pond
+    assert any(vr.hits(LineString([(c + 2800, -950), (c + 3200, -950)])) for vr in pc)        # the large one: buffered
+    assert len(comp.small_ponds) == 1 and comp.small_pond_warn_m == 30
+    tc = {t: costs["towers"][t]["price_rs"] for t in TOWER_TYPES}
+    sp = SpotParams(design_span_m=400, span_max_m=400, min_span_m=100, max_dev_deg=60,
+                    type_bands={"A": 2, "B1": 15, "C1": 30, "D45": 45, "D60": 60}, section_km=5, parallel_angle_deg=30,
+                    tower_cost_rs=tc, ground_clearance_m=18.15, lowest_attachment_m=32.6, sag_at_design_m=14.278, go_radius_m=150)
+    chk = Checker(comp, sp)
+    assert chk.conductor_ok((c - 200, 0.0), (c + 200, 0.0))
+    pts = [(0.0, 0.0), (c - 600, 0.0), (c - 200, 0.0), (c + 200, 0.0), (c + 600, 0.0), (f.length_m, 0.0)]
+    sr = build_route(chk, pts, set(), sp)
+    assert any(w.startswith("small_pond_spanned") for w in sr.towers[2].warnings)
 
 
 def test_power_crossings_above_66_kv_take_d_towers():

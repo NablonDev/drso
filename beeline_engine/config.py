@@ -148,11 +148,14 @@ def _small_river(out: dict) -> None:
     w = float(rv.params["small_width_m"])
     from dataclasses import replace
     out["river"] = replace(rv, params={**rv.params, "_width_part": "wide", "_width_m": w})
+    sp_ = {"tower_setback_m": float(rv.params.get("small_tower_setback_m", 150)), "angle_deg": "Any",
+           "tower_type": "A/B/C/D", "_width_part": "narrow", "_width_m": w}
+    if rv.params.get("small_max_span_m"):
+        sp_["max_span_m"] = float(rv.params["small_max_span_m"])
+    # Vivek, 18 Oct 2026: narrow river (< 150 m), no crossing span limit of its own: the ordinary maximum applies
     out["small_river"] = replace(
-        rv, id="small_river", name=f"Small river (narrower than {w:g} m)",
-        params={"tower_setback_m": float(rv.params.get("small_tower_setback_m", 30)), "angle_deg": "Any",
-                "max_span_m": float(rv.params.get("small_max_span_m", 400)), "tower_type": "A/B/C/D",
-                "_width_part": "narrow", "_width_m": w},
+        rv, id="small_river", name=f"Narrow river (narrower than {w:g} m)",
+        params=sp_,
         overridden=[k for k in rv.overridden if k.startswith("small_")])
 
 

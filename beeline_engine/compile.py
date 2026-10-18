@@ -175,6 +175,9 @@ class Compiled:
     breach_rs: float = 0.0                      # ₹ search cost per breached span
     breach_normal_m: float = 0.0
     breach_geoms: list = field(default_factory=list)   # [(frame geometry, label)] of the clusters
+    # small ponds (Vivek, 18 Oct 2026): spanned in one span, towers keep their buffer; a span over / near one is warned
+    small_ponds: list = field(default_factory=list)    # [(frame geometry, label)]
+    small_pond_warn_m: float = 0.0
     near_existing: np.ndarray | None = None  # bool raster: within reach of an existing line (search discount)
     # last-resort relaxations taken in this compile: (VecRule of what was opened, approval months, label)
     relaxed_items: list = field(default_factory=list)
@@ -304,6 +307,24 @@ class _Rasterizer:
                 hi = kv.isna() | (kv >= min_kv)
                 self.layers[key] = g[hi] if at_least else g[~hi]
             self.base_layer[key] = self.base_layer.get(layer, layer)
+        return key
+
+    def area_part(self, layer: str, max_area_m2: float, part: str) -> str:
+        """Key of a copy of `layer` holding only its polygons of at most max_area_m2 ("small") or the rest ("large";
+        features without an outline — points, lines — have no area and count as large). Vivek, 18 Oct 2026: ponds."""
+        key = f"{layer}|area{'<=' if part == 'small' else '>'}{max_area_m2:g}"
+        if key in self.layers:
+            return key
+        g = self.layers.get(layer)
+        if g is None or not len(g):
+            self.layers[key] = None
+        else:
+            a = g.to_crs(self.frame.epsg).area.values
+            poly = g.geometry.geom_type.isin(["Polygon", "MultiPolygon"]).values & (a > 0)
+            small = poly & (a <= max_area_m2 + 1e-6)
+            sub = g[small] if part == "small" else g[~small]
+            self.layers[key] = sub if len(sub) else None
+        self.base_layer[key] = self.base_layer.get(layer, layer)
         return key
 
     def width_part(self, layer: str, width_m: float, part: str) -> str:
@@ -808,6 +829,8 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
     crossings: list[CrossingRaster] = []
     parallels: list[ParallelRaster] = []
     breach: dict = {"band": None, "rs": 0.0, "normal": 0.0, "geoms": []}
+    small_ponds: list = []
+    small_pond_warn: dict = {"m": 0.0}
     tol = single_angle_tol_deg
 
     for r in rules.values():
@@ -850,6 +873,26 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
                                 breach["geoms"].append((g_, str(row_.get("src_id") or row_.get("name") or "cluster")))
                 p = {**p, "tower_setback_m": min(float(p.get("tower_setback_m", 0) or 0), bmin),
                      "conductor_buffer_m": min(float(p.get("conductor_buffer_m", 0) or 0), bmin)}
+        if r.id == "pond" and p.get("small_max_area_ha"):
+            # small ponds (Vivek, 18 Oct 2026): at most small_max_area_ha may be spanned — towers keep the tower buffer,
+            # no conductor buffer, a warning on the span; the rest of the rule applies to the larger ponds
+            amax = float(p["small_max_area_ha"]) * 1e4
+            sk = R.area_part(r.layer, amax, "small")
+            sdist = R.dist(sk, r.classes)
+            if sdist is not None:
+                sd = float(p.get("tower_setback_m", 0) or 0)
+                add(_within(sdist, sd), tower_forbidden, r.id)
+                vec(tower_geoms, r.id, sk, r.classes, sd)
+                fg = R.frame_geoms(sk, r.classes)
+                sub_ = R.subset(sk, r.classes)
+                if fg is not None and sub_ is not None:
+                    au = sub_.to_crs(frame.epsg).area.values
+                    for g_, (_, row_), a_ in zip(fg, sub_.iterrows(), au):
+                        if g_ is not None and not g_.is_empty:
+                            small_ponds.append((g_, f"{row_.get('src_id') or 'pond'} {a_ / 1e4:.2f}ha"))
+                small_pond_warn["m"] = float(p.get("conductor_buffer_m", 0) or 0)
+            from dataclasses import replace as _replace
+            r = _replace(r, layer=R.area_part(r.layer, amax, "large"))
         if p.get("_width_part"):
             # river / small river (Vivek, 16 Oct 2026): each rule reads its own reaches of the river polygons
             from dataclasses import replace as _replace
@@ -1407,7 +1450,7 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
                     precedent_items=list(precedent_items.values()), near_existing=near_existing,
                     unclassified_structures=unclassified,
                     breach_band=breach["band"], breach_rs=breach["rs"], breach_normal_m=breach["normal"],
-                    breach_geoms=breach["geoms"])
+                    breach_geoms=breach["geoms"], small_ponds=small_ponds, small_pond_warn_m=small_pond_warn["m"])
 
 
 def _airport_zone(R: "_Rasterizer", frame: Frame, layer: str, classes, d: float, funnel_m: float):

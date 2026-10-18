@@ -208,12 +208,13 @@ groups:
 
       - id: pond
         name: "Pond"
-        note: "Rule_Table 41-42: 30 m tower and conductor buffer; crossing as last resort (6 months)"
+        note: "Rule_Table 41-42: 30 m tower and conductor buffer; crossing as last resort (6 months). Vivek, 18 Oct 2026: a pond of at most 1 ha may be spanned in one span — towers keep the 30 m buffer from its edge, the conductor may pass over it — and the span is flagged as a warning; larger ponds and ponds without an outline (points / lines, no area) keep the full rule"
         layer: pond
         mechanism: nogo
         params:
           - {key: tower_setback_m, label: "Tower buffer", type: num, unit: m, value: 30}
           - {key: conductor_buffer_m, label: "Conductor buffer", type: num, unit: m, value: 30}
+          - {key: small_max_area_ha, label: "Small pond (spanned, towers keep the buffer): area up to", type: num, unit: ha, value: 1.0}
           - {key: treatment, label: "Treatment", type: sel, value: "Last resort", options: ["No-Go", "Last resort", "Allowed"]}
           - {key: last_resort_towers_inside, label: "Last resort: towers inside (piles)", type: sel, value: "No", options: ["Yes", "No"]}
           - {key: approval_months, label: "Approval time if crossed", type: num, unit: months, value: 6}
@@ -393,7 +394,7 @@ groups:
 
       - id: river
         name: "River"
-        note: "Rule_Table 37-38: 150 m tower buffer from the banks, 90°, major (≥ 600 m wide) D, minor A, B or C; the longest span follows the TSD span tables. Vivek, 16 Oct 2026: no parallel conductor buffer; a reach narrower than 50 m (measured across the channel, from the river polygon) is a small river: towers 30 m from its banks, any crossing angle, ordinary tower types, no crossing-tower turn limit, the ordinary span maximum (400 m); exactly 50 m stays a river"
+        note: "Rule_Table 37-38: 150 m tower buffer from the banks, 90°, major (≥ 600 m wide) D, minor A, B or C; the longest span follows the TSD span tables. Vivek, 16 Oct 2026: no parallel conductor buffer; a reach narrower than 50 m (measured across the channel, from the river polygon) is a small river: towers 30 m from its banks, any crossing angle, ordinary tower types, no crossing-tower turn limit, the ordinary span maximum (400 m); exactly 50 m stays a river. Vivek, 18 Oct 2026: replaced by the narrow river — a reach narrower than 150 m keeps the 150 m bank buffer and is crossed like a canal (any angle, ordinary types, no turn limit, no long span: the ordinary maximum); exactly 150 m stays a river"
         layer: river
         mechanism: crossing
         params:
@@ -406,10 +407,11 @@ groups:
           - {key: major_threshold_m, label: "Major crossing threshold", type: num, unit: m, value: 600}
           - {key: major_tower_type, label: "Major tower type", type: sel, value: "D", options: ["B", "C", "D", "B/C/D"]}
           - {key: tower_type, label: "Minor tower type", type: sel, value: "A/B/C", options: ["A/B/C", "B", "C", "D", "B/C/D"]}
-          # small rivers (Vivek, 16 Oct 2026): any angle, ordinary tower types, no turn limit at the crossing towers
-          - {key: small_width_m, label: "Small river: narrower than", type: num, unit: m, value: 50}
-          - {key: small_tower_setback_m, label: "Small river: tower buffer from the banks", type: num, unit: m, value: 30}
-          - {key: small_max_span_m, label: "Small river: max crossing span", type: num, unit: m, value: 400}
+          # narrow rivers (Vivek, 18 Oct 2026; replaces the < 50 m small-river rule of 16 Oct): a reach narrower than
+          # this keeps the bank buffer and is crossed like a canal — any angle, ordinary tower types, no turn limit at
+          # the crossing towers, no long span (the ordinary span maximum)
+          - {key: small_width_m, label: "Narrow river: narrower than", type: num, unit: m, value: 150}
+          - {key: small_tower_setback_m, label: "Narrow river: tower buffer from the banks", type: num, unit: m, value: 150}
 
       - id: canal
         name: "Canal"
