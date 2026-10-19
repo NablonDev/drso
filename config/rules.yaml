@@ -148,6 +148,10 @@ groups:
           - {key: terminal_yard_radius_m, label: "Terminal yard: substation within", type: num, unit: m, value: 150}
           - {key: gantry_min_span_m, label: "Gantry to first / last tower, at least", type: num, unit: m, value: 100}
           - {key: dead_end_max_dev_deg, label: "Max deviation at the dead-end tower", type: num, unit: "°", value: 15}
+          # Vivek, 19 Oct 2026: the dead-end tower stands exactly this far from the gantry point, on the line square to the
+          # terminal substation's face (the substation polygon edge nearest the gantry); 0 = anywhere at least the gantry span
+          - {key: dead_end_distance_m, label: "Dead-end tower: exactly this far from the gantry (0 = free)", type: num, unit: m, value: 100}
+          - {key: dead_end_square, label: "Gantry span square (90°) to the substation face", type: sel, value: "Yes", options: ["Yes", "No"]}
 
       - id: dams
         name: "Dams"

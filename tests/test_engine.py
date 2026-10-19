@@ -1662,3 +1662,22 @@ def test_reference_lines_never_affect_a_route():
     b = run_solve(solve_input({"clusters": gdf([village], "builtup_cluster"), "reference_lines": ref}))["routes"][0]
     assert a["cost"]["total"] == b["cost"]["total"] and len(a["towers"]) == len(b["towers"])
     assert not any("Proposed line" in e.get("text", "") for e in b["events"])
+
+
+def test_square_dead_end_point():
+    """Vivek, 19 Oct 2026: the dead-end tower stands the set distance from the gantry, square to the terminal
+    substation's nearest face, outside the substation."""
+    from shapely.geometry import Point, box
+    from beeline_engine.pipeline import square_dead_end
+    yard = box(-60, -40, 20, 40)                        # gantry at (0, 0) inside, nearest face x = 20
+    (x, y), h = square_dead_end(yard, (0.0, 0.0), 100.0)
+    assert abs(x - 100.0) < 1e-6 and abs(y) < 1e-6 and abs(h) < 1e-6
+    assert not yard.contains(Point(x, y))
+    yard_b = box(1005, -30, 1100, 30)                   # gantry B at (1000, 0), 5 m outside the face x = 1005
+    (xb, yb), hb = square_dead_end(yard_b, (1000.0, 0.0), 100.0)
+    assert abs(xb - 900.0) < 1e-6 and abs(yb) < 1e-6 and abs(abs(hb) - 180.0) < 1e-6
+    assert square_dead_end(None, (0.0, 0.0), 100.0) is None
+    assert square_dead_end(yard, (5000.0, 0.0), 100.0) is None   # a substation 5 km away is not this gantry's
+    deep = box(-600, -350, 100, 350)                    # gantry 100 m inside the fence: moved out just clear of yard + 10 m
+    (xd, yd), _ = square_dead_end(deep, (0.0, 0.0), 100.0, 10.0)
+    assert 110.0 < xd <= 112.0 and abs(yd) < 1e-6

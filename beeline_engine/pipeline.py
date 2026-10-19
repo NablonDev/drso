@@ -143,6 +143,49 @@ def _source(it: dict | None, layers: dict[str, LayerInput]) -> dict | None:
 REFERENCE_ONLY_LAYERS = {"reference_lines"}     # comparison only: never compiled, never cited (Vivek, 18 Oct 2026)
 
 
+def square_dead_end(yards, E, dist_m: float, clear_m: float = 0.0, max_dist_m: float = 150.0):
+    """The dead-end tower position for the gantry at E (frame coords): dist_m from E along the outward normal of
+    the terminal substation polygon's edge nearest E, i.e. the gantry span leaves the substation at 90° to its face
+    (Vivek, 19 Oct 2026). Returns ((x, y), heading_deg) or None when no yard polygon lies near E."""
+    if yards is None or yards.is_empty:
+        return None
+    polys = []
+    for g in getattr(yards, "geoms", [yards]):
+        polys.extend(getattr(g, "geoms", [g]) if g.geom_type == "MultiPolygon" else [g])
+    polys = [g for g in polys if g.geom_type == "Polygon" and not g.is_empty]
+    if not polys:
+        return None
+    P = Point(E)
+    poly = min(polys, key=lambda g: g.distance(P))
+    if poly.distance(P) > max_dist_m:
+        return None                           # this gantry has no terminal substation of its own
+    ring = list(poly.exterior.coords)
+    best = None
+    for (x0, y0), (x1, y1) in zip(ring[:-1], ring[1:]):
+        seg = LineString([(x0, y0), (x1, y1)])
+        if seg.length < 1e-6:
+            continue
+        d = seg.distance(P)
+        if best is None or d < best[0]:
+            best = (d, (x0, y0), (x1, y1), seg)
+    if best is None:
+        return None
+    _, (x0, y0), (x1, y1), seg = best
+    ux, uy = (x1 - x0) / seg.length, (y1 - y0) / seg.length
+    mx, my = (x0 + x1) / 2, (y0 + y1) / 2
+    n = (-uy, ux)
+    if poly.contains(Point(mx + n[0], my + n[1])):
+        n = (uy, -ux)                         # outward: away from the substation
+    # no tower may stand inside the yard (or its gantry buffer): a gantry deeper than dist_m inside the fence moves the
+    # dead end out along the same square line, just clear of it
+    d = dist_m
+    keep_out = yards.buffer(clear_m) if clear_m > 0 else yards
+    while keep_out.intersects(Point(E[0] + d * n[0], E[1] + d * n[1])) and d < dist_m + 1000:
+        d += 1.0
+    xy = (E[0] + d * n[0], E[1] + d * n[1])
+    return xy, math.degrees(math.atan2(n[1], n[0]))
+
+
 def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
     t_start = time.time()
     timings = {}
@@ -313,6 +356,29 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
     if tsd is not None and _sub.get("dead_end_max_dev_deg") is not None:
         tsd = {**tsd, "dead_end_max_dev_deg": float(_sub["dead_end_max_dev_deg"])}   # Vivek, 13 Oct 2026: 15°
     gantry_min = float(_sub.get("gantry_min_span_m", 30) or 30)
+    # fixed dead ends (Vivek, 19 Oct 2026): exactly dead_end_distance_m from the gantry, square to the terminal substation's face
+    de_dist = float(_sub.get("dead_end_distance_m", 0) or 0)
+    de_square = str(_sub.get("dead_end_square", "No")) == "Yes"
+    dead_end_info: dict = {}
+    de_a = de_b = None
+    if de_dist > 0 and de_square:
+        for key, E in (("a", (0.0, 0.0)), ("b", (frame.length_m, 0.0))):
+            pt = square_dead_end(comp.terminal_yards, E, de_dist, float(_sub.get("gantry_buffer_m", 10) or 0), yard_radius)
+            if pt is None:
+                dead_end_info[key] = {"fixed": False, "why": "no terminal substation polygon within the yard radius"}
+                log.warning("dead end at %s: no terminal substation polygon, position left free", key.upper())
+                continue
+            xy, heading = pt
+            lon, lat = frame.frame_to_lonlat(xy[0], xy[1])
+            got = math.hypot(xy[0] - E[0], xy[1] - E[1])
+            if got > de_dist + 0.5:
+                log.warning("dead end at %s: %.0f m from the gantry (the substation fence is further than %.0f m)", key.upper(), got, de_dist)
+            dead_end_info[key] = {"fixed": True, "distance_m": round(got, 1), "rule_m": de_dist, "heading_deg": round(heading, 2),
+                                  "lonlat": [round(float(lon), 7), round(float(lat), 7)]}
+            if key == "a":
+                de_a = xy
+            else:
+                de_b = xy
     ext_max_abc = max(tsd["extensions_m"]["C1"]) if tsd else 18.0      # A/B/C reach +6 m; D goes further
     # closest-step extensions (Vivek, 9 Oct 2026): rounding tolerances for the search
     if tsd:
@@ -358,10 +424,12 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
                         dead_end_max_dev_deg=float(tsd["dead_end_max_dev_deg"]) if tsd and tsd.get("dead_end_max_dev_deg") else None,
                         approach_length_m=ap_len, approach_span_m=ap_span, proximity_discount=prox_disc,
                         proximity_tower_discount=prox_tdisc, gantry_min_span_m=gantry_min,
+                        dead_end_a=de_a, dead_end_b=de_b,
                         ext_zero_tol_m=ext_zero_tol, ext_round_tol_m=ext_round_tol,
                         crossing_dev_max_deg=_crossing_dev_cap(rules))
     sp = SpotParams(design_span_m=design, span_max_m=smax_search, plain_span_max_m=smax, excess_span_rs_per_m=excess_rs_m,
                     raster_prefilter=bool(eng["grid"].get("raster_prefilter", True)), gantry_min_span_m=gantry_min,
+                    dead_end_a=de_a, dead_end_b=de_b,
                     min_span_m=float(rules["crossing_span_limits"].params["min_span_m"]),
                     max_dev_deg=max_dev, type_bands=bands,
                     section_km=float(rules["section_interval"].params["plain_km"]),
@@ -726,12 +794,12 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
         _drop_edge_caches([comp] + list(relaxed_box.values()))
         return {"feasible": False, "blocked": blocked_first, "routes": [], "events_global": global_events,
                 "timings": {**timings, "total_s": round(time.time() - t_start, 2)},
-                "frame": _frame_info(frame), "rules_fired": comp.rules_fired}
+                "frame": _frame_info(frame), "rules_fired": comp.rules_fired, "dead_ends": dead_end_info}
     prog(1.0, "Done")
     timings["total_s"] = round(time.time() - t_start, 2)
     _drop_edge_caches([comp] + list(relaxed_box.values()))
     return {"feasible": True, "routes": routes, "events_global": global_events, "timings": timings,
-            "frame": _frame_info(frame), "rules_fired": comp.rules_fired, "hill_areas": _hill_geojson(comp),
+            "frame": _frame_info(frame), "rules_fired": comp.rules_fired, "dead_ends": dead_end_info, "hill_areas": _hill_geojson(comp),
             "line": {"kv": inp.kv, "circuit": inp.circuit, "half_width_m": hw, "design_span_m": design,
                      "span_min_m": smin, "span_max_m": smax}}
 

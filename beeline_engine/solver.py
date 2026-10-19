@@ -97,6 +97,10 @@ class SolverParams:
     edge_cache_limit_bytes: float = 8e9        # GPU bytes the edge-geometry cache may take (11 Oct 2026)
     crossing_dev_max_deg: float | None = None  # deviation cap at the two towers of a crossing span (Vivek, 13 Oct 2026)
     gantry_min_span_m: float = 30.0            # gantry to the first / last tower, at least (Vivek, 13 Oct 2026: 100 m)
+    # fixed dead-end tower positions (frame coords) at A and B — square to the substation face, at the set distance
+    # (Vivek, 19 Oct 2026); None = the dead end may stand anywhere the gantry span allows
+    dead_end_a: tuple | None = None
+    dead_end_b: tuple | None = None
     proximity_tower_discount: float = 0.0      # search-only discount on towers near existing lines (Vivek, 13 Oct 2026)
 
 
@@ -666,6 +670,13 @@ def gantry_seeds(compiled: Compiled, grid: Grid, p: SolverParams, S_np: np.ndarr
     rs = np.arange(grid.nr)
     ys = (rs - grid.r0) * grid.sy
     row_sel = np.nonzero(np.abs(ys) <= reach)[0]
+    fixed = p.dead_end_b if at_end else p.dead_end_a
+    if fixed is not None:
+        # the dead end has a fixed position (19 Oct 2026): only the lattice sites next to it may seed; spotting puts the
+        # tower exactly on the point
+        # (one site spacing round it: the nearest site can fall on a fence or setback the point itself clears)
+        col_sel = np.nonzero(np.abs(xs - fixed[0]) <= grid.sx + 1e-6)[0]
+        row_sel = np.nonzero(np.abs(ys - fixed[1]) <= grid.sy + 1e-6)[0]
     cross = [np.nan_to_num(cr.angle, nan=-1.0) for cr in compiled.crossings]
     for c in col_sel:
         for r in row_sel:
@@ -673,7 +684,7 @@ def gantry_seeds(compiled: Compiled, grid: Grid, p: SolverParams, S_np: np.ndarr
                 continue
             x, y = xs[c], ys[r]
             L = math.hypot(x - ex, y)
-            if L < p.gantry_min_span_m or L > reach:
+            if fixed is None and (L < p.gantry_min_span_m or L > reach):
                 continue
             n = max(2, int(math.ceil(L / (f.res_m / 2))) + 1)
             t = np.linspace(0, 1, n)
@@ -807,7 +818,10 @@ def solve(compiled: Compiled, p: SolverParams, cancel_check=None, progress=None,
             reach[c] = torch.isfinite(V).any()
         if c in end_cols:
             if p.dead_end_max_dev_deg is not None:
-                hs = torch.rad2deg(torch.atan2(-ys_t, torch.full_like(ys_t, max(compiled.frame.length_m - c * grid.sx, 1.0)))).view(R, 1)
+                if p.dead_end_b is not None:      # the gantry span runs square to the substation face (19 Oct 2026)
+                    hs = torch.full((R, 1), math.degrees(math.atan2(-p.dead_end_b[1], compiled.frame.length_m - p.dead_end_b[0])), device=ys_t.device, dtype=ys_t.dtype)
+                else:
+                    hs = torch.rad2deg(torch.atan2(-ys_t, torch.full_like(ys_t, max(compiled.frame.length_m - c * grid.sx, 1.0)))).view(R, 1)
                 dev_ok = (head_t.view(1, K) - hs).abs() <= p.dead_end_max_dev_deg + 1e-6
                 Vend = torch.where(dev_ok, V, torch.full_like(V, INF))
             else:
@@ -849,7 +863,10 @@ def solve(compiled: Compiled, p: SolverParams, cancel_check=None, progress=None,
         if p.dead_end_max_dev_deg is not None:
             # TSD note J: the first dead-end tower turns at most dead_end_max_dev_deg between the
             # gantry slack span and the line
-            hs = torch.rad2deg(torch.atan2(ys_t[rw], torch.full_like(ys_t[rw], max(c * grid.sx, 1.0)))).view(Rw, 1)
+            if p.dead_end_a is not None:          # the gantry span runs square to the substation face (19 Oct 2026)
+                hs = torch.full((Rw, 1), math.degrees(math.atan2(p.dead_end_a[1], p.dead_end_a[0])), device=ys_t.device, dtype=ys_t.dtype)
+            else:
+                hs = torch.rad2deg(torch.atan2(ys_t[rw], torch.full_like(ys_t[rw], max(c * grid.sx, 1.0)))).view(Rw, 1)
             dev_ok = (head_t.view(1, K) - hs).abs() <= p.dead_end_max_dev_deg + 1e-6
             seed = torch.where(dev_ok, seed, torch.full_like(seed, INF))
         use_seed = seed < Mw

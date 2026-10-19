@@ -60,6 +60,8 @@ class SpotParams:
     cost_polish: bool = True               # final single-tower cost descent (14 Oct 2026)
     raster_prefilter: bool = True         # skip the vector tower rules in clearly free cells (11 Oct 2026)
     gantry_min_span_m: float = 0.0        # gantry to first / last tower, at least (Vivek, 13 Oct 2026)
+    dead_end_a: tuple | None = None       # fixed dead-end positions (frame coords), square to the substation face (19 Oct 2026)
+    dead_end_b: tuple | None = None
     refine_crossings: bool = True         # fine local re-optimisation round power-line crossings (14 Oct 2026)
     refine_step_m: float = 10.0
     # hilly terrain (rules design_span.hilly_m, section_interval.hilly_km; engine hilly_slope_deg)
@@ -998,6 +1000,19 @@ def pull_string(chk: Checker, grid_pts: list[tuple[float, float]], sp: SpotParam
     return aps, towers
 
 
+def _pin_dead_ends(pts: list, sp: SpotParams) -> list:
+    """Put the first and last towers on their fixed points (Vivek, 19 Oct 2026: the dead-end tower stands exactly
+    dead_end_distance_m from the gantry, square to the substation face)."""
+    if len(pts) < 4 or (sp.dead_end_a is None and sp.dead_end_b is None):
+        return pts
+    pts = list(pts)
+    if sp.dead_end_a is not None:
+        pts[1] = (float(sp.dead_end_a[0]), float(sp.dead_end_a[1]))
+    if sp.dead_end_b is not None:
+        pts[-2] = (float(sp.dead_end_b[0]), float(sp.dead_end_b[1]))
+    return pts
+
+
 def _tsd_leg_ok(chk: Checker, sp: SpotParams, prev, start, inner, q, is_last: bool) -> bool:
     """A straightened leg must keep the TSD limits the search kept: the dead-end turn at the first
     and last towers (≤ dead_end_max_dev_deg against the gantry slack span), and at the leg's start
@@ -1066,6 +1081,7 @@ def build_route(chk: Checker, pts: list[tuple[float, float]], angle_set: set[int
     comp = chk.c
     added = set()
     pts = _snap_to_legal(chk, pts, sp)
+    pts = _pin_dead_ends(pts, sp)
     pts = _crossing_span_fix(chk, pts, sp)
     if sp.refine_crossings and angle_set is None:      # the final, string-pulled alignment
         pts = _refine_crossings(chk, pts, sp)
@@ -1093,6 +1109,7 @@ def build_route(chk: Checker, pts: list[tuple[float, float]], angle_set: set[int
                   "vertex_moves": v_moves, "vertex_saved_cr": round(v_saved / 1e7, 3),
                   "respot_runs": r_moves, "respot_saved_cr": round(r_saved / 1e7, 3),
                   "bend_straighten_moves": b_moves, "bend_straighten_saved_cr": round(b_saved / 1e7, 3)}
+    pts = _pin_dead_ends(pts, sp)            # every pass above works round them; this keeps them exact
     added = {k for k, pt in enumerate(pts) if pt in added_pts}
     towers: list[Tower] = []
     n = len(pts)
