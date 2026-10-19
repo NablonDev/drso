@@ -473,6 +473,10 @@ groups:
           - {key: preferred_angle_deg, label: "Preferred crossing angle", type: num, unit: "°", value: 90}
           - {key: preferred_angle_tol_deg, label: "… tolerance", type: num, unit: "°", value: 5}
           - {key: angle_deg, label: "Allowed crossing angle", type: rng, unit: "°", value: [70, 110]}
+          # restored 19 Oct 2026 (Vivek): the crossing span cap of 10 Oct, dropped on 13 Oct when the crossing-tower window
+          # came in on the belief that the window bounds the span — it does not (the window is relaxable at a search cost;
+          # 376-434 m crossings came through). Both apply: the window places the towers, this caps the span.
+          - {key: max_span_m, label: "Max crossing span", type: num, unit: m, value: 350}
           - {key: angle_min_kv, label: "Crossing angle applies from", type: num, unit: kV, value: 66}
           # the two crossing towers stand 1.2-1.7 × our tower height from the crossed conductor, no more (72.5 m → 87-123 m)
           - {key: crossing_side_m, label: "Crossing tower to the crossed conductor, each side (min-max)", type: rng, unit: m, value: {765: [87, 123], 400: [66, 94], 220: [48, 68], 132: [38, 54]}}
@@ -520,6 +524,10 @@ groups:
           - {key: preferred_angle_deg, label: "Preferred crossing angle", type: num, unit: "°", value: 90}
           - {key: preferred_angle_tol_deg, label: "… tolerance", type: num, unit: "°", value: 5}
           - {key: angle_deg, label: "Allowed crossing angle", type: rng, unit: "°", value: [70, 110]}
+          # restored 19 Oct 2026 (Vivek): the crossing span cap of 10 Oct, dropped on 13 Oct when the crossing-tower window
+          # came in on the belief that the window bounds the span — it does not (the window is relaxable at a search cost;
+          # 376-434 m crossings came through). Both apply: the window places the towers, this caps the span.
+          - {key: max_span_m, label: "Max crossing span", type: num, unit: m, value: 350}
           - {key: angle_min_kv, label: "Crossing angle applies from", type: num, unit: kV, value: 66}
           # the two crossing towers stand 1.2-1.7 × our tower height from the crossed conductor, no more (72.5 m → 87-123 m)
           - {key: crossing_side_m, label: "Crossing tower to the crossed conductor, each side (min-max)", type: rng, unit: m, value: {765: [87, 123], 400: [66, 94], 220: [48, 68], 132: [38, 54]}}

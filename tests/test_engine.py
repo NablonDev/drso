@@ -1719,3 +1719,19 @@ def test_building_soft_zone_charges_each_building_once_and_is_off_by_default():
                     go_radius_m=150)
     extra = _chain_cost(comp, sp, chain, ["A"]) - _chain_cost(comp0, sp, chain, ["A"])
     assert abs(extra - (2.2e5 + 1e5 * 8.5)) < 2e4, extra
+
+
+def test_power_line_crossing_span_is_capped():
+    """19 Oct 2026 (Vivek): a span crossing an existing power line is at most the rule's max crossing span (350 m),
+    whatever the crossing-tower window allows."""
+    f = frame()
+    c = f.length_m / 2
+    wire = frame_geom(f, LineString([(c, -3000), (c, 3000)]))
+    tw = [frame_geom(f, Point(c, y)) for y in range(-3000, 3001, 400)]
+    g = gpd.GeoDataFrame({"class": ["power_line"] + ["power_tower"] * len(tw), "name": ["66 kV line"] + [""] * len(tw),
+                          "voltage_kv": [66] * (1 + len(tw))}, geometry=[wire] + tw, crs=4326)
+    res = run_solve(solve_input({"power_lt": g}))
+    assert res["feasible"]
+    r = res["routes"][0]
+    xs = [s for s in r["spans"] if any(cr["rule"] == "power_line_lt" for cr in s["crossings"])]
+    assert xs and all(s["length_m"] <= 350 + 1e-6 for s in xs), [s["length_m"] for s in xs]

@@ -1226,7 +1226,7 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
                     x.null_offset_wide = null_wide
                     x.null_allowed = float(p.get("crossing_point_allowed_pct", 20) or 20) / 100.0
                     x.null_pref = float(p.get("crossing_point_pref_pct", 5) or 5) / 100.0
-                    x.max_span_m = None if side_m is not None else x.max_span_m   # the side window bounds the span
+                    # 19 Oct 2026: the span cap stays with the side window (it did not bound the span: the window is relaxable)
                 if x.max_span_m is not None and x.max_span_m > design_span_m + 1e-6:
                     x.long_span = True                                            # spans up to 600 m over a crossing
                 if pen_pct > 0 and tower_cost_rs and x.pref_window is not None:
