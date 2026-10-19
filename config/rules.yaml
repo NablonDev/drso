@@ -155,12 +155,19 @@ groups:
           # a substation this close to the gantry point is the terminal yard the line starts / ends in
           - {key: terminal_yard_radius_m, label: "Terminal yard: substation within", type: num, unit: m, value: 150}
           - {key: gantry_min_span_m, label: "Gantry to first / last tower, at least", type: num, unit: m, value: 100}
-          - {key: dead_end_max_dev_deg, label: "Max deviation at the dead-end tower", type: num, unit: "°", value: 15}
+          # Vivek, 19 Oct 2026 (gantry review): the AESL design's gantry spans are 206-217 m
+          - {key: gantry_max_span_m, label: "Gantry to first / last tower, at most (0 = no limit)", type: num, unit: m, value: 250}
+          # Vivek, 19 Oct 2026: 45° — TSD note J (15° line side + 30° slack side); the AESL design turns 42-56° at its first tower
+          - {key: dead_end_max_dev_deg, label: "Max deviation at the dead-end tower", type: num, unit: "°", value: 45}
           # Vivek, 19 Oct 2026: the dead-end tower stands exactly this far from the gantry point, on the line square to the
           # terminal substation's face (the substation polygon edge nearest the gantry); 0 = anywhere at least the gantry span
           # final rules 19 Oct 2026 (run BHU-LAK-0250): the fixed dead end is available but off (set 100 m + Yes to apply it)
           - {key: dead_end_distance_m, label: "Dead-end tower: exactly this far from the gantry (0 = free)", type: num, unit: m, value: 0}
           - {key: dead_end_square, label: "Gantry span square (90°) to the substation face", type: sel, value: "No", options: ["Yes", "No"]}
+          # Vivek, 19 Oct 2026 (gantry review): the gantry span leaves within this of square to the terminal substation's face
+          # (straightened outline, the face the gantry stands in front of, never one turned away from the route); the AESL design
+          # is 8° off at Shivlaka, 37° at Bhujpool
+          - {key: gantry_square_tol_deg, label: "Gantry span within this of square to the substation face (0 = off)", type: num, unit: "°", value: 40}
 
       - id: dams
         name: "Dams"
@@ -476,7 +483,8 @@ groups:
           # restored 19 Oct 2026 (Vivek): the crossing span cap of 10 Oct, dropped on 13 Oct when the crossing-tower window
           # came in on the belief that the window bounds the span — it does not (the window is relaxable at a search cost;
           # 376-434 m crossings came through). Both apply: the window places the towers, this caps the span.
-          - {key: max_span_m, label: "Max crossing span", type: num, unit: m, value: 350}
+          # Vivek, 19 Oct 2026: 250 m (was 350 m restored the same day)
+          - {key: max_span_m, label: "Max crossing span", type: num, unit: m, value: 250}
           - {key: angle_min_kv, label: "Crossing angle applies from", type: num, unit: kV, value: 66}
           # the two crossing towers stand 1.2-1.7 × our tower height from the crossed conductor, no more (72.5 m → 87-123 m)
           - {key: crossing_side_m, label: "Crossing tower to the crossed conductor, each side (min-max)", type: rng, unit: m, value: {765: [87, 123], 400: [66, 94], 220: [48, 68], 132: [38, 54]}}
@@ -527,7 +535,8 @@ groups:
           # restored 19 Oct 2026 (Vivek): the crossing span cap of 10 Oct, dropped on 13 Oct when the crossing-tower window
           # came in on the belief that the window bounds the span — it does not (the window is relaxable at a search cost;
           # 376-434 m crossings came through). Both apply: the window places the towers, this caps the span.
-          - {key: max_span_m, label: "Max crossing span", type: num, unit: m, value: 350}
+          # Vivek, 19 Oct 2026: 250 m (was 350 m restored the same day)
+          - {key: max_span_m, label: "Max crossing span", type: num, unit: m, value: 250}
           - {key: angle_min_kv, label: "Crossing angle applies from", type: num, unit: kV, value: 66}
           # the two crossing towers stand 1.2-1.7 × our tower height from the crossed conductor, no more (72.5 m → 87-123 m)
           - {key: crossing_side_m, label: "Crossing tower to the crossed conductor, each side (min-max)", type: rng, unit: m, value: {765: [87, 123], 400: [66, 94], 220: [48, 68], 132: [38, 54]}}

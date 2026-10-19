@@ -143,16 +143,12 @@ def _source(it: dict | None, layers: dict[str, LayerInput]) -> dict | None:
 REFERENCE_ONLY_LAYERS = {"reference_lines"}     # comparison only: never compiled, never cited (Vivek, 18 Oct 2026)
 
 
-def square_dead_end(polys, E, dist_m: float, toward=None, clear_m: float = 0.0, max_dist_m: float = 150.0,
-                    max_off_deg: float = 80.0):
-    """The dead-end tower position for the gantry at E (frame coords), square to the terminal substation's face
-    (Vivek, 19 Oct 2026): dist_m from E along the face's outward normal.
-
-    polys: [(name, polygon)] substation outlines (frame coords). Each outline within max_dist_m of E is straightened
-    to its minimum rotated rectangle (detected outlines are ragged), and the face used is the nearest one whose
-    outward normal is within max_off_deg of the direction to `toward` (the other gantry): the line leaves the yard on
-    the side facing its route. A gantry deeper than dist_m inside that same substation moves the dead end out along
-    the line until it clears the outline + clear_m. Returns ((x, y), heading_deg, name) or None."""
+def gantry_face(polys, E, toward=None, max_dist_m: float = 150.0, max_off_deg: float = 100.0):
+    """The terminal substation face the gantry at E (frame coords) leaves through: each substation outline within
+    max_dist_m of E is straightened to its minimum rotated rectangle (detected outlines are ragged); the face is the
+    nearest one the gantry stands in front of (E projects onto it), falling back to the nearest face, among faces whose
+    outward normal is within max_off_deg of the direction to `toward` (the other gantry) — a face turned away from the
+    route is never used. Returns (normal_heading_deg, name, polygon) or None."""
     if not polys:
         return None
     P = Point(E)
@@ -182,16 +178,32 @@ def square_dead_end(polys, E, dist_m: float, toward=None, clear_m: float = 0.0, 
             if toward is not None and nx * ux + ny * uy < cos_min:
                 continue                               # a face turned away from the route
             d = seg.distance(P)
-            if best is None or d < best[0]:
-                best = (d, name, poly, (nx, ny))
+            t = ((E[0] - x0) * (x1 - x0) + (E[1] - y0) * (y1 - y0)) / (L * L)
+            key = (0 if 0.0 <= t <= 1.0 else 1, d)        # faces the gantry stands in front of first, then by distance
+            if best is None or key < best[0]:
+                best = (key, name, poly, (nx, ny))
     if best is None:
         return None
     _, name, poly, (nx, ny) = best
+    return math.degrees(math.atan2(ny, nx)), name, poly
+
+
+def square_dead_end(polys, E, dist_m: float, toward=None, clear_m: float = 0.0, max_dist_m: float = 150.0,
+                    max_off_deg: float = 100.0):
+    """The dead-end tower position for the gantry at E (frame coords), square to the terminal substation's face
+    (Vivek, 19 Oct 2026): dist_m from E along the face's outward normal (see gantry_face). A gantry deeper than dist_m
+    inside that same substation moves the dead end out along the line until it clears the outline + clear_m.
+    Returns ((x, y), heading_deg, name) or None."""
+    f = gantry_face(polys, E, toward, max_dist_m, max_off_deg)
+    if f is None:
+        return None
+    h, name, poly = f
+    nx, ny = math.cos(math.radians(h)), math.sin(math.radians(h))
     d = dist_m
     keep_out = poly.buffer(clear_m) if clear_m > 0 else poly
     while keep_out.intersects(Point(E[0] + d * nx, E[1] + d * ny)) and d < dist_m + 1000:
         d += 1.0
-    return (E[0] + d * nx, E[1] + d * ny), math.degrees(math.atan2(ny, nx)), name
+    return (E[0] + d * nx, E[1] + d * ny), h, name
 
 
 def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
@@ -369,8 +381,12 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
     de_square = str(_sub.get("dead_end_square", "No")) == "Yes"
     dead_end_info: dict = {}
     de_a = de_b = None
-    if de_dist > 0 and de_square:
-        sub_polys = []
+    # gantry span limits (Vivek, 19 Oct 2026 gantry review): at most gantry_max_span_m, and within gantry_square_tol_deg
+    # of square to the terminal substation's face
+    gantry_max = float(_sub.get("gantry_max_span_m", 0) or 0)
+    sq_tol = float(_sub.get("gantry_square_tol_deg", 0) or 0)
+    sub_polys = []
+    if (de_dist > 0 and de_square) or sq_tol > 0:
         _sg = gdfs.get("substations")
         if _sg is not None and len(_sg):
             _su = _sg.to_crs(frame.epsg)
@@ -381,6 +397,19 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
                 for _pg in getattr(_fg, "geoms", [_fg]):
                     if _pg.geom_type == "Polygon":
                         sub_polys.append((_nm if isinstance(_nm, str) else "substation", _pg))
+    face_a = face_b = None
+    if sq_tol > 0:
+        for key, E, other in (("a", (0.0, 0.0), (frame.length_m, 0.0)), ("b", (frame.length_m, 0.0), (0.0, 0.0))):
+            fc = gantry_face(sub_polys, E, toward=other, max_dist_m=yard_radius)
+            if fc is None:
+                dead_end_info.setdefault(key, {})["square"] = "no terminal substation face: the gantry span may leave at any angle"
+                continue
+            dead_end_info.setdefault(key, {}).update({"face_of": fc[1], "face_heading_deg": round(fc[0], 2), "square_tol_deg": sq_tol})
+            if key == "a":
+                face_a = fc[0]
+            else:
+                face_b = fc[0]
+    if de_dist > 0 and de_square:
         for key, E, other in (("a", (0.0, 0.0), (frame.length_m, 0.0)), ("b", (frame.length_m, 0.0), (0.0, 0.0))):
             pt = square_dead_end(sub_polys, E, de_dist, toward=other, clear_m=float(_sub.get("gantry_buffer_m", 10) or 0),
                                  max_dist_m=yard_radius)
@@ -444,12 +473,14 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
                         dead_end_max_dev_deg=float(tsd["dead_end_max_dev_deg"]) if tsd and tsd.get("dead_end_max_dev_deg") else None,
                         approach_length_m=ap_len, approach_span_m=ap_span, proximity_discount=prox_disc,
                         proximity_tower_discount=prox_tdisc, gantry_min_span_m=gantry_min,
-                        dead_end_a=de_a, dead_end_b=de_b,
+                        dead_end_a=de_a, dead_end_b=de_b, gantry_max_span_m=gantry_max, gantry_square_tol_deg=sq_tol,
+                        gantry_face_a=face_a, gantry_face_b=face_b,
                         ext_zero_tol_m=ext_zero_tol, ext_round_tol_m=ext_round_tol,
                         crossing_dev_max_deg=_crossing_dev_cap(rules))
     sp = SpotParams(design_span_m=design, span_max_m=smax_search, plain_span_max_m=smax, excess_span_rs_per_m=excess_rs_m,
                     raster_prefilter=bool(eng["grid"].get("raster_prefilter", True)), gantry_min_span_m=gantry_min,
-                    dead_end_a=de_a, dead_end_b=de_b,
+                    dead_end_a=de_a, dead_end_b=de_b, gantry_max_span_m=gantry_max, gantry_square_tol_deg=sq_tol,
+                    gantry_face_a=face_a, gantry_face_b=face_b,
                     min_span_m=float(rules["crossing_span_limits"].params["min_span_m"]),
                     max_dev_deg=max_dev, type_bands=bands,
                     section_km=float(rules["section_interval"].params["plain_km"]),
@@ -1373,8 +1404,10 @@ def _route_events(sr, frame, comp, findex, rules, sp, layer_names, inp, dem, blo
                     "crossing_angle": "crossing span: outside the allowed crossing angle",
                     "crossing_null_point": "crossing span: crosses the existing line more than 20 % of its span from the null point",
                     "span_rule": "span over the limit for its ground, or a parallel run too close to a feature",
-                    "dead_end_deviation": f"dead-end tower turns {v.split(':')[-1].replace('deg', '°')}; the rule allows 15°",
+                    "dead_end_deviation": f"dead-end tower turns {v.split(':')[-1].replace('deg', '°')}; the rule allows {float((sp.tsd or {}).get('dead_end_max_dev_deg', 15)):g}°",
                     "gantry_span": f"gantry span of {v.split(':')[-1]}, under the {sp.gantry_min_span_m:g} m minimum",
+                    "gantry_span_long": f"gantry span of {v.split(':')[-1]}, over the {sp.gantry_max_span_m:g} m maximum",
+                    "gantry_angle": f"gantry span {v.split(':')[-1].replace('deg', '°')} off square to the substation face; the rule allows {sp.gantry_square_tol_deg:g}°",
                     "crossing_span": "crossing span: longer than the rule allows"}.get(
                 v.split(":")[0], v.replace("_", " "))
             evs.append(event("VIOLATION", {"tower": t.no, "what": what, "code": v},

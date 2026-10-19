@@ -62,6 +62,10 @@ class SpotParams:
     gantry_min_span_m: float = 0.0        # gantry to first / last tower, at least (Vivek, 13 Oct 2026)
     dead_end_a: tuple | None = None       # fixed dead-end positions (frame coords), square to the substation face (19 Oct 2026)
     dead_end_b: tuple | None = None
+    gantry_max_span_m: float = 0.0        # gantry span at most (19 Oct 2026; 0 = none)
+    gantry_square_tol_deg: float = 0.0    # gantry span within this of square to the substation face (0 = off)
+    gantry_face_a: float | None = None    # the face's outward normal at A / B (frame heading, degrees)
+    gantry_face_b: float | None = None
     refine_crossings: bool = True         # fine local re-optimisation round power-line crossings (14 Oct 2026)
     refine_step_m: float = 10.0
     # hilly terrain (rules design_span.hilly_m, section_interval.hilly_km; engine hilly_slope_deg)
@@ -1207,6 +1211,16 @@ def _assemble(chk: Checker, comp, pts, added, sp: SpotParams, polish, angle_set,
             towers[i if i > 0 else 1].violations.append("conductor_buffer")
         if gantry_span and L < sp.gantry_min_span_m - 1e-6:
             towers[1 if i == 0 else n - 2].violations.append(f"gantry_span:{L:.0f}m")
+        if gantry_span:
+            de = 1 if i == 0 else n - 2
+            if sp.gantry_max_span_m and L > sp.gantry_max_span_m + 1e-6:
+                towers[de].violations.append(f"gantry_span_long:{L:.0f}m")
+            face = sp.gantry_face_a if i == 0 else sp.gantry_face_b
+            if sp.gantry_square_tol_deg and face is not None:
+                g, d_ = (pts[0], pts[1]) if i == 0 else (pts[-1], pts[-2])
+                off = abs((math.degrees(math.atan2(d_[1] - g[1], d_[0] - g[0])) - face + 180.0) % 360.0 - 180.0)
+                if off > sp.gantry_square_tol_deg + 0.5:
+                    towers[de].violations.append(f"gantry_angle:{off:.0f}deg")
     # village clusters inside the normal distance (Vivek, 18 Oct 2026): a warning with the exact distance
     bg = getattr(comp, "breach_geoms", None)
     breaches = 0

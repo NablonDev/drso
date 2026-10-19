@@ -101,6 +101,12 @@ class SolverParams:
     # (Vivek, 19 Oct 2026); None = the dead end may stand anywhere the gantry span allows
     dead_end_a: tuple | None = None
     dead_end_b: tuple | None = None
+    # gantry span limits (Vivek, 19 Oct 2026): at most gantry_max_span_m (0 = none) and within gantry_square_tol_deg
+    # of the terminal substation face's outward normal (frame heading, None = no face found)
+    gantry_max_span_m: float = 0.0
+    gantry_square_tol_deg: float = 0.0
+    gantry_face_a: float | None = None
+    gantry_face_b: float | None = None
     proximity_tower_discount: float = 0.0      # search-only discount on towers near existing lines (Vivek, 13 Oct 2026)
 
 
@@ -673,6 +679,10 @@ def gantry_seeds(compiled: Compiled, grid: Grid, p: SolverParams, S_np: np.ndarr
     reach = min(3000.0, p.span_max_m + yard_extent)
     if p.approach_length_m > 0 and p.approach_span_m is not None:
         reach = min(reach, p.approach_span_m)     # the gantry span keeps the approach span (9 Oct 2026)
+    if p.gantry_max_span_m > 0:
+        reach = min(reach, p.gantry_max_span_m)   # gantry span at most (19 Oct 2026)
+    face = p.gantry_face_b if at_end else p.gantry_face_a
+    sq_tol = p.gantry_square_tol_deg if face is not None else 0.0
     seeds = np.full(S_np.shape, INF, np.float32)
     cs = np.arange(grid.nc + 1)
     xs = cs * grid.sx
@@ -696,6 +706,10 @@ def gantry_seeds(compiled: Compiled, grid: Grid, p: SolverParams, S_np: np.ndarr
             L = math.hypot(x - ex, y)
             if fixed is None and (L < p.gantry_min_span_m or L > reach):
                 continue
+            if sq_tol > 0:
+                off = abs((math.degrees(math.atan2(y, x - ex)) - face + 180.0) % 360.0 - 180.0)
+                if off > sq_tol + 1e-6:
+                    continue                      # the gantry span leaves too far off square to the substation face
             n = max(2, int(math.ceil(L / (f.res_m / 2))) + 1)
             t = np.linspace(0, 1, n)
             fx = ex + t * (x - ex)

@@ -12,7 +12,7 @@ import torch
 from shapely.geometry import LineString, Point, box
 
 from beeline_engine.compile import compile_rules
-from beeline_engine.config import CIRCUITS, TOWER_TYPES, VOLTAGES, LineSpec, resolve_costs, resolve_rules
+from beeline_engine.config import load_rules, CIRCUITS, TOWER_TYPES, VOLTAGES, LineSpec, resolve_costs, resolve_rules
 from beeline_engine.frame import Frame
 from beeline_engine.pipeline import LayerInput, SolveInput, run_solve
 from beeline_engine.solver import (SolverParams, edge_costs, gantry_seeds, make_grid, prepare_strip, site_costs, solve,
@@ -1722,7 +1722,7 @@ def test_building_soft_zone_charges_each_building_once_and_is_off_by_default():
 
 
 def test_power_line_crossing_span_is_capped():
-    """19 Oct 2026 (Vivek): a span crossing an existing power line is at most the rule's max crossing span (350 m),
+    """19 Oct 2026 (Vivek): a span crossing an existing power line is at most the rule's max crossing span (250 m),
     whatever the crossing-tower window allows."""
     f = frame()
     c = f.length_m / 2
@@ -1734,4 +1734,24 @@ def test_power_line_crossing_span_is_capped():
     assert res["feasible"]
     r = res["routes"][0]
     xs = [s for s in r["spans"] if any(cr["rule"] == "power_line_lt" for cr in s["crossings"])]
-    assert xs and all(s["length_m"] <= 350 + 1e-6 for s in xs), [s["length_m"] for s in xs]
+    cap = float(next(p["value"] for g in load_rules()["groups"] for r in g["rules"] if r["id"] == "power_line_lt"
+                     for p in r["params"] if p["key"] == "max_span_m"))
+    assert xs and all(s["length_m"] <= cap + 1e-6 for s in xs), ([s["length_m"] for s in xs], cap)
+
+
+def test_gantry_span_short_and_square_to_the_substation_face():
+    """Vivek, 19 Oct 2026 (gantry review): the gantry span is 100-250 m and leaves within 40° of square to the terminal
+    substation's face. A yard north of A with its south face 30 m from the gantry: the first span must head south-ish,
+    within 40° of the face normal (-90° in the frame), however the bee-line runs."""
+    f = frame()
+    yard = frame_geom(f, box(-150, 30, 150, 330))          # gantry A at (0, 0), 30 m below the yard's south face
+    res = run_solve(solve_input({"substations": gdf([yard], "substation", "Start S/S")}))
+    assert res["feasible"]
+    d = res.get("dead_ends") or {}
+    assert abs(d["a"]["face_heading_deg"] - (-90.0)) < 1e-6 and d["a"]["square_tol_deg"] == 40
+    r = res["routes"][0]
+    (x0, y0), (x1, y1) = towers_frame(f, r)[0], towers_frame(f, r)[1]
+    L = math.hypot(x1 - x0, y1 - y0)
+    off = abs((math.degrees(math.atan2(y1 - y0, x1 - x0)) + 90.0 + 180.0) % 360.0 - 180.0)
+    assert 100 - 1e-6 <= L <= 250 + 1e-6 and off <= 40 + 0.5, (L, off)
+    assert not any(v.startswith("gantry_") for v in r["towers"][1]["violations"]), r["towers"][1]["violations"]
