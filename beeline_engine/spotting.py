@@ -1157,12 +1157,14 @@ def build_route(chk: Checker, pts: list[tuple[float, float]], angle_set: set[int
         pts, saved, moves = _cost_polish(chk, pts, sp)
         pts, r_saved, r_moves = _respot_runs(chk, pts, sp)
         pts, b_saved, b_moves = _straighten_between_bends(chk, pts, sp)
+        pts, n_saved, n_moves = _near_band_nudge(chk, pts, sp)
         polish = {"moves": moves, "saved_cr": round(saved / 1e7, 3),
                   "straighten_moves": s_moves, "straighten_saved_cr": round(s_saved / 1e7, 3),
                   "merge_moves": m_moves, "merge_saved_cr": round(m_saved / 1e7, 3),
                   "vertex_moves": v_moves, "vertex_saved_cr": round(v_saved / 1e7, 3),
                   "respot_runs": r_moves, "respot_saved_cr": round(r_saved / 1e7, 3),
-                  "bend_straighten_moves": b_moves, "bend_straighten_saved_cr": round(b_saved / 1e7, 3)}
+                  "bend_straighten_moves": b_moves, "bend_straighten_saved_cr": round(b_saved / 1e7, 3),
+                  "nudge_moves": n_moves, "nudge_saved_cr": round(n_saved / 1e7, 3)}
     pts = _pin_dead_ends(pts, sp)            # every pass above works round them; this keeps them exact
     added = {k for k, pt in enumerate(pts) if pt in added_pts}
     towers: list[Tower] = []
@@ -1747,6 +1749,61 @@ def _straighten_runs(chk: Checker, pts, sp: SpotParams, max_run: int = 5, reach_
                 break
         if not done:
             i += 1
+    return pts, saved, moves
+
+
+def _ext_rs_needed(chk: Checker, sp: SpotParams, pts, i: int) -> float | None:
+    """Price of the smallest body extension of tower i (its type by deflection) that lets both its spans clear the
+    ground (neighbours at standard height); 0 without a DEM; None if no step of its type is enough."""
+    if chk.dem is None or not getattr(chk.dem, "ok", False):
+        return 0.0
+    t = _type_at(chk, sp, pts, i) or "D60"
+    for e in [0.0] + sorted(_ext_steps(sp, t)):
+        ok = True
+        for a, b, ea, eb in ((i - 1, i, 0.0, e), (i, i + 1, e, 0.0)):
+            c, _ = _span_clearance(chk, pts[a], pts[b], sp, ext_a=ea, ext_b=eb)
+            if c is not None and c < sp.ground_clearance_m - 1e-6:
+                ok = False
+                break
+        if ok:
+            return _tower_rs(sp, t, e) - _tower_rs(sp, t, 0.0)
+    return None
+
+
+def _near_band_nudge(chk: Checker, pts, sp: SpotParams, margin_deg: float = 1.0, reach_m: int = 6, min_gain_rs: float = 1e5):
+    """Fine nudge (Vivek, 19 Oct 2026): a tower whose turn is within margin_deg above a type band (e.g. 2.4 deg, just
+    over the A limit) tries every spot within reach_m on a 1 m grid; the cheapest legal spot by local exact cost that
+    drops it (and keeps its neighbours) to a lighter type replaces it. The cost polish steps 10 m along / 5 m across
+    and missed T17 on rev 47 (5 m back, 2 m across: B1 -> A, Rs 0.21 Cr)."""
+    pts = list(pts)
+    moves, saved = 0, 0.0
+    edges = sorted(float(v) for v in sp.type_bands.values())
+    for i in range(2, len(pts) - 2):
+        d, _ = _deflection(pts[i - 1], pts[i], pts[i + 1])
+        if not any(e < d <= e + margin_deg for e in edges) or _is_crossing_tower(chk, pts, i):
+            continue
+        e0 = _ext_rs_needed(chk, sp, pts, i)
+        if e0 is None:
+            continue
+        base = _local_cost(chk, sp, pts, i) + e0
+        best = None
+        for dx in range(-reach_m, reach_m + 1):
+            for dy in range(-reach_m, reach_m + 1):
+                if dx == 0 and dy == 0:
+                    continue
+                c = (pts[i][0] + dx, pts[i][1] + dy)
+                trial = list(pts); trial[i] = c
+                e1 = _ext_rs_needed(chk, sp, trial, i)       # the body extension the moved tower needs, priced
+                if e1 is None:
+                    continue
+                cost = _local_cost(chk, sp, trial, i) + e1
+                if cost < base - min_gain_rs and (best is None or cost < best[0]) and _legal_here(chk, pts, i, sp, c):
+                    best = (cost, c)
+        if best is not None:
+            saved += base - best[0]; moves += 1
+            pts[i] = best[1]
+    if moves:
+        log.info("near-band nudge: %d towers, ₹%.2f Cr", moves, saved / 1e7)
     return pts, saved, moves
 
 
