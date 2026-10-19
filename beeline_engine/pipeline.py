@@ -143,47 +143,55 @@ def _source(it: dict | None, layers: dict[str, LayerInput]) -> dict | None:
 REFERENCE_ONLY_LAYERS = {"reference_lines"}     # comparison only: never compiled, never cited (Vivek, 18 Oct 2026)
 
 
-def square_dead_end(yards, E, dist_m: float, clear_m: float = 0.0, max_dist_m: float = 150.0):
-    """The dead-end tower position for the gantry at E (frame coords): dist_m from E along the outward normal of
-    the terminal substation polygon's edge nearest E, i.e. the gantry span leaves the substation at 90° to its face
-    (Vivek, 19 Oct 2026). Returns ((x, y), heading_deg) or None when no yard polygon lies near E."""
-    if yards is None or yards.is_empty:
-        return None
-    polys = []
-    for g in getattr(yards, "geoms", [yards]):
-        polys.extend(getattr(g, "geoms", [g]) if g.geom_type == "MultiPolygon" else [g])
-    polys = [g for g in polys if g.geom_type == "Polygon" and not g.is_empty]
+def square_dead_end(polys, E, dist_m: float, toward=None, clear_m: float = 0.0, max_dist_m: float = 150.0,
+                    max_off_deg: float = 80.0):
+    """The dead-end tower position for the gantry at E (frame coords), square to the terminal substation's face
+    (Vivek, 19 Oct 2026): dist_m from E along the face's outward normal.
+
+    polys: [(name, polygon)] substation outlines (frame coords). Each outline within max_dist_m of E is straightened
+    to its minimum rotated rectangle (detected outlines are ragged), and the face used is the nearest one whose
+    outward normal is within max_off_deg of the direction to `toward` (the other gantry): the line leaves the yard on
+    the side facing its route. A gantry deeper than dist_m inside that same substation moves the dead end out along
+    the line until it clears the outline + clear_m. Returns ((x, y), heading_deg, name) or None."""
     if not polys:
         return None
     P = Point(E)
-    poly = min(polys, key=lambda g: g.distance(P))
-    if poly.distance(P) > max_dist_m:
-        return None                           # this gantry has no terminal substation of its own
-    ring = list(poly.exterior.coords)
+    if toward is not None:
+        ux, uy = toward[0] - E[0], toward[1] - E[1]
+        nu = math.hypot(ux, uy) or 1.0
+        ux, uy = ux / nu, uy / nu
+    cos_min = math.cos(math.radians(max_off_deg))
     best = None
-    for (x0, y0), (x1, y1) in zip(ring[:-1], ring[1:]):
-        seg = LineString([(x0, y0), (x1, y1)])
-        if seg.length < 1e-6:
+    for name, poly in polys:
+        if poly is None or poly.is_empty or poly.distance(P) > max_dist_m:
             continue
-        d = seg.distance(P)
-        if best is None or d < best[0]:
-            best = (d, (x0, y0), (x1, y1), seg)
+        rect = poly.minimum_rotated_rectangle
+        if rect.geom_type != "Polygon":
+            continue
+        c = rect.centroid
+        ring = list(rect.exterior.coords)
+        for (x0, y0), (x1, y1) in zip(ring[:-1], ring[1:]):
+            seg = LineString([(x0, y0), (x1, y1)])
+            L = seg.length
+            if L < 1.0:
+                continue
+            nx, ny = (y1 - y0) / L, -(x1 - x0) / L
+            mx, my = (x0 + x1) / 2, (y0 + y1) / 2
+            if (mx + nx - c.x) ** 2 + (my + ny - c.y) ** 2 < (mx - c.x) ** 2 + (my - c.y) ** 2:
+                nx, ny = -nx, -ny                      # outward, away from the substation
+            if toward is not None and nx * ux + ny * uy < cos_min:
+                continue                               # a face turned away from the route
+            d = seg.distance(P)
+            if best is None or d < best[0]:
+                best = (d, name, poly, (nx, ny))
     if best is None:
         return None
-    _, (x0, y0), (x1, y1), seg = best
-    ux, uy = (x1 - x0) / seg.length, (y1 - y0) / seg.length
-    mx, my = (x0 + x1) / 2, (y0 + y1) / 2
-    n = (-uy, ux)
-    if poly.contains(Point(mx + n[0], my + n[1])):
-        n = (uy, -ux)                         # outward: away from the substation
-    # no tower may stand inside the yard (or its gantry buffer): a gantry deeper than dist_m inside the fence moves the
-    # dead end out along the same square line, just clear of it
+    _, name, poly, (nx, ny) = best
     d = dist_m
-    keep_out = yards.buffer(clear_m) if clear_m > 0 else yards
-    while keep_out.intersects(Point(E[0] + d * n[0], E[1] + d * n[1])) and d < dist_m + 1000:
+    keep_out = poly.buffer(clear_m) if clear_m > 0 else poly
+    while keep_out.intersects(Point(E[0] + d * nx, E[1] + d * ny)) and d < dist_m + 1000:
         d += 1.0
-    xy = (E[0] + d * n[0], E[1] + d * n[1])
-    return xy, math.degrees(math.atan2(n[1], n[0]))
+    return (E[0] + d * nx, E[1] + d * ny), math.degrees(math.atan2(ny, nx)), name
 
 
 def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
@@ -362,18 +370,30 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
     dead_end_info: dict = {}
     de_a = de_b = None
     if de_dist > 0 and de_square:
-        for key, E in (("a", (0.0, 0.0)), ("b", (frame.length_m, 0.0))):
-            pt = square_dead_end(comp.terminal_yards, E, de_dist, float(_sub.get("gantry_buffer_m", 10) or 0), yard_radius)
+        sub_polys = []
+        _sg = gdfs.get("substations")
+        if _sg is not None and len(_sg):
+            _su = _sg.to_crs(frame.epsg)
+            for _nm, _g in zip(_su["name"] if "name" in _su.columns else [None] * len(_su), _su.geometry):
+                if _g is None or _g.is_empty:
+                    continue
+                _fg = frame.geom_utm_to_frame(_g)
+                for _pg in getattr(_fg, "geoms", [_fg]):
+                    if _pg.geom_type == "Polygon":
+                        sub_polys.append((_nm if isinstance(_nm, str) else "substation", _pg))
+        for key, E, other in (("a", (0.0, 0.0), (frame.length_m, 0.0)), ("b", (frame.length_m, 0.0), (0.0, 0.0))):
+            pt = square_dead_end(sub_polys, E, de_dist, toward=other, clear_m=float(_sub.get("gantry_buffer_m", 10) or 0),
+                                 max_dist_m=yard_radius)
             if pt is None:
                 dead_end_info[key] = {"fixed": False, "why": "no terminal substation polygon within the yard radius"}
                 log.warning("dead end at %s: no terminal substation polygon, position left free", key.upper())
                 continue
-            xy, heading = pt
+            xy, heading, face_of = pt
             lon, lat = frame.frame_to_lonlat(xy[0], xy[1])
             got = math.hypot(xy[0] - E[0], xy[1] - E[1])
             if got > de_dist + 0.5:
                 log.warning("dead end at %s: %.0f m from the gantry (the substation fence is further than %.0f m)", key.upper(), got, de_dist)
-            dead_end_info[key] = {"fixed": True, "distance_m": round(got, 1), "rule_m": de_dist, "heading_deg": round(heading, 2),
+            dead_end_info[key] = {"fixed": True, "distance_m": round(got, 1), "rule_m": de_dist, "heading_deg": round(heading, 2), "face_of": face_of,
                                   "lonlat": [round(float(lon), 7), round(float(lat), 7)]}
             if key == "a":
                 de_a = xy

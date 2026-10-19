@@ -1665,19 +1665,24 @@ def test_reference_lines_never_affect_a_route():
 
 
 def test_square_dead_end_point():
-    """Vivek, 19 Oct 2026: the dead-end tower stands the set distance from the gantry, square to the terminal
-    substation's nearest face, outside the substation."""
+    """Vivek, 19 Oct 2026: the dead-end tower stands the set distance from the gantry, square to the face of its
+    substation that looks back along the route; ragged outlines are straightened first."""
     from shapely.geometry import Point, box
     from beeline_engine.pipeline import square_dead_end
-    yard = box(-60, -40, 20, 40)                        # gantry at (0, 0) inside, nearest face x = 20
-    (x, y), h = square_dead_end(yard, (0.0, 0.0), 100.0)
-    assert abs(x - 100.0) < 1e-6 and abs(y) < 1e-6 and abs(h) < 1e-6
-    assert not yard.contains(Point(x, y))
-    yard_b = box(1005, -30, 1100, 30)                   # gantry B at (1000, 0), 5 m outside the face x = 1005
-    (xb, yb), hb = square_dead_end(yard_b, (1000.0, 0.0), 100.0)
+    yard = box(-60, -40, 20, 40)                        # gantry at (0, 0) inside, route towards +x: east face x = 20
+    (x, y), h, nm = square_dead_end([("S/S", yard)], (0.0, 0.0), 100.0, toward=(5000.0, 0.0))
+    assert abs(x - 100.0) < 1e-6 and abs(y) < 1e-6 and abs(h) < 1e-6 and nm == "S/S"
+    # gantry on a side face (north, y = 40) still leaves square to it when that face looks within 80° of the route
+    (xs, ys), hs, _ = square_dead_end([("S/S", box(-60, -40, 400, 40))], (0.0, 40.0), 100.0, toward=(5000.0, 2000.0))
+    assert abs(xs) < 1e-6 and abs(ys - 140.0) < 1e-6 and abs(hs - 90.0) < 1e-6
+    # a face turned away from the route is never used: gantry B at (1000, 0), its yard to the east, route back to -x
+    (xb, yb), hb, _ = square_dead_end([("B", box(1005, -30, 1100, 30))], (1000.0, 0.0), 100.0, toward=(0.0, 0.0))
     assert abs(xb - 900.0) < 1e-6 and abs(yb) < 1e-6 and abs(abs(hb) - 180.0) < 1e-6
-    assert square_dead_end(None, (0.0, 0.0), 100.0) is None
-    assert square_dead_end(yard, (5000.0, 0.0), 100.0) is None   # a substation 5 km away is not this gantry's
-    deep = box(-600, -350, 100, 350)                    # gantry 100 m inside the fence: moved out just clear of yard + 10 m
-    (xd, yd), _ = square_dead_end(deep, (0.0, 0.0), 100.0, 10.0)
+    assert square_dead_end([], (0.0, 0.0), 100.0) is None
+    assert square_dead_end([("S/S", yard)], (5000.0, 0.0), 100.0) is None   # a substation 5 km away is not this gantry's
+    # gantry 100 m inside its own fence: moved out along the same line just clear of the outline + 10 m
+    (xd, yd), _, _ = square_dead_end([("S/S", box(-600, -350, 100, 350))], (0.0, 0.0), 100.0, toward=(5000.0, 0.0), clear_m=10.0)
     assert 110.0 < xd <= 112.0 and abs(yd) < 1e-6
+    # another substation nearby does not push the dead end: the rule stays exact and the clash is the spotting's to flag
+    (xo, yo), _, _ = square_dead_end([("S/S", yard), ("other", box(80, 5, 200, 60))], (0.0, 0.0), 100.0, toward=(5000.0, 0.0), clear_m=10.0)
+    assert abs(xo - 100.0) < 1e-6
