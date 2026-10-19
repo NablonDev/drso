@@ -40,7 +40,7 @@ groups:
           # distance of the outer phase from the line axis; the clearance is measured from there
           # (765 kV D/C 15 m confirmed by Vivek, 7 Oct 2026; other voltages best guess)
           - {key: outer_phase_m, label: "Outer phase from line axis", type: num, unit: m, value: {765: 15.0, 400: 10.0, 220: 7.0, 132: 5.0}, best_guess: true}
-          - {key: min_area_m2, label: "Ignore structures smaller than", type: num, unit: "m²", value: 0}
+          - {key: min_area_m2, label: "Ignore structures smaller than", type: num, unit: "m²", value: 5}   # final rules 19 Oct 2026 (run BHU-LAK-0250)
 
       - id: airport_prohibition
         name: "Airport — no-go buffer and approach funnel"
@@ -106,14 +106,14 @@ groups:
           - {key: conductor_buffer, label: "Conductor buffer", type: sel, value: "Corridor half-width", options: ["Corridor half-width", "Fixed", "None"]}
           - {key: conductor_buffer_m, label: "Fixed conductor buffer", type: num, unit: m, value: 30, best_guess: true}
           - {key: applies_to, label: "Applies to", type: sel, value: "All towers", options: ["Angular towers", "All towers"]}
-          - {key: min_area_m2, label: "Ignore structures smaller than", type: num, unit: "m²", value: 0}
+          - {key: min_area_m2, label: "Ignore structures smaller than", type: num, unit: "m²", value: 5}   # final rules 19 Oct 2026 (run BHU-LAK-0250)
           - {key: last_resort_max_area_m2, label: "Last resort: cross structures up to", type: num, unit: "m²", value: 10}
           # soft zone (Vivek, 19 Oct 2026; off while equal to the tower setback): towers and conductor may come down to
           # soft_min_m at a SEARCH cost per building of A + rate x (setback - distance), each building once, flagged with
           # its distance; the CEA clearance rule (building_clearance, 23.9 m at 765 kV) still holds for the conductor.
           # A = ₹2.2 lakh, the lenient relocation figure: RFCTLARR 2nd Schedule transport ₹50,000 + one-time
           # resettlement ₹50,000 + a PMAY-G rural house ₹1.20 lakh; rate ₹1 lakh per metre
-          - {key: soft_min_m, label: "Soft zone: towers and conductor down to", type: num, unit: m, value: {765: 33.5, 400: 23, 220: 17.5, 132: 13.5}}
+          - {key: soft_min_m, label: "Soft zone: towers and conductor down to", type: num, unit: m, value: {765: 20, 400: 23, 220: 17.5, 132: 13.5}}   # final rules 19 Oct 2026 (run BHU-LAK-0250): 765 kV down to 20 m at the search cost; other voltages unchanged (zone off)
           - {key: soft_cost_per_building_cr, label: "Soft zone: search cost per building", type: num, unit: "₹ Cr", value: 0.022}
           - {key: soft_cost_per_m_cr, label: "… plus per metre inside the setback", type: num, unit: "₹ Cr", value: 0.01}
 
@@ -158,8 +158,9 @@ groups:
           - {key: dead_end_max_dev_deg, label: "Max deviation at the dead-end tower", type: num, unit: "°", value: 15}
           # Vivek, 19 Oct 2026: the dead-end tower stands exactly this far from the gantry point, on the line square to the
           # terminal substation's face (the substation polygon edge nearest the gantry); 0 = anywhere at least the gantry span
-          - {key: dead_end_distance_m, label: "Dead-end tower: exactly this far from the gantry (0 = free)", type: num, unit: m, value: 100}
-          - {key: dead_end_square, label: "Gantry span square (90°) to the substation face", type: sel, value: "Yes", options: ["Yes", "No"]}
+          # final rules 19 Oct 2026 (run BHU-LAK-0250): the fixed dead end is available but off (set 100 m + Yes to apply it)
+          - {key: dead_end_distance_m, label: "Dead-end tower: exactly this far from the gantry (0 = free)", type: num, unit: m, value: 0}
+          - {key: dead_end_square, label: "Gantry span square (90°) to the substation face", type: sel, value: "No", options: ["Yes", "No"]}
 
       - id: dams
         name: "Dams"
@@ -303,7 +304,9 @@ groups:
         layer: village_roads
         mechanism: tower_setback
         params:
-          - {key: setback_m, label: "Tower setback", type: num, unit: m, value: 30}
+          # final rules 19 Oct 2026 (run BHU-LAK-0250): the 30 m buffer removed — the tower is only kept off the road itself:
+          # half the 28 m 765 kV tower base (14 m) + half a single-lane road (~2.5 m) from the mapped centreline
+          - {key: setback_m, label: "Tower setback from the centreline (tower kept off the road)", type: num, unit: m, value: 16.5}
 
       - id: defence
         name: "Defence land"
@@ -554,7 +557,7 @@ groups:
           # Vivek, 10 Oct 2026: cap on the reserve forest a strict route (1, 2, 4) may take. The search prices
           # forest ×3 / ×10 / ×30 until the route is under the cap; the reported cost uses the true prices.
           # 0 = no cap. The relaxed route is exempt.
-          - {key: max_area_ha, label: "Max reserve forest per route (strict routes)", type: num, unit: ha, value: 5}
+          - {key: max_area_ha, label: "Max reserve forest per route (strict routes; 0 = no cap)", type: num, unit: ha, value: 0}   # final rules 19 Oct 2026 (run BHU-LAK-0250): no numeric cap, forest priced and approval-reported
           # Vivek, 14 Oct 2026: one search with forest made dearer instead of the ×3/×10/×30/×100 re-runs; the
           # loop only runs if the route is still over the cap. ₹1 Cr/ha ≈ what the ×30 pass used to add.
           # Vivek, 14 Oct 2026: cap only — no search surcharge; the multiplier loop keeps a route over the cap under it

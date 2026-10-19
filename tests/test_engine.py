@@ -857,7 +857,8 @@ def test_uneven_spans_when_equal_spacing_is_blocked():
     from beeline_engine.spotting import Checker, SpotParams, _spot_leg
     f = frame()
     spec = LineSpec(765, "dc")
-    rules, costs = resolve_rules(spec), resolve_costs(spec)
+    # pinned to the 30 m village-road setback this test was written for (default 16.5 m since 19 Oct 2026)
+    rules, costs = resolve_rules(spec, {"village_roads": {"params": {"setback_m": 30}}}), resolve_costs(spec)
     x0 = 3000.0
     road = frame_geom(f, LineString([(x0 + 350, -2000), (x0 + 350, 2000)]))
     comp = compile_rules(f, {"village_roads": gdf([road], "village_road")}, rules, costs, 765, 33.5, 150, 400)
@@ -1020,7 +1021,8 @@ def test_grid_tower_in_a_setback_is_snapped_to_the_cheapest_legal_spot():
     from beeline_engine.spotting import Checker, SpotParams, _snap_to_legal, _deflection
     f = frame()
     spec = LineSpec(765, "dc")
-    rules, costs = resolve_rules(spec), resolve_costs(spec)
+    # pinned to the 30 m village-road setback this test was written for (default 16.5 m since 19 Oct 2026)
+    rules, costs = resolve_rules(spec, {"village_roads": {"params": {"setback_m": 30}}}), resolve_costs(spec)
     c = f.length_m / 2
     k = math.cos(math.radians(30)), math.sin(math.radians(30))
     road = frame_geom(f, LineString([(c - 1500 * k[0], -1500 * k[1]), (c + 1500 * k[0], 1500 * k[1])]))
@@ -1276,9 +1278,9 @@ def test_refinement_keeps_a_feasible_route_no_dearer():
 
 
 # ---- rules of 16 Oct 2026 (handoff review) ----------------------------------------------------
-def _comp16(f, layers):
+def _comp16(f, layers, overrides=None):
     spec = LineSpec(765, "dc")
-    rules, costs = resolve_rules(spec), resolve_costs(spec)
+    rules, costs = resolve_rules(spec, overrides), resolve_costs(spec)
     tc = {t: costs["towers"][t]["price_rs"] for t in TOWER_TYPES}
     return compile_rules(f, layers, rules, costs, 765, 33.5, 150, 400, tower_cost_rs=tc), rules, costs
 
@@ -1696,8 +1698,10 @@ def test_building_soft_zone_charges_each_building_once_and_is_off_by_default():
     c = f.length_m / 2
     house = frame_geom(f, box(c - 5, 25, c + 5, 35))                    # 25 m from the bee-line axis
     g = gdf([house], "building")
-    comp0, _, _ = _comp16(f, {"buildings": g})
-    assert comp0.bld_soft_normal_m == 0 and comp0.bld_soft_deficit is None          # off by default
+    # off when the soft minimum equals the corridor half-width (the default was off until 19 Oct 2026; the final
+    # rules turn it on at 20 m)
+    comp0, _, _ = _comp16(f, {"buildings": g}, {"buildings": {"params": {"soft_min_m": 33.5}}})
+    assert comp0.bld_soft_normal_m == 0 and comp0.bld_soft_deficit is None
     spec = LineSpec(765, "dc")
     ov = {"buildings": {"params": {"soft_min_m": 20}}, "building_clearance": {"enabled": False}}
     rules, costs = resolve_rules(spec, ov), resolve_costs(spec)
