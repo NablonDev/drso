@@ -24,7 +24,7 @@ from __future__ import annotations
 import logging
 import math
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 from scipy import ndimage
@@ -1130,10 +1130,14 @@ def _nudge(chk: Checker, p, q, nxt, prev, sp: SpotParams, is_last: bool):
 
 
 def build_route(chk: Checker, pts: list[tuple[float, float]], angle_set: set[int] | None,
-                sp: SpotParams, dem=None) -> SpottedRoute:
-    """Tower list from points; angle_set = indices that are angle points (None = all with deflection)."""
+                sp: SpotParams, dem=None, frozen: bool = False) -> SpottedRoute:
+    """Tower list from points; angle_set = indices that are angle points (None = all with deflection).
+    frozen: price the points exactly as given (no repairs, splits or polish) -- for judging polish steps."""
     comp = chk.c
     added = set()
+    if frozen:
+        sp = replace(sp, cost_polish=False, refine_crossings=False)
+        return _assemble(chk, comp, list(pts), set(), sp, None, angle_set, dem)
     pts = _snap_to_legal(chk, pts, sp)
     pts = _pin_dead_ends(pts, sp)
     pts = _crossing_span_fix(chk, pts, sp)
@@ -1167,6 +1171,10 @@ def build_route(chk: Checker, pts: list[tuple[float, float]], angle_set: set[int
                   "nudge_moves": n_moves, "nudge_saved_cr": round(n_saved / 1e7, 3)}
     pts = _pin_dead_ends(pts, sp)            # every pass above works round them; this keeps them exact
     added = {k for k, pt in enumerate(pts) if pt in added_pts}
+    return _assemble(chk, comp, pts, added, sp, polish, angle_set, dem)
+
+
+def _assemble(chk: Checker, comp, pts, added, sp: SpotParams, polish, angle_set, dem) -> SpottedRoute:
     towers: list[Tower] = []
     n = len(pts)
     for i, (x, y) in enumerate(pts):
@@ -3000,4 +3008,45 @@ def spot(comp: Compiled, grid_pts: list[tuple[float, float]], sp: SpotParams, de
     pulled_route = build_route(chk, [A] + towers + [B], angle_set=None, sp=sp, dem=dem)
     better = (pulled_route.stats["violations"], pulled_route.cost["total"]) <= \
              (grid_route.stats["violations"], grid_route.cost["total"])
-    return pulled_route if better else grid_route
+    if better or not sp.cost_polish:
+        return pulled_route if better else grid_route
+    # the polished route lost on violations (19 Oct 2026: string pulling + polish left crossing towers over their 45 deg
+    # cap on rev 48, so its whole Rs 2.6 Cr polish was thrown away): polish the grid route in place instead, keeping
+    # each step only when it adds no violation and lowers the cost
+    return _polish_in_place(Checker(comp, sp), grid_route, sp, dem)
+
+
+def _polish_in_place(chk: Checker, route: SpottedRoute, sp: SpotParams, dem=None) -> SpottedRoute:
+    chk.dem = dem
+    price = lambda pts: build_route(chk, pts, set(), sp, dem=dem, frozen=True)
+    cur = [(t.x, t.y) for t in route.towers]
+    best = price(cur)
+    kept = {}
+    for name, fn in (("straighten", _straighten_runs), ("merge", _merge_bends), ("vertex", _vertex_descent),
+                     ("cost_polish", _cost_polish), ("respot", _respot_runs), ("bend_straighten", _straighten_between_bends),
+                     ("nudge", _near_band_nudge)):
+        nxt, saved, moves = fn(chk, cur, sp)
+        if not moves:
+            continue
+        sr = price(nxt)
+        if sr.stats["violations"] > best.stats["violations"] and len(nxt) == len(cur):
+            # undo only the moves next to the new flags and keep the rest of the step (up to 3 rounds)
+            for _ in range(3):
+                old_flags = {(t.x, t.y) for t in best.towers if t.violations}
+                bad = [k for k, t in enumerate(sr.towers) if t.violations and (t.x, t.y) not in old_flags]
+                undo = {j for k in bad for j in range(k - 2, k + 3) if 0 < j < len(nxt) - 1 and nxt[j] != cur[j]}
+                if not undo:
+                    break
+                nxt = [cur[j] if j in undo else q for j, q in enumerate(nxt)]
+                sr = price(nxt)
+                if sr.stats["violations"] <= best.stats["violations"]:
+                    break
+        if sr.stats["violations"] <= best.stats["violations"] and sr.cost["total"] < best.cost["total"]:
+            kept[name] = {"moves": moves, "saved_cr": round((best.cost["total"] - sr.cost["total"]) / 1e7, 3)}
+            cur, best = nxt, sr
+        else:
+            kept[name] = {"moves": moves, "rejected": True}
+    best.stats["cost_polish"] = {"in_place": kept}
+    best.method = "grid_polished"
+    log.info("grid route polished in place: %s", kept)
+    return best
