@@ -212,6 +212,12 @@ class _Rasters:
         self.breach = t(compiled.breach_band, torch.bool) if getattr(compiled, "breach_band", None) is not None and \
             getattr(compiled, "breach_rs", 0.0) > 0 else None
         self.breach_rs = float(getattr(compiled, "breach_rs", 0.0) or 0.0)
+        # buildings soft zone (Vivek, 19 Oct 2026): (normal - distance) along a span; the deepest sample is charged
+        bdf = getattr(compiled, "bld_soft_deficit", None)
+        self.bsoft = t(bdf) if bdf is not None and (getattr(compiled, "bld_soft_a_rs", 0.0) > 0 or
+                                                    getattr(compiled, "bld_soft_rate_rs_per_m", 0.0) > 0) else None
+        self.bsoft_a = float(getattr(compiled, "bld_soft_a_rs", 0.0) or 0.0)
+        self.bsoft_rate = float(getattr(compiled, "bld_soft_rate_rs_per_m", 0.0) or 0.0)
         self.par_meta = [(pr.rule_id, getattr(pr, "crossing_exempt", False)) for pr in compiled.parallels]
         self.h, self.w = compiled.tower_forbidden.shape
         self.f_x0, self.f_y_top, self.res_m = float(compiled.frame.x0), float(compiled.frame.y_top), float(compiled.frame.res_m)
@@ -403,6 +409,10 @@ def _edge_geom(compiled: Compiled, grid: Grid, p: SolverParams, rasters: "_Raste
         # village cluster within the normal distance (Vivek, 18 Oct 2026): search cost per breached span
         hit_b = rasters.breach[row, col].any(dim=-1)
         E = E + torch.where(hit_b, torch.full_like(E, rasters.breach_rs), torch.zeros_like(E))
+    if getattr(rasters, "bsoft", None) is not None:
+        # buildings soft zone (Vivek, 19 Oct 2026): search cost A + rate x depth of the deepest building on the span
+        dep = rasters.bsoft[row, col].amax(dim=-1)
+        E = E + torch.where(dep > 0, rasters.bsoft_a + rasters.bsoft_rate * dep, torch.zeros_like(E))
     crossed_river = torch.zeros_like(invalid)
     X = torch.zeros_like(invalid)                   # crosses a feature with a deviation cap at its towers
 

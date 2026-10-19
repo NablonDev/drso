@@ -1686,3 +1686,32 @@ def test_square_dead_end_point():
     # another substation nearby does not push the dead end: the rule stays exact and the clash is the spotting's to flag
     (xo, yo), _, _ = square_dead_end([("S/S", yard), ("other", box(80, 5, 200, 60))], (0.0, 0.0), 100.0, toward=(5000.0, 0.0), clear_m=10.0)
     assert abs(xo - 100.0) < 1e-6
+
+
+def test_building_soft_zone_charges_each_building_once_and_is_off_by_default():
+    """Vivek, 19 Oct 2026: buildings soft zone — hard buffer at soft_min_m, between it and the corridor half-width a
+    search cost per building of A + rate x depth, counted once per building over a chain; off by default."""
+    from beeline_engine.spotting import SpotParams, _chain_cost, _bld_soft_hits
+    f = frame()
+    c = f.length_m / 2
+    house = frame_geom(f, box(c - 5, 25, c + 5, 35))                    # 25 m from the bee-line axis
+    g = gdf([house], "building")
+    comp0, _, _ = _comp16(f, {"buildings": g})
+    assert comp0.bld_soft_normal_m == 0 and comp0.bld_soft_deficit is None          # off by default
+    spec = LineSpec(765, "dc")
+    ov = {"buildings": {"params": {"soft_min_m": 20}}, "building_clearance": {"enabled": False}}
+    rules, costs = resolve_rules(spec, ov), resolve_costs(spec)
+    tc = {t: costs["towers"][t]["price_rs"] for t in TOWER_TYPES}
+    comp = compile_rules(f, {"buildings": g}, rules, costs, 765, 33.5, 150, 400, tower_cost_rs=tc)
+    assert abs(comp.bld_soft_normal_m - 33.5) < 1e-6 and abs(comp.bld_soft_a_rs - 2.2e5) < 1 and abs(comp.bld_soft_rate_rs_per_m - 1e5) < 1
+    bt = [vr for vr in comp.tower_nogo if vr.rule_id == "buildings"]
+    assert bt and abs(bt[0].d - 20.0) < 1e-6                           # hard buffer at the soft minimum
+    chain = [(c - 800, 0.0), (c, 0.0), (c + 800, 0.0)]                  # the house sits beside the middle tower
+    hits = _bld_soft_hits(comp, chain)
+    assert len(hits) == 1 and abs(list(hits.values())[0] - 25.0) < 1e-6   # once, though two spans pass it
+    sp = SpotParams(design_span_m=400, span_max_m=400, min_span_m=100, max_dev_deg=60,
+                    type_bands={"A": 2, "B1": 15, "C1": 30, "D45": 45, "D60": 60}, section_km=5, parallel_angle_deg=30,
+                    tower_cost_rs=tc, ground_clearance_m=18.15, lowest_attachment_m=32.6, sag_at_design_m=14.278,
+                    go_radius_m=150)
+    extra = _chain_cost(comp, sp, chain, ["A"]) - _chain_cost(comp0, sp, chain, ["A"])
+    assert abs(extra - (2.2e5 + 1e5 * 8.5)) < 2e4, extra

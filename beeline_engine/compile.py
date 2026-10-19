@@ -175,6 +175,14 @@ class Compiled:
     breach_rs: float = 0.0                      # ₹ search cost per breached span
     breach_normal_m: float = 0.0
     breach_geoms: list = field(default_factory=list)   # [(frame geometry, label)] of the clusters
+    # buildings soft zone (Vivek, 19 Oct 2026): hard buffer at soft_min_m; between it and the normal distance a
+    # building costs the search A + rate x (normal - distance), each building once (spotting) / the deepest per span
+    # (search raster); flagged with its distance. bld_soft_deficit: raster of (normal - distance) inside the band
+    bld_soft_normal_m: float = 0.0
+    bld_soft_a_rs: float = 0.0
+    bld_soft_rate_rs_per_m: float = 0.0
+    bld_soft_deficit: np.ndarray | None = None
+    bld_soft_geoms: list = field(default_factory=list)  # [(frame geometry, label)] of the buildings
     # small ponds (Vivek, 18 Oct 2026): spanned in one span, towers keep their buffer; a span over / near one is warned
     small_ponds: list = field(default_factory=list)    # [(frame geometry, label)]
     small_pond_warn_m: float = 0.0
@@ -829,6 +837,7 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
     crossings: list[CrossingRaster] = []
     parallels: list[ParallelRaster] = []
     breach: dict = {"band": None, "rs": 0.0, "normal": 0.0, "geoms": []}
+    bsoft: dict = {"deficit": None, "normal": 0.0, "a": 0.0, "rate": 0.0, "geoms": []}
     small_ponds: list = []
     small_pond_warn: dict = {"m": 0.0}
     tol = single_angle_tol_deg
@@ -854,6 +863,28 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
         if p.get("min_area_m2"):
             from dataclasses import replace as _replace
             r = _replace(r, layer=R.filtered(r.layer, float(p["min_area_m2"])))
+        if r.id == "buildings" and p.get("soft_min_m") is not None:
+            # buildings soft zone (Vivek, 19 Oct 2026): hard tower and conductor buffer at soft_min_m; the band out to
+            # the normal distance (the corridor half-width) costs the search per building and is flagged
+            normal = float(p.get("tower_setback_m", 0) or 0)
+            smin = float(p["soft_min_m"])
+            if 0.0 <= smin < normal - 1e-6:
+                bd = R.dist(r.layer, r.classes)
+                if bd is not None:
+                    dfc = np.clip(normal - bd, 0.0, normal - smin).astype(np.float32)
+                    dfc[bd > normal] = 0.0
+                    bsoft.update(deficit=dfc, normal=normal,
+                                 a=float(p.get("soft_cost_per_building_cr", 0) or 0) * 1e7,
+                                 rate=float(p.get("soft_cost_per_m_cr", 0) or 0) * 1e7)
+                    fg = R.frame_geoms(r.layer, r.classes)
+                    sub_ = R.subset(r.layer, r.classes)
+                    if fg is not None and sub_ is not None:
+                        for g_, (_, row_) in zip(fg, sub_.iterrows()):
+                            if g_ is not None and not g_.is_empty:
+                                bsoft["geoms"].append((g_, str(row_.get("src_id") or row_.get("name") or "building")))
+                from dataclasses import replace as _replace
+                p = {**p, "tower_setback_m": smin, "conductor_buffer": "Fixed", "conductor_buffer_m": smin}
+                r = _replace(r, params=p)
         if r.id == "clusters" and p.get("breach_min_m") is not None:
             # village clusters (Vivek, 18 Oct 2026): hard buffer at the breach distance, the band up to the normal
             # distance priced per span in the search and flagged in the result
@@ -1452,7 +1483,9 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
                     precedent_items=list(precedent_items.values()), near_existing=near_existing,
                     unclassified_structures=unclassified,
                     breach_band=breach["band"], breach_rs=breach["rs"], breach_normal_m=breach["normal"],
-                    breach_geoms=breach["geoms"], small_ponds=small_ponds, small_pond_warn_m=small_pond_warn["m"])
+                    breach_geoms=breach["geoms"], small_ponds=small_ponds, small_pond_warn_m=small_pond_warn["m"],
+                    bld_soft_normal_m=bsoft["normal"], bld_soft_a_rs=bsoft["a"], bld_soft_rate_rs_per_m=bsoft["rate"],
+                    bld_soft_deficit=bsoft["deficit"], bld_soft_geoms=bsoft["geoms"])
 
 
 def _airport_zone(R: "_Rasterizer", frame: Frame, layer: str, classes, d: float, funnel_m: float):

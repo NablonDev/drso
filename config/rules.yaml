@@ -108,6 +108,14 @@ groups:
           - {key: applies_to, label: "Applies to", type: sel, value: "All towers", options: ["Angular towers", "All towers"]}
           - {key: min_area_m2, label: "Ignore structures smaller than", type: num, unit: "m²", value: 0}
           - {key: last_resort_max_area_m2, label: "Last resort: cross structures up to", type: num, unit: "m²", value: 10}
+          # soft zone (Vivek, 19 Oct 2026; off while equal to the tower setback): towers and conductor may come down to
+          # soft_min_m at a SEARCH cost per building of A + rate x (setback - distance), each building once, flagged with
+          # its distance; the CEA clearance rule (building_clearance, 23.9 m at 765 kV) still holds for the conductor.
+          # A = ₹2.2 lakh, the lenient relocation figure: RFCTLARR 2nd Schedule transport ₹50,000 + one-time
+          # resettlement ₹50,000 + a PMAY-G rural house ₹1.20 lakh; rate ₹1 lakh per metre
+          - {key: soft_min_m, label: "Soft zone: towers and conductor down to", type: num, unit: m, value: {765: 33.5, 400: 23, 220: 17.5, 132: 13.5}}
+          - {key: soft_cost_per_building_cr, label: "Soft zone: search cost per building", type: num, unit: "₹ Cr", value: 0.022}
+          - {key: soft_cost_per_m_cr, label: "… plus per metre inside the setback", type: num, unit: "₹ Cr", value: 0.01}
 
       - id: clusters
         name: "Built-up cluster (village)"

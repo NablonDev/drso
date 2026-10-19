@@ -651,6 +651,17 @@ def _leg_model(chk: Checker, p, q, sp: SpotParams, design: float, hilly_leg: boo
         brw = np.clip(((f.y_top - by) / f.res_m).astype(int), 0, f.height - 1)
         hitb = chk.c.breach_band[brw, bc].astype(np.int32)
         br_pref = (tb, np.concatenate([[0], np.cumsum(hitb)]))
+    # buildings soft zone along the leg (Vivek, 19 Oct 2026): (position along the leg, perpendicular distance)
+    # of each building near it; a candidate span is charged for the buildings whose foot point lies on it
+    bs_x = []
+    if _bld_soft_tree(chk.c) is not None:
+        leg_ = LineString([p, q])
+        lim_ = float(chk.c.bld_soft_normal_m)
+        for jb in _bld_soft_tree(chk.c).query(leg_, predicate="dwithin", distance=lim_):
+            g_ = chk.c.bld_soft_geoms[jb][0]
+            from shapely.ops import nearest_points as _np_
+            pa_, _ = _np_(leg_, g_)
+            bs_x.append((leg_.project(pa_), g_))
     # span-band features (SH) the leg crosses: (distance from p, band, penalty) — 16 Oct 2026
     band_x = []
     if _band_index(chk.c):
@@ -676,6 +687,14 @@ def _leg_model(chk: Checker, p, q, sp: SpotParams, design: float, hilly_leg: boo
         for sx, lo, hi, pen in band_x:
             if pos[i] < sx < pos[j] and not (lo - 1e-3 <= L <= hi + 1e-3):
                 c += pen
+        if bs_x:
+            seg_ = None
+            for sx_, g_ in bs_x:
+                if pos[i] < sx_ <= pos[j] or (i == 0 and sx_ <= pos[j]):
+                    seg_ = seg_ or LineString([at(pos[i]), at(pos[j])])
+                    dd_ = g_.distance(seg_)
+                    if dd_ < chk.c.bld_soft_normal_m - 1e-6:
+                        c += chk.c.bld_soft_a_rs + chk.c.bld_soft_rate_rs_per_m * (chk.c.bld_soft_normal_m - dd_)
         if br_pref is not None:
             tb_, cs_ = br_pref
             ia = int(np.searchsorted(tb_, pos[i], side="left")); ib = int(np.searchsorted(tb_, pos[j], side="right"))
@@ -896,7 +915,42 @@ def _chain_cost(comp: Compiled, sp: SpotParams, pts, inner_types) -> float:
         c += _band_penalty(comp, (x0, y0), (x1, y1), L)
         c += _breach_rs(comp, (x0, y0), (x1, y1))
         c += _excess_rs(sp, L)                      # span over the plain design span (search only, 18 Oct 2026)
+    c += _bld_soft_rs(comp, _bld_soft_hits(comp, pts))   # buildings soft zone, once per building (19 Oct 2026)
     return c
+
+
+def _bld_soft_tree(comp: Compiled):
+    """STRtree over the buildings of the soft zone (Vivek, 19 Oct 2026), or None when the zone is off."""
+    bg = getattr(comp, "bld_soft_geoms", None)
+    if not bg or getattr(comp, "bld_soft_normal_m", 0) <= 0:
+        return None
+    tr = comp.__dict__.get("_bld_soft_tree")
+    if tr is None:
+        from shapely import STRtree
+        tr = comp.__dict__["_bld_soft_tree"] = STRtree([g for g, _ in bg])
+    return tr
+
+
+def _bld_soft_hits(comp: Compiled, pts) -> dict:
+    """{building index: closest distance} for the buildings inside the soft zone of a chain of spans (frame coords);
+    each building counted once at its closest distance to the chain (Vivek, 19 Oct 2026)."""
+    tr = _bld_soft_tree(comp)
+    if tr is None:
+        return {}
+    bg, lim = comp.bld_soft_geoms, float(comp.bld_soft_normal_m)
+    out: dict = {}
+    for a, b in zip(pts[:-1], pts[1:]):
+        seg = LineString([a, b])
+        for j in tr.query(seg, predicate="dwithin", distance=lim):
+            dd = bg[j][0].distance(seg)
+            if dd < lim - 1e-6 and dd < out.get(j, 1e18):
+                out[j] = dd
+    return out
+
+
+def _bld_soft_rs(comp: Compiled, hits: dict) -> float:
+    lim = float(getattr(comp, "bld_soft_normal_m", 0) or 0)
+    return sum(comp.bld_soft_a_rs + comp.bld_soft_rate_rs_per_m * max(0.0, lim - d) for d in hits.values())
 
 
 def _breach_rs(comp: Compiled, a, b) -> float:
@@ -1159,6 +1213,18 @@ def build_route(chk: Checker, pts: list[tuple[float, float]], angle_set: set[int
                 if dd < lim - 1e-6:
                     towers[i].warnings.append(f"cluster_breach:{bg[j][1]} {dd:.0f}m")
                     breaches += 1
+    # buildings inside the soft zone (Vivek, 19 Oct 2026): a warning with the exact distance, each building once
+    bsh = {}
+    if _bld_soft_tree(comp) is not None:
+        lim_b = float(comp.bld_soft_normal_m)
+        for i in range(1, n - 2):
+            seg = LineString([pts[i], pts[i + 1]])
+            for j in _bld_soft_tree(comp).query(seg, predicate="dwithin", distance=lim_b):
+                dd = comp.bld_soft_geoms[j][0].distance(seg)
+                if dd < lim_b - 1e-6 and dd < bsh.get(j, (1e18, 0))[0]:
+                    bsh[j] = (dd, i)
+        for j, (dd, i) in bsh.items():
+            towers[i].warnings.append(f"building_soft:{comp.bld_soft_geoms[j][1]} {dd:.1f}m")
     # small ponds spanned (Vivek, 18 Oct 2026): a warning on each span over or within the pond buffer of one
     spd = getattr(comp, "small_ponds", None)
     if spd:
@@ -1264,6 +1330,10 @@ def build_route(chk: Checker, pts: list[tuple[float, float]], angle_set: set[int
     cost, stats = route_cost(comp, towers, spans, sp)
     if bg:
         stats["cluster_breach_spans"] = breaches
+    if _bld_soft_tree(comp) is not None:
+        # search-only charge, reported apart from the cost (Vivek, 19 Oct 2026)
+        stats["building_soft_count"] = len(bsh)
+        stats["building_soft_charge_cr"] = round(_bld_soft_rs(comp, {j: v[0] for j, v in bsh.items()}) / 1e7, 3)
     if polish is not None:
         stats["cost_polish"] = polish
     return SpottedRoute(towers, spans, cost, stats, "pulled" if angle_set is None else "grid")
