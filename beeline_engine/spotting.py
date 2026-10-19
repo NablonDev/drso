@@ -1086,11 +1086,13 @@ def build_route(chk: Checker, pts: list[tuple[float, float]], angle_set: set[int
         pts, v_saved, v_moves = _vertex_descent(chk, pts, sp)
         pts, saved, moves = _cost_polish(chk, pts, sp)
         pts, r_saved, r_moves = _respot_runs(chk, pts, sp)
+        pts, b_saved, b_moves = _straighten_between_bends(chk, pts, sp)
         polish = {"moves": moves, "saved_cr": round(saved / 1e7, 3),
                   "straighten_moves": s_moves, "straighten_saved_cr": round(s_saved / 1e7, 3),
                   "merge_moves": m_moves, "merge_saved_cr": round(m_saved / 1e7, 3),
                   "vertex_moves": v_moves, "vertex_saved_cr": round(v_saved / 1e7, 3),
-                  "respot_runs": r_moves, "respot_saved_cr": round(r_saved / 1e7, 3)}
+                  "respot_runs": r_moves, "respot_saved_cr": round(r_saved / 1e7, 3),
+                  "bend_straighten_moves": b_moves, "bend_straighten_saved_cr": round(b_saved / 1e7, 3)}
     added = {k for k, pt in enumerate(pts) if pt in added_pts}
     towers: list[Tower] = []
     n = len(pts)
@@ -1658,6 +1660,49 @@ def _straighten_runs(chk: Checker, pts, sp: SpotParams, max_run: int = 5, reach_
                 break
         if not done:
             i += 1
+    return pts, saved, moves
+
+
+def _straighten_between_bends(chk: Checker, pts, sp: SpotParams, max_len_m: float = 2000.0, min_gain_rs: float = 1e5):
+    """Final pass (Vivek, 19 Oct 2026): for every pair of bends i < j at most max_len_m apart along the line, the
+    towers between them are replaced by a straight run spotted by the exact leg programme; kept when every check
+    passes and the chain cost (both end bends' new turns included) drops by min_gain_rs. Runs after the other
+    polish steps, so it sees the final bends (the 5-span straighten probes with even spacing, before the bends
+    settle, and missed T164 -> T169 on rev 44). Crossing towers inside the run are never removed."""
+    pts = list(pts)
+    moves, saved = 0, 0.0
+    i = 2
+    while i < len(pts) - 4:
+        if not _is_vertex(pts, i):
+            i += 1
+            continue
+        best = None
+        run_len = 0.0
+        for j in range(i + 1, len(pts) - 2):
+            run_len += math.dist(pts[j - 1], pts[j])
+            if run_len > max_len_m:
+                break
+            if _is_crossing_tower(chk, pts, j - 1) and j - 1 > i:
+                break
+            if j - i < 2 or not _is_vertex(pts, j):
+                continue
+            leg = _spot_leg(chk, pts[i], pts[j], sp, exact=True)
+            if leg is None:
+                continue
+            trial = pts[:i + 1] + list(leg) + pts[j:]
+            jn = i + len(leg) + 1
+            a, b = max(1, i - 1), min(len(pts) - 2, j + 1)
+            base = _chain_cost(chk.c, sp, pts[a - 1:b + 2], [_type_at(chk, sp, pts, k) or "D60" for k in range(a, b + 1)])
+            bn = min(len(trial) - 2, jn + 1)
+            cost = _chain_cost(chk.c, sp, trial[a - 1:bn + 2], [_type_at(chk, sp, trial, k) or "D60" for k in range(a, bn + 1)])
+            if cost < base - min_gain_rs and (best is None or base - cost > best[0]):
+                if _run_legal(chk, sp, trial, i, jn, fixed={i, jn}):
+                    best = (base - cost, trial, j)
+        if best is not None:
+            log.info("straighten bends %d..%d: ₹%.2f Cr", i, best[2], best[0] / 1e7)
+            pts, saved, moves = best[1], saved + best[0], moves + 1
+            continue                                   # retry from the same bend on the new line
+        i += 1
     return pts, saved, moves
 
 

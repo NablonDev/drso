@@ -589,7 +589,9 @@ def test_relaxed_route_crosses_a_last_resort_water_body():
     f = frame()
     c = f.length_m / 2
     pond = frame_geom(f, box(c - 40, -6000, c + 40, 6000))
-    res = run_solve(solve_input({"pond": gdf([pond], "pond", "Test pond")}, routes=4))
+    # 19 Oct 2026: ponds are spannable at any size by default; the last-resort path is tested with the old 1 ha limit
+    res = run_solve(solve_input({"pond": gdf([pond], "pond", "Test pond")}, routes=4,
+                                overrides={"pond": {"params": {"small_max_area_ha": 1.0}}}))
     assert res["feasible"]
     keys = [r["key"] for r in res["routes"]]
     assert keys == ["relaxed"], keys
