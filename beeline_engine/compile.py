@@ -312,7 +312,7 @@ class _Rasterizer:
     def area_part(self, layer: str, max_area_m2: float, part: str) -> str:
         """Key of a copy of `layer` holding only its polygons of at most max_area_m2 ("small") or the rest ("large";
         features without an outline — points, lines — have no area and count as large). Vivek, 18 Oct 2026: ponds."""
-        key = f"{layer}|area{'<=' if part == 'small' else '>'}{max_area_m2:g}"
+        key = f"{layer}|area{'<=' if part == 'small' else '>'}{max_area_m2:g}"     # inf = every outline
         if key in self.layers:
             return key
         g = self.layers.get(layer)
@@ -873,26 +873,6 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
                                 breach["geoms"].append((g_, str(row_.get("src_id") or row_.get("name") or "cluster")))
                 p = {**p, "tower_setback_m": min(float(p.get("tower_setback_m", 0) or 0), bmin),
                      "conductor_buffer_m": min(float(p.get("conductor_buffer_m", 0) or 0), bmin)}
-        if r.id == "pond" and p.get("small_max_area_ha"):
-            # small ponds (Vivek, 18 Oct 2026): at most small_max_area_ha may be spanned — towers keep the tower buffer,
-            # no conductor buffer, a warning on the span; the rest of the rule applies to the larger ponds
-            amax = float(p["small_max_area_ha"]) * 1e4
-            sk = R.area_part(r.layer, amax, "small")
-            sdist = R.dist(sk, r.classes)
-            if sdist is not None:
-                sd = float(p.get("tower_setback_m", 0) or 0)
-                add(_within(sdist, sd), tower_forbidden, r.id)
-                vec(tower_geoms, r.id, sk, r.classes, sd)
-                fg = R.frame_geoms(sk, r.classes)
-                sub_ = R.subset(sk, r.classes)
-                if fg is not None and sub_ is not None:
-                    au = sub_.to_crs(frame.epsg).area.values
-                    for g_, (_, row_), a_ in zip(fg, sub_.iterrows(), au):
-                        if g_ is not None and not g_.is_empty:
-                            small_ponds.append((g_, f"{row_.get('src_id') or 'pond'} {a_ / 1e4:.2f}ha"))
-                small_pond_warn["m"] = float(p.get("conductor_buffer_m", 0) or 0)
-            from dataclasses import replace as _replace
-            r = _replace(r, layer=R.area_part(r.layer, amax, "large"))
         if p.get("_width_part"):
             # river / small river (Vivek, 16 Oct 2026): each rule reads its own reaches of the river polygons
             from dataclasses import replace as _replace
@@ -916,6 +896,28 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
                         "protected": base in PRECEDENT_PA_LAYERS}
                 return k
             r = _replace(r, layer=_eased(r.layer), also_layers=[_eased(x) for x in (r.also_layers or [])] or r.also_layers)
+        # (after the precedent easing, so a pond an existing tower stands in is opened for the small-pond part too)
+        if r.id == "pond" and p.get("small_max_area_ha") is not None:
+            # small ponds (Vivek, 18 Oct 2026): at most small_max_area_ha may be spanned — towers keep the tower buffer,
+            # no conductor buffer, a warning on the span; the rest of the rule applies to the larger ponds.
+            # 19 Oct 2026: 0 = no size limit (any outline; points / lines without an area keep the full rule)
+            amax = float(p["small_max_area_ha"]) * 1e4 if float(p["small_max_area_ha"] or 0) > 0 else float("inf")
+            sk = R.area_part(r.layer, amax, "small")
+            sdist = R.dist(sk, r.classes)
+            if sdist is not None:
+                sd = float(p.get("tower_setback_m", 0) or 0)
+                add(_within(sdist, sd), tower_forbidden, r.id)
+                vec(tower_geoms, r.id, sk, r.classes, sd)
+                fg = R.frame_geoms(sk, r.classes)
+                sub_ = R.subset(sk, r.classes)
+                if fg is not None and sub_ is not None:
+                    au = sub_.to_crs(frame.epsg).area.values
+                    for g_, (_, row_), a_ in zip(fg, sub_.iterrows(), au):
+                        if g_ is not None and not g_.is_empty:
+                            small_ponds.append((g_, f"{row_.get('src_id') or 'pond'} {a_ / 1e4:.2f}ha"))
+                small_pond_warn["m"] = float(p.get("conductor_buffer_m", 0) or 0)
+            from dataclasses import replace as _replace
+            r = _replace(r, layer=R.area_part(r.layer, amax, "large"))
         if m == "conductor_clearance":
             # Horizontal clearance is the per-voltage figure (no per-33 kV increment on top of it)
             # and is measured from the outer phase, which sits outer_phase_m from the line axis

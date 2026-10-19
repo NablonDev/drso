@@ -214,7 +214,9 @@ groups:
         params:
           - {key: tower_setback_m, label: "Tower buffer", type: num, unit: m, value: 30}
           - {key: conductor_buffer_m, label: "Conductor buffer", type: num, unit: m, value: 30}
-          - {key: small_max_area_ha, label: "Small pond (spanned, towers keep the buffer): area up to", type: num, unit: ha, value: 1.0}
+          # Vivek, 19 Oct 2026: no size limit — any pond outline may be spanned where one span clears it (towers keep the
+          # buffer, none can stand in the water); 0 = no limit
+          - {key: small_max_area_ha, label: "Spannable pond: area up to (0 = any size)", type: num, unit: ha, value: 0}
           - {key: treatment, label: "Treatment", type: sel, value: "Last resort", options: ["No-Go", "Last resort", "Allowed"]}
           - {key: last_resort_towers_inside, label: "Last resort: towers inside (piles)", type: sel, value: "No", options: ["Yes", "No"]}
           - {key: approval_months, label: "Approval time if crossed", type: num, unit: months, value: 6}
@@ -411,7 +413,7 @@ groups:
           # this keeps the bank buffer and is crossed like a canal — any angle, ordinary tower types, no turn limit at
           # the crossing towers, no long span (the ordinary span maximum)
           - {key: small_width_m, label: "Narrow river: narrower than", type: num, unit: m, value: 150}
-          - {key: small_tower_setback_m, label: "Narrow river: tower buffer from the banks", type: num, unit: m, value: 150}
+          - {key: small_tower_setback_m, label: "Narrow river: tower buffer from the banks", type: num, unit: m, value: 100}   # Vivek, 19 Oct 2026: was 150
 
       - id: canal
         name: "Canal"

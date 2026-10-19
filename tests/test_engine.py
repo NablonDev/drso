@@ -809,16 +809,17 @@ def test_existing_tower_opens_the_pond_it_stands_in_only_when_blocked():
     f = frame()
     c = f.length_m / 2
     pond = frame_geom(f, box(c, -2600, c + 300, 2600))                 # closes the whole band
-    blocked = run_solve(solve_input({"pond": gdf([pond], "pond", "Big tank")}))
+    lim = {"pond": {"params": {"small_max_area_ha": 1.0}}}            # 19 Oct 2026: ponds are spannable by default; test the buffered kind
+    blocked = run_solve(solve_input({"pond": gdf([pond], "pond", "Big tank")}, overrides=lim))
     assert not blocked["feasible"]
-    res = run_solve(solve_input({"pond": gdf([pond], "pond", "Big tank"), "power": _tower_at(f, c + 150, 1500)}))
+    res = run_solve(solve_input({"pond": gdf([pond], "pond", "Big tank"), "power": _tower_at(f, c + 150, 1500)}, overrides=lim))
     assert res["feasible"]
     r = res["routes"][0]
     assert r["events"][0]["type"] == "PRECEDENT" and "pond" in r["events"][0]["text"]
     assert any("Eased by precedent" in a["item"] for a in r["stats"]["approval_items"])
     # an open band: the precedent is not used even with the tower there
     pond2 = frame_geom(f, box(c, 500, c + 300, 2600))
-    r2 = run_solve(solve_input({"pond": gdf([pond2], "pond"), "power": _tower_at(f, c + 150, 1500)}))["routes"][0]
+    r2 = run_solve(solve_input({"pond": gdf([pond2], "pond"), "power": _tower_at(f, c + 150, 1500)}, overrides=lim))["routes"][0]
     assert all(e["type"] != "PRECEDENT" for e in r2["events"]) and not r2["stats"].get("precedent_items")
 
 
@@ -1306,7 +1307,7 @@ def test_river_has_no_parallel_buffer_and_narrow_reaches_are_canal_like():
     g = gdf([frame_geom(f, wide.union(narrow)), frame_geom(f, edge)], "river")
     comp, rules, _ = _comp16(f, {"river": g})
     assert "small_river" in rules and "max_span_m" not in rules["small_river"].params
-    assert rules["small_river"].params["tower_setback_m"] == 150
+    assert rules["small_river"].params["tower_setback_m"] == 100          # 19 Oct 2026 (was 150)
     assert not comp.parallels
     small = [cr for cr in comp.crossings if cr.rule_id == "small_river"]
     big = [cr for cr in comp.crossings if cr.rule_id == "river"]
@@ -1316,9 +1317,9 @@ def test_river_has_no_parallel_buffer_and_narrow_reaches_are_canal_like():
     assert all(cr.max_dev_deg == 45 for cr in big)
     st = [vr for vr in comp.tower_nogo if vr.rule_id == "small_river"]
     rv = [vr for vr in comp.tower_nogo if vr.rule_id == "river"]
-    assert st and abs(st[0].d - 150.0) < 1e-6 and rv and abs(rv[0].d - 150.0) < 1e-6
-    assert any(vr.hits(Point(c + 50 + 140, 1500)) for vr in st)          # 140 m off the narrow reach's bank
-    assert not any(vr.hits(Point(c + 50 + 160, 1500)) for vr in st + rv)  # 160 m off it: clear
+    assert st and abs(st[0].d - 100.0) < 1e-6 and rv and abs(rv[0].d - 150.0) < 1e-6
+    assert any(vr.hits(Point(c + 50 + 90, 1500)) for vr in st)           # 90 m off the narrow reach's bank
+    assert not any(vr.hits(Point(c + 50 + 110, 1500)) for vr in st + rv)  # 110 m off it: clear
     # the 150 m channel stays a river
     assert any(vr.hits(Point(c + 3150 + 140, 0)) for vr in rv)
     assert not any(vr.hits(Point(c + 3150 + 140, 0)) for vr in st)
@@ -1332,7 +1333,12 @@ def test_small_ponds_are_spanned_with_a_warning():
     c = f.length_m / 2
     small = frame_geom(f, box(c - 30, -30, c + 30, 30))                 # 0.36 ha, on the bee-line
     large = frame_geom(f, box(c + 3000 - 75, -1000, c + 3000 + 75, -900))  # 1.5 ha, off the line
-    comp, rules, costs = _comp16(f, {"pond": gdf([small, large], "pond")})
+    ov = {"pond": {"params": {"small_max_area_ha": 1.0}}}          # the 1 ha limit of 18 Oct (19 Oct default: no limit)
+    spec = LineSpec(765, "dc"); rules = resolve_rules(spec, ov); costs = resolve_costs(spec)
+    comp = compile_rules(f, {"pond": gdf([small, large], "pond")}, rules, costs, 765, 33.5, 150, 400,
+                         tower_cost_rs={t: costs["towers"][t]["price_rs"] for t in TOWER_TYPES})
+    comp_any, _, _ = _comp16(f, {"pond": gdf([small, large], "pond")})
+    assert len(comp_any.small_ponds) == 2 and not [vr for vr in comp_any.conductor_nogo if vr.rule_id == "pond"]
     pt = [vr for vr in comp.tower_nogo if vr.rule_id == "pond"]
     pc = [vr for vr in comp.conductor_nogo if vr.rule_id == "pond"]
     assert any(vr.hits(Point(c + 55, 0)) for vr in pt) and not any(vr.hits(Point(c + 65, 0)) for vr in pt)

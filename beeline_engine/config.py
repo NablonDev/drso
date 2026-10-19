@@ -148,7 +148,7 @@ def _small_river(out: dict) -> None:
     w = float(rv.params["small_width_m"])
     from dataclasses import replace
     out["river"] = replace(rv, params={**rv.params, "_width_part": "wide", "_width_m": w})
-    sp_ = {"tower_setback_m": float(rv.params.get("small_tower_setback_m", 150)), "angle_deg": "Any",
+    sp_ = {"tower_setback_m": float(rv.params.get("small_tower_setback_m", 100)), "angle_deg": "Any",
            "tower_type": "A/B/C/D", "_width_part": "narrow", "_width_m": w}
     if rv.params.get("small_max_span_m"):
         sp_["max_span_m"] = float(rv.params["small_max_span_m"])

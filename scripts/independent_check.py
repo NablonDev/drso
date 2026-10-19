@@ -109,7 +109,7 @@ if layers.get('river') is not None:
     layers['river'], layers['small_river'] = _gdf(_wide), _gdf(_narrow)
     layer_notes.append(f"river: {len(_narrow)} feature(s) with reaches narrower than {SMALL_RIVER_W:.0f} m -> small_river rule")
 # small ponds (18 Oct 2026): polygons of at most 1 ha may be spanned (tower buffer kept, wire may pass over; warning)
-SMALL_POND_HA = 1.0
+SMALL_POND_HA = float('inf')   # 19 Oct 2026: any pond outline may be spanned
 if layers.get('pond') is not None:
     _pa = layers['pond'].area.values
     _sm = layers['pond'].geometry.geom_type.isin(['Polygon', 'MultiPolygon']).values & (_pa > 0) & (_pa <= SMALL_POND_HA * 1e4 + 1e-6)
@@ -219,7 +219,7 @@ TOWER_SETBACKS = [
     ('state_highway', 'roads', ['sh'], 87.0),
     ('bridges', 'bridges', ['road_bridge', 'rail_bridge', 'flyover', 'underpass'], 0.0),
     ('river', 'river', None, 150.0),
-    ('small_river', 'small_river', None, 150.0),  # 18 Oct 2026: narrow river, 150 m from the banks
+    ('small_river', 'small_river', None, 100.0),  # 19 Oct 2026: narrow river, 100 m from the banks
     ('canal', 'canal', None, 45.0),          # 17 Oct 2026: the only canal rule, 45 m from the centreline
     ('nalla', 'nalla', None, 40.0),          # 16 Oct 2026: the only nalla rule
     ('power_line', 'power', ['power_tower'], 72.5),
@@ -397,7 +397,7 @@ def min_type_for(rule, kv=None):
 LONG_SPAN_RULES = {'river', 'national_highway', 'pipeline_crossing'}
 ANGLE_MIN = {'railway': 80.0, 'national_highway': 80.0, 'state_highway': 60.0, 'bridges': 80.0, 'river': 75.0,
              'pipeline_crossing': 75.0, 'power_line': 70.0, 'power_line_lt': 70.0, 'small_river': None}
-SIDE_MIN = {'railway': 86.0, 'national_highway': 92.5, 'state_highway': 87.0, 'river': 150.0, 'small_river': 150.0,
+SIDE_MIN = {'railway': 86.0, 'national_highway': 92.5, 'state_highway': 87.0, 'river': 150.0, 'small_river': 100.0,
             'pipeline_crossing': 30.0}
 MAX_SPAN = {'railway': RAIL_SPAN, 'state_highway': 400.0}   # narrow river: the ordinary maximum (18 Oct 2026)
 SH_BAND = (240.0, 260.0)           # 16 Oct 2026: SH crossing span without an approval record
