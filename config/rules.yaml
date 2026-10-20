@@ -168,6 +168,9 @@ groups:
           # (straightened outline, the face the gantry stands in front of, never one turned away from the route); the AESL design
           # is 8° off at Shivlaka, 37° at Bhujpool
           - {key: gantry_square_tol_deg, label: "Gantry span within this of square to the substation face (0 = off)", type: num, unit: "°", value: 40}
+          # Vivek, 20 Oct 2026: the two gantry span rules above (at most gantry_max_span_m, square to the face) at both ends, or
+          # at one end only — where the other end is an existing tower the route joins (e.g. AESL AP-56 / AP-57 at Shivlaka)
+          - {key: gantry_rules_at, label: "Gantry span maximum and square rule apply at", type: sel, value: "Both ends", options: ["Both ends", "Start (A) only", "End (B) only"]}
 
       - id: dams
         name: "Dams"
@@ -536,10 +539,16 @@ groups:
           # came in on the belief that the window bounds the span — it does not (the window is relaxable at a search cost;
           # 376-434 m crossings came through). Both apply: the window places the towers, this caps the span.
           # Vivek, 19 Oct 2026: 250 m (was 350 m restored the same day)
-          - {key: max_span_m, label: "Max crossing span", type: num, unit: m, value: 250}
+          # Vivek, 20 Oct 2026: LT crossing span 260 ± 10 m — 250-270 m normally; shorter needs an approval record (the search
+          # keeps to the band at a penalty, as the state-highway band); never over 270 m
+          - {key: max_span_m, label: "Max crossing span", type: num, unit: m, value: 270}
+          - {key: span_band_m, label: "Crossing span without approval (min-max)", type: rng, unit: m, value: [250, 270]}
+          - {key: span_band_penalty_pct, label: "Outside the band: search cost, % of the crossing tower's price (approval record)", type: num, unit: "%", value: 20}
           - {key: angle_min_kv, label: "Crossing angle applies from", type: num, unit: kV, value: 66}
           # the two crossing towers stand 1.2-1.7 × our tower height from the crossed conductor, no more (72.5 m → 87-123 m)
-          - {key: crossing_side_m, label: "Crossing tower to the crossed conductor, each side (min-max)", type: rng, unit: m, value: {765: [87, 123], 400: [66, 94], 220: [48, 68], 132: [38, 54]}}
+          # Vivek, 20 Oct 2026 (with the 250-270 m band): at 765 kV up to 135 m each side — a 250-270 m span square to the wire puts
+          # each crossing tower 125-135 m from it, beyond the 123 m of the HT window (which would price every band crossing)
+          - {key: crossing_side_m, label: "Crossing tower to the crossed conductor, each side (min-max)", type: rng, unit: m, value: {765: [87, 135], 400: [66, 94], 220: [48, 68], 132: [38, 54]}}
           # Vivek, 14 Oct 2026: where the window cannot be kept (another line, buildings next to the crossing), the
           # crossing towers may stand further out — the span relaxed only as far as needed: every metre beyond the
           # maximum costs the search this share of the crossing tower's price per 25 m; the minimum stays hard

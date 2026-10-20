@@ -385,6 +385,8 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
     # of square to the terminal substation's face
     gantry_max = float(_sub.get("gantry_max_span_m", 0) or 0)
     sq_tol = float(_sub.get("gantry_square_tol_deg", 0) or 0)
+    _at = str(_sub.get("gantry_rules_at", "Both ends") or "Both ends")
+    rule_ends = (_at != "End (B) only", _at != "Start (A) only")   # 20 Oct 2026: one end may be an existing tower
     sub_polys = []
     if (de_dist > 0 and de_square) or sq_tol > 0:
         _sg = gdfs.get("substations")
@@ -400,6 +402,9 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
     face_a = face_b = None
     if sq_tol > 0:
         for key, E, other in (("a", (0.0, 0.0), (frame.length_m, 0.0)), ("b", (frame.length_m, 0.0), (0.0, 0.0))):
+            if not rule_ends[0 if key == "a" else 1]:
+                dead_end_info.setdefault(key, {})["square"] = "off at this end: it joins an existing tower"
+                continue
             fc = gantry_face(sub_polys, E, toward=other, max_dist_m=yard_radius)
             if fc is None:
                 dead_end_info.setdefault(key, {})["square"] = "no terminal substation face: the gantry span may leave at any angle"
@@ -474,13 +479,13 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
                         approach_length_m=ap_len, approach_span_m=ap_span, proximity_discount=prox_disc,
                         proximity_tower_discount=prox_tdisc, gantry_min_span_m=gantry_min,
                         dead_end_a=de_a, dead_end_b=de_b, gantry_max_span_m=gantry_max, gantry_square_tol_deg=sq_tol,
-                        gantry_face_a=face_a, gantry_face_b=face_b,
+                        gantry_face_a=face_a, gantry_face_b=face_b, gantry_rule_ends=rule_ends,
                         ext_zero_tol_m=ext_zero_tol, ext_round_tol_m=ext_round_tol,
                         crossing_dev_max_deg=_crossing_dev_cap(rules))
     sp = SpotParams(design_span_m=design, span_max_m=smax_search, plain_span_max_m=smax, excess_span_rs_per_m=excess_rs_m,
                     raster_prefilter=bool(eng["grid"].get("raster_prefilter", True)), gantry_min_span_m=gantry_min,
                     dead_end_a=de_a, dead_end_b=de_b, gantry_max_span_m=gantry_max, gantry_square_tol_deg=sq_tol,
-                    gantry_face_a=face_a, gantry_face_b=face_b,
+                    gantry_face_a=face_a, gantry_face_b=face_b, gantry_rule_ends=rule_ends,
                     min_span_m=float(rules["crossing_span_limits"].params["min_span_m"]),
                     max_dev_deg=max_dev, type_bands=bands,
                     section_km=float(rules["section_interval"].params["plain_km"]),

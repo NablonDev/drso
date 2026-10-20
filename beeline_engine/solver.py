@@ -107,6 +107,7 @@ class SolverParams:
     gantry_square_tol_deg: float = 0.0
     gantry_face_a: float | None = None
     gantry_face_b: float | None = None
+    gantry_rule_ends: tuple[bool, bool] = (True, True)   # (A, B): where the two rules above apply (20 Oct 2026)
     proximity_tower_discount: float = 0.0      # search-only discount on towers near existing lines (Vivek, 13 Oct 2026)
 
 
@@ -679,10 +680,11 @@ def gantry_seeds(compiled: Compiled, grid: Grid, p: SolverParams, S_np: np.ndarr
     reach = min(3000.0, p.span_max_m + yard_extent)
     if p.approach_length_m > 0 and p.approach_span_m is not None:
         reach = min(reach, p.approach_span_m)     # the gantry span keeps the approach span (9 Oct 2026)
-    if p.gantry_max_span_m > 0:
+    rules_here = p.gantry_rule_ends[1 if at_end else 0]   # the end may be an existing tower (20 Oct 2026)
+    if p.gantry_max_span_m > 0 and rules_here:
         reach = min(reach, p.gantry_max_span_m)   # gantry span at most (19 Oct 2026)
     face = p.gantry_face_b if at_end else p.gantry_face_a
-    sq_tol = p.gantry_square_tol_deg if face is not None else 0.0
+    sq_tol = p.gantry_square_tol_deg if (face is not None and rules_here) else 0.0
     seeds = np.full(S_np.shape, INF, np.float32)
     cs = np.arange(grid.nc + 1)
     xs = cs * grid.sx

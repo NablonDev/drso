@@ -1755,3 +1755,62 @@ def test_gantry_span_short_and_square_to_the_substation_face():
     off = abs((math.degrees(math.atan2(y1 - y0, x1 - x0)) + 90.0 + 180.0) % 360.0 - 180.0)
     assert 100 - 1e-6 <= L <= 250 + 1e-6 and off <= 40 + 0.5, (L, off)
     assert not any(v.startswith("gantry_") for v in r["towers"][1]["violations"]), r["towers"][1]["violations"]
+
+
+def test_lt_crossing_span_band_250_270():
+    """Vivek, 20 Oct 2026: an LT line (66 / 33 kV) crossing span is 260 ± 10 m — 250-270 m without approval, shorter
+    with an approval record (and a search cost), never over 270 m; the crossing towers may stand up to 135 m from it."""
+    from beeline_engine.spotting import Checker, SpotParams
+    f = frame()
+    c = f.length_m / 2
+    wire = frame_geom(f, LineString([(c, -2500), (c, 2500)]))
+    g = gpd.GeoDataFrame({"class": ["power_line"], "name": ["33 kV line"], "voltage_kv": [33]}, geometry=[wire], crs=4326)
+    comp, rules, costs = _comp16(f, {"power_lt": g})
+    cr = [x for x in comp.crossings if x.rule_id == "power_line_lt"]
+    assert cr and cr[0].max_span_m == 270 and cr[0].span_band == (250.0, 270.0) and cr[0].band_penalty_rs > 0
+    assert cr[0].side_m == (87.0, 135.0)
+    sp = SpotParams(design_span_m=400, span_max_m=400, min_span_m=100, max_dev_deg=60, type_bands={},
+                    section_km=5, parallel_angle_deg=30, tower_cost_rs={}, ground_clearance_m=18.15,
+                    lowest_attachment_m=32.6, sag_at_design_m=14.278, go_radius_m=150)
+    chk = Checker(comp, sp)
+    ok, items = chk.span_crossings((c - 130, 0.0), (c + 130, 0.0))          # 260 m: in the band
+    it = [x for x in items if x["rule"] == "power_line_lt"]
+    assert ok and it and "approval" not in it[0]
+    ok, items = chk.span_crossings((c - 115, 0.0), (c + 115, 0.0))          # 230 m: approval record
+    it = [x for x in items if x["rule"] == "power_line_lt"]
+    assert ok and it and it[0].get("approval") == "span_band"
+    ok, _ = chk.span_crossings((c - 140, 0.0), (c + 140, 0.0))              # 280 m: over the 270 m maximum
+    assert not ok
+
+
+def test_moving_a_tower_keeps_the_neighbouring_crossing_tower_within_45():
+    """20 Oct 2026: moving tower i turns i+1 too; when i+1 is a crossing tower of the span i+1 -> i+2 its 45° cap
+    holds (the cost polish had taken crossing towers to 46-50° by reading only the spans at i)."""
+    from beeline_engine.spotting import Checker, SpotParams, _crossing_dev_ok
+    f = frame()
+    c = f.length_m / 2
+    wire = frame_geom(f, LineString([(c, -2500), (c, 2500)]))
+    g = gpd.GeoDataFrame({"class": ["power_line"], "name": ["220 kV line"], "voltage_kv": [220]}, geometry=[wire], crs=4326)
+    comp, _, _ = _comp16(f, {"power": g})
+    sp = SpotParams(design_span_m=400, span_max_m=400, min_span_m=100, max_dev_deg=60, type_bands={},
+                    section_km=5, parallel_angle_deg=30, tower_cost_rs={}, ground_clearance_m=18.15,
+                    lowest_attachment_m=32.6, sag_at_design_m=14.278, go_radius_m=150)
+    chk = Checker(comp, sp)
+    pts = [(c - 900, 0.0), (c - 600, 0.0), (c - 300, 0.0), (c - 100, 0.0), (c + 150, 0.0), (c + 500, 0.0)]
+    assert _crossing_dev_ok(chk, pts, 2, (c - 300, 60.0))       # tower 3 turns ~17°
+    assert not _crossing_dev_ok(chk, pts, 2, (c - 300, 250.0))  # tower 3 would turn ~51° as a crossing tower
+
+
+def test_gantry_rules_at_the_start_only():
+    """Vivek, 20 Oct 2026: with "Start (A) only" the gantry span maximum and square rule hold at A and not at B (B is an
+    existing tower the route joins)."""
+    f = frame()
+    ya = frame_geom(f, box(-150, 30, 150, 330))
+    yb = frame_geom(f, box(f.length_m - 150, 30, f.length_m + 150, 330))
+    ov = {"substations": {"params": {"gantry_rules_at": "Start (A) only"}}}
+    res = run_solve(solve_input({"substations": gdf([ya, yb], "substation", "S/S")}, overrides=ov))
+    assert res["feasible"]
+    d = res.get("dead_ends") or {}
+    assert d["a"]["square_tol_deg"] == 40 and "existing tower" in d["b"]["square"]
+    r = res["routes"][0]
+    assert not any(v.startswith("gantry_") for t in r["towers"] for v in t["violations"])

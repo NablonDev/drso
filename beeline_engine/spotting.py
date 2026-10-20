@@ -66,6 +66,7 @@ class SpotParams:
     gantry_square_tol_deg: float = 0.0    # gantry span within this of square to the substation face (0 = off)
     gantry_face_a: float | None = None    # the face's outward normal at A / B (frame heading, degrees)
     gantry_face_b: float | None = None
+    gantry_rule_ends: tuple[bool, bool] = (True, True)   # (A, B): where the two rules above apply (20 Oct 2026)
     refine_crossings: bool = True         # fine local re-optimisation round power-line crossings (14 Oct 2026)
     refine_step_m: float = 10.0
     # hilly terrain (rules design_span.hilly_m, section_interval.hilly_km; engine hilly_slope_deg)
@@ -1029,6 +1030,12 @@ def pull_string(chk: Checker, grid_pts: list[tuple[float, float]], sp: SpotParam
                 continue
             if sp.tsd and not _tsd_leg_ok(chk, sp, prev, grid_pts[i], inner, q, is_last=(j == n - 1)):
                 continue
+            if j < n - 1:
+                # the leg must leave q a legal turn onto the grid's own next tower, the fallback if no leg from q
+                # passes: else q turns past its cap there (20 Oct 2026: 46-52° at power-line crossing towers)
+                last, nx = (inner[-1] if inner else grid_pts[i]), grid_pts[j + 1]
+                if _deflection(last, q, nx)[0] > _dev_cap(chk, sp, last, q, nx) + 1e-6:
+                    continue
             # not dearer than the grid towers it replaces (their types from their own deflections)
             seg = grid_pts[i:j + 1]
             gtypes = [tower_type_for(_deflection(seg[m - 1], seg[m], seg[m + 1])[0], sp.type_bands) or "D60"
@@ -1213,6 +1220,8 @@ def _assemble(chk: Checker, comp, pts, added, sp: SpotParams, polish, angle_set,
             towers[1 if i == 0 else n - 2].violations.append(f"gantry_span:{L:.0f}m")
         if gantry_span:
             de = 1 if i == 0 else n - 2
+            if not sp.gantry_rule_ends[0 if i == 0 else 1]:
+                continue                        # this end joins an existing tower (20 Oct 2026)
             if sp.gantry_max_span_m and L > sp.gantry_max_span_m + 1e-6:
                 towers[de].violations.append(f"gantry_span_long:{L:.0f}m")
             face = sp.gantry_face_a if i == 0 else sp.gantry_face_b
@@ -1414,17 +1423,20 @@ def _dev_cap(chk: Checker, sp: SpotParams, prev, p, nxt) -> float:
 
 def _crossing_dev_ok(chk: Checker, pts, i, cand) -> bool:
     """With tower i at `cand`: every tower at the end of a span that crosses a capped feature (towers
-    i-1, i, i+1 can be such ends) turns at most that feature's cap (Vivek, 13 Oct 2026)."""
+    i-1, i, i+1 can be such ends) turns at most that feature's cap (Vivek, 13 Oct 2026).
+    Moving i also turns i-1 and i+1, which can be crossing towers of their outer spans (i-2 -> i-1,
+    i+1 -> i+2): those spans are read too (20 Oct 2026: the cost polish had taken crossing towers to 46-50°)."""
     n = len(pts)
     trial = list(pts); trial[i] = cand
     caps: dict[int, float] = {}
-    for a in (i - 1, i):
+    for a in (i - 2, i - 1, i, i + 1):
         if 0 <= a < n - 1:
             for it in chk.span_crossings(trial[a], trial[a + 1])[1]:
                 lim = it.get("max_dev_deg")
                 if lim is not None:
                     for ti in (a, a + 1):
-                        caps[ti] = min(caps.get(ti, 1e9), lim)
+                        if i - 1 <= ti <= i + 1:
+                            caps[ti] = min(caps.get(ti, 1e9), lim)
     for ti, lim in caps.items():
         if 0 < ti < n - 1 and _deflection(trial[ti - 1], trial[ti], trial[ti + 1])[0] > lim + 1e-6:
             return False
