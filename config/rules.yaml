@@ -167,7 +167,9 @@ groups:
           # Vivek, 19 Oct 2026 (gantry review): the gantry span leaves within this of square to the terminal substation's face
           # (straightened outline, the face the gantry stands in front of, never one turned away from the route); the AESL design
           # is 8° off at Shivlaka, 37° at Bhujpool
-          - {key: gantry_square_tol_deg, label: "Gantry span within this of square to the substation face (0 = off)", type: num, unit: "°", value: 40}
+          # Vivek, 21 Oct 2026 (gantry sweep, 84 section solves): ±60° — at ±40° the dead-end tower at Bhujpool, beside the
+          # existing line's own exit, cannot keep its 45° turn; 100-250 m / ±60° / 45° held at both ends, line kept or removed
+          - {key: gantry_square_tol_deg, label: "Gantry span within this of square to the substation face (0 = off)", type: num, unit: "°", value: 60}
           # Vivek, 20 Oct 2026: the gantry rules at both ends, or at one end only — where the other end is an existing tower
           # the route joins (e.g. AESL AP-56 / AP-57 at Shivlaka). 21 Oct 2026 (Vivek): all four gantry rules — gantry span
           # at least / at most, square to the face, dead-end turn (was the span maximum and the square rule only); at an end
