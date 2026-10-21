@@ -66,7 +66,7 @@ class SpotParams:
     gantry_square_tol_deg: float = 0.0    # gantry span within this of square to the substation face (0 = off)
     gantry_face_a: float | None = None    # the face's outward normal at A / B (frame heading, degrees)
     gantry_face_b: float | None = None
-    gantry_rule_ends: tuple[bool, bool] = (True, True)   # (A, B): where the two rules above apply (20 Oct 2026)
+    gantry_rule_ends: tuple[bool, bool] = (True, True)   # (A, B): where the gantry rules apply (20 Oct 2026; all four 21 Oct)
     refine_crossings: bool = True         # fine local re-optimisation round power-line crossings (14 Oct 2026)
     refine_step_m: float = 10.0
     # hilly terrain (rules design_span.hilly_m, section_interval.hilly_km; engine hilly_slope_deg)
@@ -1086,10 +1086,12 @@ def _tsd_leg_ok(chk: Checker, sp: SpotParams, prev, start, inner, q, is_last: bo
     from .solver import fit_type_for_spans
     T = sp.tsd
     lim = T.get("dead_end_max_dev_deg")
+    lim_a = lim if sp.gantry_rule_ends[0] else sp.max_dev_deg      # an end without gantry rules: ordinary turn (21 Oct 2026)
+    lim_b = lim if sp.gantry_rule_ends[1] else sp.max_dev_deg
     first = inner[0] if inner else q
     A, B = (0.0, 0.0), (chk.c.frame.length_m, 0.0)
     if prev is None:
-        if lim is not None and _deflection(A, start, first)[0] > float(lim) + 1e-6:
+        if lim_a is not None and _deflection(A, start, first)[0] > float(lim_a) + 1e-6:
             return False
     else:
         d, _ = _deflection(prev, start, first)
@@ -1102,9 +1104,9 @@ def _tsd_leg_ok(chk: Checker, sp: SpotParams, prev, start, inner, q, is_last: bo
                 return False
             if (L1 + L2) / 2.0 > float((T.get("wind_span_m") or {}).get("base", 400)) + 1e-3:
                 return False
-    if is_last and lim is not None:
+    if is_last and lim_b is not None:
         last_prev = inner[-1] if inner else start
-        if _deflection(last_prev, q, B)[0] > float(lim) + 1e-6:
+        if _deflection(last_prev, q, B)[0] > float(lim_b) + 1e-6:
             return False
     return True
 
@@ -1216,7 +1218,7 @@ def _assemble(chk: Checker, comp, pts, added, sp: SpotParams, polish, angle_set,
             towers[i].violations.append("span_rule")     # over the span limit or a parallel run (audit, 14 Oct 2026)
         if not chk.conductor_ok(pts[i], pts[i + 1]):
             towers[i if i > 0 else 1].violations.append("conductor_buffer")
-        if gantry_span and L < sp.gantry_min_span_m - 1e-6:
+        if gantry_span and sp.gantry_rule_ends[0 if i == 0 else 1] and L < sp.gantry_min_span_m - 1e-6:
             towers[1 if i == 0 else n - 2].violations.append(f"gantry_span:{L:.0f}m")
         if gantry_span:
             de = 1 if i == 0 else n - 2
@@ -1384,7 +1386,8 @@ def _legal_here(chk: Checker, pts, i, sp: SpotParams, cand) -> bool:
         if not chk.conductor_ok(a, b) or not chk.span_crossings(a, b)[0]:
             return False
     de = float(sp.tsd.get("dead_end_max_dev_deg", 180) or 180) if sp.tsd else 180.0     # audit, 14 Oct 2026
-    cap = lambda k: min(sp.max_dev_deg, de) if k in (1, n - 2) else sp.max_dev_deg
+    de_on = {1: sp.gantry_rule_ends[0], n - 2: sp.gantry_rule_ends[1]}                    # 21 Oct 2026: per end
+    cap = lambda k: min(sp.max_dev_deg, de) if de_on.get(k, False) else sp.max_dev_deg
     if _deflection(prev_, cand, next_)[0] > cap(i):
         return False
     if i >= 2 and _deflection(pts[i - 2], prev_, cand)[0] > cap(i - 1):
@@ -2881,7 +2884,8 @@ def _tsd_checks(towers: list[Tower], spans: list[Span], sp: SpotParams) -> None:
         L1, L2 = spans[i - 1].length_m, spans[i].length_m
         dead_end = "dead_end" in t.reasons
         if dead_end:
-            if t.deflection_deg > float(T.get("dead_end_max_dev_deg", 180)) + 1e-6:
+            de_here = sp.gantry_rule_ends[0] if i == 1 else (sp.gantry_rule_ends[1] if i == n - 2 else True)
+            if de_here and t.deflection_deg > float(T.get("dead_end_max_dev_deg", 180)) + 1e-6:
                 t.violations.append(f"dead_end_deviation:{t.deflection_deg:.0f}deg")     # Vivek's 15° rule (audit, 14 Oct 2026)
             lim = span_sum_limit(T["span_sum"], t.type, t.deflection_deg)
             if lim is not None and max(L1, L2) > frac * lim + 1e-3:

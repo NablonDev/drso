@@ -1814,3 +1814,18 @@ def test_gantry_rules_at_the_start_only():
     assert d["a"]["square_tol_deg"] == 40 and "existing tower" in d["b"]["square"]
     r = res["routes"][0]
     assert not any(v.startswith("gantry_") for t in r["towers"] for v in t["violations"])
+
+
+def test_no_gantry_rules_at_an_existing_tower_end():
+    """Vivek, 21 Oct 2026: the gantry rules hold only at the end(s) chosen — the gantry span minimum (here 380 m) binds at
+    that end and not at the other, which joins an existing tower (its last span keeps the ordinary span limits)."""
+    for at, k in (("Start (A) only", 0), ("End (B) only", -1)):
+        ov = {"substations": {"params": {"gantry_rules_at": at, "gantry_min_span_m": 380, "gantry_max_span_m": 0}}}
+        res = run_solve(solve_input({}, overrides=ov))
+        assert res["feasible"], at
+        r = res["routes"][0]
+        S = r["spans"]
+        assert S[k]["length_m"] >= 380 - 1e-6, (at, S[k]["length_m"])
+        assert not any(v.startswith(("gantry_span", "dead_end_deviation")) for t in r["towers"] for v in t["violations"]), at
+        d = res.get("dead_ends") or {}
+        assert "existing tower" in (d.get("b" if k == 0 else "a") or {}).get("square", ""), d

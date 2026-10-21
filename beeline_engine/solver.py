@@ -107,7 +107,7 @@ class SolverParams:
     gantry_square_tol_deg: float = 0.0
     gantry_face_a: float | None = None
     gantry_face_b: float | None = None
-    gantry_rule_ends: tuple[bool, bool] = (True, True)   # (A, B): where the two rules above apply (20 Oct 2026)
+    gantry_rule_ends: tuple[bool, bool] = (True, True)   # (A, B): where the gantry rules apply (20 Oct 2026; all four 21 Oct)
     proximity_tower_discount: float = 0.0      # search-only discount on towers near existing lines (Vivek, 13 Oct 2026)
 
 
@@ -706,7 +706,7 @@ def gantry_seeds(compiled: Compiled, grid: Grid, p: SolverParams, S_np: np.ndarr
                 continue
             x, y = xs[c], ys[r]
             L = math.hypot(x - ex, y)
-            if fixed is None and (L < p.gantry_min_span_m or L > reach):
+            if fixed is None and (L < (p.gantry_min_span_m if rules_here else p.span_min_m) or L > reach):
                 continue
             if sq_tol > 0:
                 off = abs((math.degrees(math.atan2(y, x - ex)) - face + 180.0) % 360.0 - 180.0)
@@ -843,12 +843,14 @@ def solve(compiled: Compiled, p: SolverParams, cancel_check=None, progress=None,
             up_in = torch.where(valid_in, Uring[ring_idx, src_rows_c, kidx], torch.zeros((R, K), device=dev))
             reach[c] = torch.isfinite(V).any()
         if c in end_cols:
-            if p.dead_end_max_dev_deg is not None:
+            # at an end without gantry rules (an existing tower, 21 Oct 2026) the last tower keeps the ordinary turn limit
+            de_lim_b = p.dead_end_max_dev_deg if p.gantry_rule_ends[1] else p.max_dev_deg
+            if de_lim_b is not None:
                 if p.dead_end_b is not None:      # the gantry span runs square to the substation face (19 Oct 2026)
                     hs = torch.full((R, 1), math.degrees(math.atan2(-p.dead_end_b[1], compiled.frame.length_m - p.dead_end_b[0])), device=ys_t.device, dtype=ys_t.dtype)
                 else:
                     hs = torch.rad2deg(torch.atan2(-ys_t, torch.full_like(ys_t, max(compiled.frame.length_m - c * grid.sx, 1.0)))).view(R, 1)
-                dev_ok = (head_t.view(1, K) - hs).abs() <= p.dead_end_max_dev_deg + 1e-6
+                dev_ok = (head_t.view(1, K) - hs).abs() <= de_lim_b + 1e-6
                 Vend = torch.where(dev_ok, V, torch.full_like(V, INF))
             else:
                 Vend = V
@@ -886,14 +888,15 @@ def solve(compiled: Compiled, p: SolverParams, cancel_check=None, progress=None,
         am = am.to(torch.int16)
         del tot, totA
         seed = SA[c, rw].view(Rw, 1).expand(Rw, K)
-        if p.dead_end_max_dev_deg is not None:
+        de_lim_a = p.dead_end_max_dev_deg if p.gantry_rule_ends[0] else p.max_dev_deg
+        if de_lim_a is not None:
             # TSD note J: the first dead-end tower turns at most dead_end_max_dev_deg between the
             # gantry slack span and the line
             if p.dead_end_a is not None:          # the gantry span runs square to the substation face (19 Oct 2026)
                 hs = torch.full((Rw, 1), math.degrees(math.atan2(p.dead_end_a[1], p.dead_end_a[0])), device=ys_t.device, dtype=ys_t.dtype)
             else:
                 hs = torch.rad2deg(torch.atan2(ys_t[rw], torch.full_like(ys_t[rw], max(c * grid.sx, 1.0)))).view(Rw, 1)
-            dev_ok = (head_t.view(1, K) - hs).abs() <= p.dead_end_max_dev_deg + 1e-6
+            dev_ok = (head_t.view(1, K) - hs).abs() <= de_lim_a + 1e-6
             seed = torch.where(dev_ok, seed, torch.full_like(seed, INF))
         use_seed = seed < Mw
         Mw = torch.where(use_seed, seed, Mw)

@@ -168,9 +168,11 @@ groups:
           # (straightened outline, the face the gantry stands in front of, never one turned away from the route); the AESL design
           # is 8° off at Shivlaka, 37° at Bhujpool
           - {key: gantry_square_tol_deg, label: "Gantry span within this of square to the substation face (0 = off)", type: num, unit: "°", value: 40}
-          # Vivek, 20 Oct 2026: the two gantry span rules above (at most gantry_max_span_m, square to the face) at both ends, or
-          # at one end only — where the other end is an existing tower the route joins (e.g. AESL AP-56 / AP-57 at Shivlaka)
-          - {key: gantry_rules_at, label: "Gantry span maximum and square rule apply at", type: sel, value: "Both ends", options: ["Both ends", "Start (A) only", "End (B) only"]}
+          # Vivek, 20 Oct 2026: the gantry rules at both ends, or at one end only — where the other end is an existing tower
+          # the route joins (e.g. AESL AP-56 / AP-57 at Shivlaka). 21 Oct 2026 (Vivek): all four gantry rules — gantry span
+          # at least / at most, square to the face, dead-end turn (was the span maximum and the square rule only); at an end
+          # where they are off its last span and tower keep the ordinary span and turn limits
+          - {key: gantry_rules_at, label: "Gantry rules (gantry span min / max, square to the face, dead-end turn) apply at", type: sel, value: "Both ends", options: ["Both ends", "Start (A) only", "End (B) only"]}
 
       - id: dams
         name: "Dams"
