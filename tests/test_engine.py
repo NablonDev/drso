@@ -1829,3 +1829,23 @@ def test_no_gantry_rules_at_an_existing_tower_end():
         assert not any(v.startswith(("gantry_span", "dead_end_deviation")) for t in r["towers"] for v in t["violations"]), at
         d = res.get("dead_ends") or {}
         assert "existing tower" in (d.get("b" if k == 0 else "a") or {}).get("square", ""), d
+
+
+def test_end_b_joins_an_existing_tower():
+    """Vivek, 21 Oct 2026: B 12 m from a tower of an existing 765 kV line (AESL AP-56 on the Bhuj-Lakadia line). Without
+    the join no last span can leave B (our wire keeps 80 m from their towers); with "End B joins an existing tower" that
+    tower and its line within 400 m of B are lifted and the route ends there. The rest of the line keeps its rules."""
+    f = frame()
+    L = f.length_m
+    wire = frame_geom(f, LineString([(L + 12, -3000), (L + 12, 3000)]))          # an existing line through B, square to it
+    tw = [frame_geom(f, Point(L + 12, y)) for y in range(-3000, 3001, 300)]       # a tower 12 m from B at y = 0
+    g = gpd.GeoDataFrame({"class": ["power_line"] + ["power_tower"] * len(tw), "name": ["765 kV line"] + [""] * len(tw),
+                          "voltage_kv": [765] * (1 + len(tw))}, geometry=[wire] + tw, crs=4326)
+    base = {"substations": {"params": {"gantry_rules_at": "Start (A) only"}}}
+    res = run_solve(solve_input({"power": g}, overrides=base))
+    assert not res["feasible"]
+    ov = {"substations": {"params": {"gantry_rules_at": "Start (A) only", "b_joins_existing_tower": "Yes"}}}
+    res = run_solve(solve_input({"power": g}, overrides=ov))
+    assert res["feasible"]
+    j = res["dead_ends"]["b"]["joins_existing_tower"]
+    assert j["joined"] and abs(j["tower_from_b_m"] - 12) < 1.0 and j["towers_lifted"] == 3 and j["wires_cut"] == 1, j

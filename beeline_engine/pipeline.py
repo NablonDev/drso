@@ -206,6 +206,51 @@ def square_dead_end(polys, E, dist_m: float, toward=None, clear_m: float = 0.0, 
     return (E[0] + d * nx, E[1] + d * ny), h, name
 
 
+def _join_existing_tower(gdfs: dict, frame: Frame, b_lonlat, snap_m: float, radius_m: float):
+    """End B is an existing tower the route connects to (Vivek, 21 Oct 2026). The existing tower nearest B, within snap_m,
+    is the joined one; the existing line(s) through it (wires within snap_m of it) are lifted within radius_m of B: their
+    towers there are dropped and their wire is cut out of that circle. Nothing else changes. Returns (gdfs, info)."""
+    bpt = gpd.GeoSeries([Point(*b_lonlat)], crs=4326).to_crs(frame.epsg).iloc[0]
+    best = None
+    for k in ("power", "power_lt"):
+        g = gdfs.get(k)
+        if g is None or not len(g) or "class" not in g.columns:
+            continue
+        tw = g[g["class"] == "power_tower"].to_crs(frame.epsg)
+        if not len(tw):
+            continue
+        d = tw.geometry.distance(bpt)
+        i = d.idxmin()
+        if float(d[i]) <= snap_m and (best is None or float(d[i]) < best[2]):
+            best = (k, i, float(d[i]))
+    if best is None:
+        return gdfs, {"joined": False, "why": f"no existing tower within {snap_m:g} m of B"}
+    k, ti, dist = best
+    g = gdfs[k].reset_index(drop=True) if not gdfs[k].index.is_unique else gdfs[k]
+    gu = g.to_crs(frame.epsg)
+    tower = gu.geometry.loc[ti]
+    lines = gu[(gu["class"] == "power_line") & (gu.geometry.distance(tower) <= snap_m)]
+    zone = bpt.buffer(radius_m)
+    towers = gu[gu["class"] == "power_tower"]
+    near = towers[towers.geometry.within(zone)]
+    if len(lines):
+        on_line = unary_union(list(lines.geometry)).buffer(snap_m)
+        near = near[near.geometry.within(on_line)]
+    drop = set(near.index) | {ti}
+    geoms = gu.geometry.copy()
+    for li in lines.index:
+        geoms.loc[li] = gu.geometry.loc[li].difference(zone)
+    out = gu.set_geometry(geoms).drop(index=sorted(drop))
+    out = out[~out.geometry.is_empty].explode(index_parts=False).reset_index(drop=True).to_crs(g.crs)
+    tll = gpd.GeoSeries([tower], crs=frame.epsg).to_crs(4326).iloc[0]
+    gdfs = dict(gdfs)
+    gdfs[k] = out
+    names = sorted({str(n) for n in lines["name"] if isinstance(n, str)}) if "name" in lines.columns else []
+    return gdfs, {"joined": True, "layer": k, "tower_from_b_m": round(dist, 1), "towers_lifted": len(drop),
+                  "wires_cut": len(lines), "lines": names, "radius_m": radius_m,
+                  "tower_lonlat": [round(float(tll.x), 7), round(float(tll.y), 7)]}
+
+
 def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
     t_start = time.time()
     timings = {}
@@ -249,6 +294,13 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
                   eng["grid"]["raster_res_m"])
     prog(0.02, "Compiling rules")
     gdfs = {k: li.gdf for k, li in inp.layers.items()}
+    # end B joins an existing tower (Vivek, 21 Oct 2026): that tower and its line near B stop being obstacles
+    join_info = None
+    _subp = rules["substations"].params
+    if str(_subp.get("b_joins_existing_tower", "No") or "No") == "Yes":
+        gdfs, join_info = _join_existing_tower(gdfs, frame, tuple(inp.b), float(_subp.get("join_snap_m", 30) or 30),
+                                               float(_subp.get("join_radius_m", 400) or 400))
+        log.info("end B joins an existing tower: %s", join_info)
     t = time.time()
     # approach section near each gantry (CEA Schedule VII; Vivek, 8 Oct 2026)
     ap_rule = rules.get("approach_section")
@@ -380,6 +432,8 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
     de_dist = float(_sub.get("dead_end_distance_m", 0) or 0)
     de_square = str(_sub.get("dead_end_square", "No")) == "Yes"
     dead_end_info: dict = {}
+    if join_info is not None:
+        dead_end_info["b"] = {"joins_existing_tower": join_info}
     de_a = de_b = None
     # gantry span limits (Vivek, 19 Oct 2026 gantry review): at most gantry_max_span_m, and within gantry_square_tol_deg
     # of square to the terminal substation's face

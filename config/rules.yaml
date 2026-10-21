@@ -173,6 +173,14 @@ groups:
           # at least / at most, square to the face, dead-end turn (was the span maximum and the square rule only); at an end
           # where they are off its last span and tower keep the ordinary span and turn limits
           - {key: gantry_rules_at, label: "Gantry rules (gantry span min / max, square to the face, dead-end turn) apply at", type: sel, value: "Both ends", options: ["Both ends", "Start (A) only", "End (B) only"]}
+          # Vivek, 21 Oct 2026: end B is an existing tower the route connects to (AESL AP-56 on the Bhuj-Lakadia line). The
+          # existing tower nearest B (within join_snap_m) is joined, not avoided; the existing line through it is lifted within
+          # join_radius_m of B (its towers there and its wire inside that circle: no tower / wire clearances, no crossing rule),
+          # so the new line may run alongside it into the joined tower. Every other existing line and the rest of this one keep
+          # all their rules. Off by default.
+          - {key: b_joins_existing_tower, label: "End B joins an existing tower (its line's clearances lifted near B)", type: sel, value: "No", options: ["No", "Yes"]}
+          - {key: join_snap_m, label: "… the joined tower: the existing tower within this of B", type: num, unit: m, value: 30}
+          - {key: join_radius_m, label: "… that line's towers and wire lifted within this of B", type: num, unit: m, value: 400}
 
       - id: dams
         name: "Dams"
