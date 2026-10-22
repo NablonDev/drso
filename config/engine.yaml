@@ -93,6 +93,9 @@ diversity:
   penalty_rs_per_m: 20000
 
 spotting:
+  # vj copy (21 Oct 2026): build the grid route and the string-pulled route in two forked processes (same result,
+  # less wall time); off until checked against a one-process run
+  parallel: false
   # Ground-clearance check on the Copernicus GLO-30 DEM (30 m — coarser than the 10 m the
   # research doc asks for; the report says so).
   # TSD Table-4 + note G (150 mm sag error), all voltages (8 Oct 2026)

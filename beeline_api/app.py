@@ -1125,6 +1125,29 @@ def _tile_native(run_id, z, x, y, skip_dense) -> bytes:
     return b"".join(bytes(r["tile"]) for r in rows if r["tile"])
 
 
+def _mvt_parts(g):
+    """A geometry the vector-tile encoder accepts: itself, or a GeometryCollection split into one multi-part geometry
+    per kind (polygons, lines, points)."""
+    import shapely
+    if g.geom_type != "GeometryCollection":
+        return [g]
+    flat = []
+    stack = list(g.geoms)
+    while stack:
+        x = stack.pop()
+        if x.geom_type == "GeometryCollection":
+            stack.extend(x.geoms)
+        elif not x.is_empty:
+            flat.append(x)
+    out = []
+    for kinds, multi in ((("Polygon", "MultiPolygon"), shapely.MultiPolygon), (("LineString", "MultiLineString"), shapely.MultiLineString),
+                         (("Point", "MultiPoint"), shapely.MultiPoint)):
+        parts = [q for x in flat if x.geom_type in kinds for q in getattr(x, "geoms", [x])]
+        if parts:
+            out.append(parts[0] if len(parts) == 1 else multi(parts))
+    return out
+
+
 def _tile_python(run_id, z, x, y, skip_dense) -> bytes:
     """Same tile, encoded in Python (PostGIS builds without protobuf-c, e.g. conda-forge)."""
     import mapbox_vector_tile
@@ -1154,11 +1177,13 @@ def _tile_python(run_id, z, x, y, skip_dense) -> bytes:
         g = shapely.from_wkb(bytes(r["wkb"]))
         if g.is_empty:
             continue
-        layers_.setdefault(r["layer_key"], []).append({
-            "geometry": g, "id": r["id"],
-            "properties": {k: v for k, v in (("id", r["id"]), ("class", r["class"]), ("name", r["name"]),
-                                             ("confidence", r["confidence"]), ("origin", r["origin"]),
-                                             ("voltage_kv", r["voltage_kv"])) if v is not None}})
+        props = {k: v for k, v in (("id", r["id"]), ("class", r["class"]), ("name", r["name"]),
+                                   ("confidence", r["confidence"]), ("origin", r["origin"]),
+                                   ("voltage_kv", r["voltage_kv"])) if v is not None}
+        # the encoder takes no geometry collections (21 Oct 2026: 21 solar parks of HAL-VAD-0268, and clipping can
+        # make one): one feature per kind of part — polygons, lines, points — under the same id
+        for part in _mvt_parts(g):
+            layers_.setdefault(r["layer_key"], []).append({"geometry": part, "id": r["id"], "properties": props})
     return mapbox_vector_tile.encode(
         [{"name": k, "features": v} for k, v in layers_.items()],
         default_options={"quantize_bounds": bounds, "extents": 4096, "y_coord_down": False})

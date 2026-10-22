@@ -600,13 +600,29 @@ def _span_mid_pieces(lines, towers, epsg: int, half_frac: float) -> list:
     return out
 
 
+_SPAN_PIECES_MEMO: dict = {}
+
+
 def _span_offset_pieces(lines, towers, epsg: int, step_frac: float = 0.025) -> list:
     """(piece, offset) along every mapped span of the existing line: the span cut into step_frac pieces, each
-    with |position − 0.5| of the span at its middle (UTM). For the graded null-point penalty (Vivek, 13 Oct 2026)."""
+    with |position − 0.5| of the span at its middle (UTM). For the graded null-point penalty (Vivek, 13 Oct 2026).
+    21 Oct 2026 (vj copy): vectorised — every piece's ends interpolated in one call per line, the piece built from
+    them; a piece holding an interior vertex of the line still goes through substring, so the pieces are exactly
+    those of the per-piece loop (57 % of the compile on HAL-VAD-0268) — and memoised per input in the process (the
+    normal, relaxed and approach compiles all ask for the same layer)."""
     if lines is None or towers is None or not len(lines) or not len(towers):
         return []
+    import hashlib
+    import numpy as np
+    import shapely
     from shapely import STRtree
     from shapely.ops import substring
+    h = hashlib.sha1()
+    for gg in list(lines.geometry) + list(towers.geometry):
+        h.update(b"" if gg is None else shapely.to_wkb(gg))
+    key = (h.hexdigest(), int(epsg), float(step_frac))
+    if key in _SPAN_PIECES_MEMO:
+        return _SPAN_PIECES_MEMO[key]
     parts = []
     for g in lines.geometry.to_crs(epsg):
         if g is None or g.is_empty:
@@ -618,18 +634,34 @@ def _span_offset_pieces(lines, towers, epsg: int, step_frac: float = 0.025) -> l
     out = []
     tree = STRtree(tw)
     n = int(round(1.0 / step_frac))
+    offs = np.abs((np.arange(n) + 0.5) / n - 0.5)
     for g in parts:
         idx = tree.query(g.buffer(15.0))
         pos = sorted(g.project(tw[i]) for i in idx if g.distance(tw[i]) <= 15.0)
-        for a, b in zip(pos, pos[1:]):
-            span = b - a
-            if span <= 0:
-                continue
+        spans = [(a, b - a) for a, b in zip(pos, pos[1:]) if b - a > 0]
+        if not spans:
+            continue
+        # chainage of the line's own vertices (a piece holding one inside is cut exactly by substring)
+        cs = np.asarray(g.coords)
+        vchain = np.concatenate([[0.0], np.cumsum(np.hypot(*np.diff(cs[:, :2], axis=0).T))])
+        a_arr = np.array([a for a, _ in spans]); s_arr = np.array([sp_ for _, sp_ in spans])
+        ends = a_arr[:, None] + s_arr[:, None] * (np.arange(n + 1) / n)[None, :]          # (S, n+1)
+        P = shapely.line_interpolate_point(g, ends.ravel())
+        xy = shapely.get_coordinates(P).reshape(len(spans), n + 1, 2)
+        for si in range(len(spans)):
+            e = ends[si]
             for k in range(n):
-                p0, p1 = a + span * k / n, a + span * (k + 1) / n
-                piece = substring(g, p0, p1)
-                if piece.geom_type == "LineString" and piece.length > 0:
-                    out.append((piece, abs((k + 0.5) / n - 0.5)))
+                p0, p1 = e[k], e[k + 1]
+                inner = np.any((vchain > p0 + 1e-9) & (vchain < p1 - 1e-9))
+                if inner:
+                    piece = substring(g, p0, p1)
+                    if piece.geom_type == "LineString" and piece.length > 0:
+                        out.append((piece, float(offs[k])))
+                else:
+                    q0, q1 = xy[si, k], xy[si, k + 1]
+                    if q0[0] != q1[0] or q0[1] != q1[1]:
+                        out.append((shapely.LineString([q0, q1]), float(offs[k])))
+    _SPAN_PIECES_MEMO[key] = out
     return out
 
 

@@ -80,6 +80,7 @@ class SpotParams:
     proximity_discount: float = 0.0         # search-only discount near existing lines (string pulling)
     proximity_tower_discount: float = 0.0   # the same on towers standing near them (Vivek, 13 Oct 2026)
     angle_point_rs: float = 0.0             # search-only surcharge on every tower that is not an A (what-if, 15 Oct 2026)
+    parallel: bool = False                  # grid + pulled routes built in two processes (engine.yaml spotting.parallel)
     hilly_surcharge_rs_per_m: float = 0.0   # search-only hill avoidance (Vivek, 14 Oct 2026), string pulling too
     hilly_tower_surcharge_rs: float = 0.0
     extension_pct: float = 9.4              # body extension price, % of the tower per +18 m
@@ -3023,19 +3024,61 @@ def _frame_geom_to_utm(f, g):
     return affinity.translate(g, f.A[0], f.A[1])
 
 
+# parallel spotting (vj copy, 21 Oct 2026): the grid route and the string-pulled route are built independently, so
+# they can run in two forked processes; the result is the same as building them one after the other. The state is
+# handed over by fork (copy-on-write), not pickled; spotting uses no GPU, so the forked children never touch CUDA.
+_FORK: dict = {}
+
+
+def _fork_grid():
+    comp, grid_pts, sp, dem = _FORK["args"]
+    chk = Checker(comp, sp); chk.dem = dem
+    A, B = (0.0, 0.0), (comp.frame.length_m, 0.0)
+    return build_route(chk, [A] + grid_pts + [B], angle_set=set(), sp=sp, dem=dem)
+
+
+def _fork_pulled():
+    comp, grid_pts, sp, dem = _FORK["args"]
+    chk = Checker(comp, sp); chk.dem = dem
+    A, B = (0.0, 0.0), (comp.frame.length_m, 0.0)
+    pulled = pull_string(chk, grid_pts, sp) if len(grid_pts) > 2 else None
+    if pulled is None:
+        return None
+    _, towers = pulled
+    return build_route(chk, [A] + towers + [B], angle_set=None, sp=sp, dem=dem)
+
+
+def _spot_both_parallel(comp, grid_pts, sp, dem):
+    import multiprocessing as mp
+    from concurrent.futures import ProcessPoolExecutor
+    _FORK["args"] = (comp, grid_pts, sp, dem)
+    try:
+        with ProcessPoolExecutor(max_workers=2, mp_context=mp.get_context("fork")) as ex:
+            fg, fp = ex.submit(_fork_grid), ex.submit(_fork_pulled)
+            return fg.result(), fp.result()
+    finally:
+        _FORK.clear()
+
+
 def spot(comp: Compiled, grid_pts: list[tuple[float, float]], sp: SpotParams, dem=None) -> SpottedRoute:
     """grid_pts: the solver's towers, first dead-end to last. Gantries A and B are added here."""
     chk = Checker(comp, sp)
     chk.dem = dem
     A = (0.0, 0.0)
     B = (comp.frame.length_m, 0.0)
-    grid_route = build_route(chk, [A] + grid_pts + [B], angle_set=set(), sp=sp, dem=dem)
-    pulled = pull_string(chk, grid_pts, sp) if len(grid_pts) > 2 else None
-    if pulled is None:
-        log.info("string pulling found no valid simplification; keeping the grid alignment")
-        return grid_route
-    _, towers = pulled
-    pulled_route = build_route(chk, [A] + towers + [B], angle_set=None, sp=sp, dem=dem)
+    if getattr(sp, "parallel", False):
+        grid_route, pulled_route = _spot_both_parallel(comp, grid_pts, sp, dem)
+        if pulled_route is None:
+            log.info("string pulling found no valid simplification; keeping the grid alignment")
+            return grid_route
+    else:
+        grid_route = build_route(chk, [A] + grid_pts + [B], angle_set=set(), sp=sp, dem=dem)
+        pulled = pull_string(chk, grid_pts, sp) if len(grid_pts) > 2 else None
+        if pulled is None:
+            log.info("string pulling found no valid simplification; keeping the grid alignment")
+            return grid_route
+        _, towers = pulled
+        pulled_route = build_route(chk, [A] + towers + [B], angle_set=None, sp=sp, dem=dem)
     better = (pulled_route.stats["violations"], pulled_route.cost["total"]) <= \
              (grid_route.stats["violations"], grid_route.cost["total"])
     if better or not sp.cost_polish:

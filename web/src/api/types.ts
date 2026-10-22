@@ -550,6 +550,12 @@ export interface SolveResult {
   routes: Route[];
   events_global: RouteEvent[];
   blocked?: { reach_km: number; blockers: Blocker[]; event: RouteEvent };
+  /** No path to B (21 Oct 2026): the search line up to where it stopped — not spotted, not for export. */
+  partial?: {
+    route: number; name: string; kind: "search_line"; note: string; reach_km: number; length_km: number; search_cost_rs: number;
+    towers: { no: number; lon: number; lat: number; type: string; deflection_deg: number; chainage_km: number }[];
+    geometry: GeoJSON.LineString;
+  } | null;
   line?: { kv: number; circuit: string; design_span_m: number; half_width_m: number; span_max_m: number; span_min_m: number };
   frame?: { length_km: number; half_width_km: number };
   rules_fired?: Record<string, number>;

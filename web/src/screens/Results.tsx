@@ -215,6 +215,43 @@ function Body({ s }: { s: Solve }) {
     }
   }, [map, band, ends, prevFC, routesFC, hwM, midLat]);
 
+  // no viable route: the search line up to where it stopped (21 Oct 2026) — dashed, with the search's tower sites
+  const partial = s.result.partial ?? null;
+  useEffect(() => {
+    if (!map || !partial) return;
+    const line: GeoJSON.Feature = { type: "Feature", properties: {}, geometry: partial.geometry };
+    const pts: GeoJSON.FeatureCollection = {
+      type: "FeatureCollection",
+      features: partial.towers.map((t) => ({ type: "Feature", properties: { no: t.no, type: t.type, angle: t.type !== "A" },
+                                             geometry: { type: "Point", coordinates: [t.lon, t.lat] } })),
+    };
+    const last = partial.towers[partial.towers.length - 1];
+    const end: GeoJSON.Feature = { type: "Feature", properties: { label: `Search stopped · km ${num(partial.reach_km, 1)}` },
+                                   geometry: { type: "Point", coordinates: [last.lon, last.lat] } };
+    for (const [id, data] of [["partial-line", line], ["partial-towers", pts], ["partial-end", end]] as const) {
+      const src = map.getSource(id) as GeoJSONSource | undefined;
+      if (src) src.setData(data as GeoJSON.GeoJSON);
+      else map.addSource(id, { type: "geojson", data: data as GeoJSON.GeoJSON });
+    }
+    if (!map.getLayer("partial-casing"))
+      map.addLayer({ id: "partial-casing", type: "line", source: "partial-line", layout: { "line-join": "round" },
+                     paint: { "line-color": "#0d1418", "line-width": 5, "line-opacity": 0.5 } });
+    if (!map.getLayer("partial-line"))
+      map.addLayer({ id: "partial-line", type: "line", source: "partial-line", layout: { "line-join": "round" },
+                     paint: { "line-color": "#E3AA45", "line-width": 3, "line-dasharray": [2, 1.5] } });
+    if (!map.getLayer("partial-towers"))
+      map.addLayer({ id: "partial-towers", type: "circle", source: "partial-towers", minzoom: 11,
+                     paint: { "circle-radius": ["case", ["get", "angle"], 4, 2.5], "circle-color": ["case", ["get", "angle"], "#E3AA45", "#ffffff"],
+                              "circle-stroke-color": "#0d1418", "circle-stroke-width": 1 } });
+    if (!map.getLayer("partial-end"))
+      map.addLayer({ id: "partial-end", type: "circle", source: "partial-end",
+                     paint: { "circle-radius": 7, "circle-color": "#D9534F", "circle-stroke-color": "#ffffff", "circle-stroke-width": 2 } });
+    if (!map.getLayer("partial-end-label"))
+      map.addLayer({ id: "partial-end-label", type: "symbol", source: "partial-end",
+                     layout: { "text-field": ["get", "label"], "text-size": 12, "text-offset": [0, 1.4], "text-anchor": "top" },
+                     paint: { "text-color": "#ffffff", "text-halo-color": "#0d1418", "text-halo-width": 1.5 } });
+  }, [map, partial]);
+
   // selection styling
   useEffect(() => {
     if (!map || !map.getLayer("routes-line")) return;
@@ -774,6 +811,13 @@ function Failure({ s, onWiden }: { s: Solve; onWiden: () => void }) {
         {bl ? `The search reached km ${num(bl.reach_km, 1)} before the band closed.` : ""} The extraction is kept, so fixing this does not
         mean starting over.
       </Note>
+      {s.result.partial ? (
+        <Note kind="info" style={{ marginBottom: 14 }}>
+          <b>Dashed on the map: the search line up to km {num(s.result.partial.reach_km, 1)}</b> — route {s.result.partial.route},{" "}
+          {s.result.partial.towers.length} tower sites over {num(s.result.partial.length_km, 1)} km, search price ₹
+          {num(s.result.partial.search_cost_rs / 1e7, 1)} Cr. {s.result.partial.note}
+        </Note>
+      ) : null}
       <div className="card">
         <div className="tw">
           <table data-testid="blockers">

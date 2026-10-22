@@ -137,6 +137,11 @@ class SolveOutcome:
     reach_chainage_m: float               # furthest chainage reached (for BAND_BLOCKED)
     seconds: float
     reach_map: np.ndarray | None = None   # (nc+1, R) bool: a tower can stand here on some feasible path from A
+    # no path to B (21 Oct 2026): the cheapest search line from A to the furthest column reached — towers as found by
+    # the search, never spotted; partial_cost_rs is its search price
+    partial_sites: list | None = None
+    partial_heads: list | None = None
+    partial_cost_rs: float | None = None
 
 
 def make_grid(compiled: Compiled, p: SolverParams) -> Grid:
@@ -802,6 +807,9 @@ def solve(compiled: Compiled, p: SolverParams, cancel_check=None, progress=None,
     kidx = torch.arange(K, device=dev).view(1, K).expand(R, K)
     reach = torch.zeros(nc + 1, dtype=torch.bool, device=dev)
     reach_map = torch.zeros((nc + 1, R), dtype=torch.bool, device=dev)
+    # furthest column with a finite tower cost and its costs, kept without a GPU sync (partial line, 21 Oct 2026)
+    last_M = torch.full((R, K), INF, device=dev)
+    last_c = torch.zeros((), dtype=torch.int64, device=dev)
     end_tot = torch.full((nc + 1, R), INF, device=dev)
     end_k = torch.zeros((nc + 1, R), dtype=torch.int64, device=dev)
     end_cols = set(np.nonzero(np.isfinite(seedB).any(axis=1))[0].tolist())
@@ -909,6 +917,10 @@ def solve(compiled: Compiled, p: SolverParams, cancel_check=None, progress=None,
             M[rw] = Mw
             arg_cols[c] = (lo_r, am)
         reach_map[c] = torch.isfinite(M).any(dim=1)
+        if win is None:
+            has_ = torch.isfinite(M).any()
+            last_M = torch.where(has_, M, last_M)
+            last_c = torch.where(has_, torch.full_like(last_c, c), last_c)
         E = E_chunk[c - E_start]
         Wring[c % ring] = M + E
         Xring[c % ring] = cross_out
@@ -923,7 +935,13 @@ def solve(compiled: Compiled, p: SolverParams, cancel_check=None, progress=None,
         rm = reach_map.cpu().numpy()
         cols = np.nonzero(rm.any(axis=1))[0]
         reach_m = float(cols.max() * grid.sx) if len(cols) else 0.0
-        return SolveOutcome(False, INF, [], [], grid, reach_m, time.time() - t0, rm)
+        out_ = SolveOutcome(False, INF, [], [], grid, reach_m, time.time() - t0, rm)
+        if win is None and bool(torch.isfinite(last_M).any()):
+            try:
+                out_.partial_sites, out_.partial_heads, out_.partial_cost_rs = _trace_partial(arg, grid, int(last_c.item()), last_M)
+            except Exception as e:                     # the partial line is a display aid: never fail the solve over it
+                log.warning("partial line not traced: %s", e)
+        return out_
     flat = int(end_tot.argmin().item())
     c, r = divmod(flat, R)
     k = int(end_k[c, r].item())
@@ -949,6 +967,31 @@ def solve(compiled: Compiled, p: SolverParams, cancel_check=None, progress=None,
     sites.reverse()
     heads.reverse()
     return SolveOutcome(True, best, sites, heads, grid, compiled.frame.length_m, time.time() - t0)
+
+
+def _trace_partial(arg, grid: Grid, c: int, M: torch.Tensor):
+    """Cheapest tower chain from A to site column c (its costs M: (R, K) per row and outgoing offset). arg[c, r, k]
+    = the incoming offset of the best way into (c, r) leaving along k, -1 = a first dead-end tower."""
+    R, K = M.shape
+    flat = int(M.argmin().item())
+    r, k = divmod(flat, K)
+    cost = float(M[r, k].item())
+    sites = [(c, r)]
+    heads = []
+    kk = int(arg[c, r, k].item())
+    guard = 0
+    while kk != -1:
+        guard += 1
+        if guard > 100000:
+            raise RuntimeError("partial backtrack did not terminate")
+        dc, dr = grid.offsets[kk]
+        c, r = c - int(dc), r - int(dr)
+        sites.append((c, r))
+        heads.append(kk)
+        kk = int(arg[c, r, kk].item())
+    sites.reverse()
+    heads.reverse()
+    return sites, heads, cost
 
 
 def refine(compiled: Compiled, p: SolverParams, out: SolveOutcome, spacing_m: float = 25.0, half_width_m: float = 300.0,

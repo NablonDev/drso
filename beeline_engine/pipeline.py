@@ -536,7 +536,7 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
                         gantry_face_a=face_a, gantry_face_b=face_b, gantry_rule_ends=rule_ends,
                         ext_zero_tol_m=ext_zero_tol, ext_round_tol_m=ext_round_tol,
                         crossing_dev_max_deg=_crossing_dev_cap(rules))
-    sp = SpotParams(design_span_m=design, span_max_m=smax_search, plain_span_max_m=smax, excess_span_rs_per_m=excess_rs_m,
+    sp = SpotParams(design_span_m=design, span_max_m=smax_search, parallel=bool((eng.get("spotting") or {}).get("parallel", False)), plain_span_max_m=smax, excess_span_rs_per_m=excess_rs_m,
                     raster_prefilter=bool(eng["grid"].get("raster_prefilter", True)), gantry_min_span_m=gantry_min,
                     dead_end_a=de_a, dead_end_b=de_b, gantry_max_span_m=gantry_max, gantry_square_tol_deg=sq_tol,
                     gantry_face_a=face_a, gantry_face_b=face_b, gantry_rule_ends=rule_ends,
@@ -889,12 +889,15 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
                 raise
     routes = []
     blocked_first = None
+    partial_first = None
     for f in futures:
         res = f.result()
         if res["line"] is None:
             # the band is closed under this route's rules; the relaxed route may still get through
             if blocked_first is None:
                 blocked_first = _blocked(inp, frame, res["cv"], res["out"], findex, rules)
+            if partial_first is None:
+                partial_first = _partial_json(res["var"], res["out"], frame, bands)
             global_events.append(event("ROUTE_NOT_FOUND", {"route": res["var"]["id"], "name": res["var"]["name"],
                                                            "why": blocked_first["event"]["text"]}))
         else:
@@ -902,7 +905,7 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
     if not routes:
         prog(1.0, "No viable route")
         _drop_edge_caches([comp] + list(relaxed_box.values()))
-        return {"feasible": False, "blocked": blocked_first, "routes": [], "events_global": global_events,
+        return {"feasible": False, "blocked": blocked_first, "partial": partial_first, "routes": [], "events_global": global_events,
                 "timings": {**timings, "total_s": round(time.time() - t_start, 2)},
                 "frame": _frame_info(frame), "rules_fired": comp.rules_fired, "dead_ends": dead_end_info}
     prog(1.0, "Done")
@@ -1546,6 +1549,33 @@ def _route_json(var, sr, frame, evs, solve_s, spot_s, out, extra_timings: dict |
         "timings": {"solve_s": round(solve_s, 2), "spot_s": round(spot_s, 2), **(extra_timings or {})},
         "grid_cost_rs": round(out.cost_rs, 0),
     }
+
+
+def _partial_json(var, out, frame, bands) -> dict | None:
+    """The search line up to where it stopped (21 Oct 2026): tower sites as the search placed them, types from the
+    deflection at each, chainage and the search price — never spotted, so no heights, clearances or exact checks."""
+    sites = getattr(out, "partial_sites", None)
+    if not sites or len(sites) < 2:
+        return None
+    from .config import tower_type_for
+    xs, ys = zip(*(out.grid.site_xy(c, r) for c, r in sites))
+    lon, lat = frame.frame_to_lonlat(np.asarray(xs, float), np.asarray(ys, float))
+    towers = []
+    for i in range(len(sites)):
+        d = 0.0
+        if 0 < i < len(sites) - 1:
+            h1 = math.atan2(ys[i] - ys[i - 1], xs[i] - xs[i - 1]); h2 = math.atan2(ys[i + 1] - ys[i], xs[i + 1] - xs[i])
+            d = abs(math.degrees(h2 - h1)) % 360.0
+            d = min(d, 360.0 - d)
+        t = "D60" if i == 0 else (tower_type_for(d, bands) or "D60")
+        towers.append({"no": i + 1, "lon": round(float(lon[i]), 7), "lat": round(float(lat[i]), 7), "type": t,
+                       "deflection_deg": round(d, 1), "chainage_km": round(float(xs[i]) / 1000.0, 3)})
+    length = sum(math.hypot(xs[i + 1] - xs[i], ys[i + 1] - ys[i]) for i in range(len(xs) - 1))
+    return {"route": var["id"], "name": var["name"], "kind": "search_line",
+            "note": "Search line only, up to where the search stopped: towers are not spotted (no heights, clearances or exact rule checks). Not for export.",
+            "reach_km": round(float(xs[-1]) / 1000.0, 2), "length_km": round(length / 1000.0, 2), "towers": towers,
+            "search_cost_rs": round(float(out.partial_cost_rs or 0.0)),
+            "geometry": {"type": "LineString", "coordinates": [[t["lon"], t["lat"]] for t in towers]}}
 
 
 def _blocked(inp, frame, comp, out, findex, rules) -> dict:
