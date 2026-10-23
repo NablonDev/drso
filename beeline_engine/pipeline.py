@@ -344,6 +344,7 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
                                  single_angle_tol_deg=eng["crossings"]["single_angle_tolerance_deg"],
                                  gantry_buffer_m=float(rules["substations"].params.get("gantry_buffer_m", 10)),
                                  raster_margin_m=float(eng["grid"].get("raster_margin_m", 0.0)),
+                                 exact_rules=tuple(eng["grid"].get("exact_rules") or ()),
                                  angle_tower_rules=tuple(eng["crossings"].get("angle_tower_rules") or ()),
                                  relaxed=relaxed, chw_ref_m=chw_ref, rasterizer=shared["R"],
                                  raster_cache=raster_cache, precedent_towers=prec_towers if precedent else None,

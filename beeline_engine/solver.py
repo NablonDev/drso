@@ -574,6 +574,7 @@ def site_costs(compiled: Compiled, grid: Grid, p: SolverParams) -> tuple[np.ndar
         S = S * (1.0 - p.proximity_tower_discount * compiled.near_existing[row, col])
     S = S + p.lateral_penalty_rs_per_m * np.abs(fy)
     forbidden = compiled.tower_forbidden
+    xx = yy = r = None
     if p.site_tolerance_m > 0:
         # a lattice site is usable when a legal cell lies within site_tolerance_m of it (10 Oct 2026:
         # a 47 m legal strip between two lines' setbacks fell between 50 m sites); the spotting then
@@ -582,7 +583,40 @@ def site_costs(compiled: Compiled, grid: Grid, p: SolverParams) -> tuple[np.ndar
         r = int(math.ceil(p.site_tolerance_m / f.res_m))
         yy, xx = np.ogrid[-r:r + 1, -r:r + 1]
         forbidden = ndimage.binary_erosion(forbidden, structure=(xx * xx + yy * yy) <= r * r, border_value=1)
+    S0 = S.copy()
     S[forbidden[row, col]] = INF
+    # exact rules (23 Oct 2026, engine.yaml grid.exact_rules): inside the band where those rules' rasters may be
+    # off by up to a cell, each lattice site is tested against the rules' own vector features; a site counts as
+    # allowed when a legal spot lies within site_tolerance_m of it (the spotting snaps the tower there)
+    band = getattr(compiled, "exact_tower_band", None)
+    rids = tuple(getattr(compiled, "exact_tower_rules", ()) or ())
+    other = getattr(compiled, "tower_other", None)
+    if band is not None and rids and other is not None and band.any():
+        if p.site_tolerance_m > 0:
+            other = ndimage.binary_erosion(other, structure=(xx * xx + yy * yy) <= r * r, border_value=1)
+        sel = band[row, col] & ~other[row, col]
+        if sel.any():
+            import shapely
+            from shapely import STRtree
+            pts = shapely.points(fx[sel], fy[sel])
+            hit = np.zeros(len(pts), bool)
+            tol = float(p.site_tolerance_m or 0.0)
+            for vr in compiled.tower_nogo:
+                if vr.rule_id not in rids or len(vr.geoms) == 0:
+                    continue
+                dd = max(float(vr.d) - tol, 0.0)
+                if vr.inside is not None or vr.outside is not None:   # zoned rule: its own clipped check, site point only
+                    for i in np.flatnonzero(~hit):
+                        if vr.hits(pts[i]):
+                            hit[i] = True
+                    continue
+                tree = STRtree(np.asarray(vr.geoms, dtype=object))
+                q = tree.query(pts, predicate="dwithin", distance=dd) if dd > 0 else tree.query(pts, predicate="intersects")
+                if len(q[0]):
+                    hit[np.unique(q[0])] = True
+            S[sel] = np.where(hit, INF, S0[sel])
+            log.info("exact tower check: %d sites in the band, %d closed exactly, %d reopened",
+                     int(sel.sum()), int(hit.sum()), int((~hit & forbidden[row, col][sel]).sum()))
     return S.astype(np.float32), compiled.angle_forbidden[row, col]
 
 

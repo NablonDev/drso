@@ -11,6 +11,10 @@ grid:
   band_margin_m: 500          # extra length before A and after B in the chainage frame
   raster_margin_m: 0          # padding on raster buffers; spotting repairs grid/exact disagreements
   nudge_radius_m: 30          # how far spotting may move a grid tower to satisfy the exact check
+  # exact rules (vj copy, 23 Oct 2026): their rasters are cut from exact feature distances instead of the all-touched
+  # feature cells (a 24 m² hut used to close 40-80 m round it), and every lattice site near their features is checked
+  # against the vector features in the search itself — the Charotar house ribbons on Halvad-Vadodara. Empty = off.
+  exact_rules: [buildings, building_clearance, clusters]
   # a site is usable in the search when a legal cell lies within this distance; the spotting snaps the
   # tower there (10 Oct 2026: a 47 m legal strip between a 66 kV and a 765 kV setback fell between sites)
   site_tolerance_m: 25

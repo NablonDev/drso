@@ -18,6 +18,7 @@ from __future__ import annotations
 import logging
 import math
 import os
+import time
 from dataclasses import dataclass, field
 
 import geopandas as gpd
@@ -211,6 +212,12 @@ class Compiled:
     conductor_nogo: list[VecRule] = field(default_factory=list)
     rules_fired: dict[str, int] = field(default_factory=dict)
     rule_masks: dict = field(default_factory=dict)      # (kind, rule_id) -> bool raster, only with RECORD_RULE_MASKS
+    # exact rules (23 Oct 2026, engine.yaml grid.exact_rules): their rasters are cut from exact feature distances and the
+    # solver re-checks every lattice site inside exact_tower_band against their vector features (tower_nogo rules with
+    # these ids); tower_other = the tower No-Go of all other rules, never reopened by that check
+    exact_tower_rules: tuple = ()
+    tower_other: np.ndarray | None = None
+    exact_tower_band: np.ndarray | None = None
     costs: dict = field(default_factory=dict)
     terminal_zone: object = None     # frame coords: go-zone discs + terminal yards (+ gantry buffer)
     terminal_yards: object = None
@@ -324,6 +331,39 @@ def _to_frame(frame: Frame, gdf: gpd.GeoDataFrame) -> gpd.GeoSeries:
     return gpd.GeoSeries(frame.geoms_utm_to_frame(np.asarray(utm.values)), index=utm.index)
 
 
+def _rasterize_chunk(args):
+    """One forked chunk: simplify (0.5 m), buffer by d (8 vertices per corner), burn with centre sampling."""
+    wkb, d, shape, transform = args
+    import shapely
+    from rasterio import features as rf
+    gs = shapely.from_wkb(wkb)
+    if d > 0:
+        gs = shapely.buffer(shapely.simplify(gs, 0.5), d, quad_segs=2)
+    m = rf.rasterize([(g, 1) for g in gs], out_shape=shape, transform=transform, fill=0, all_touched=False, dtype="uint8")
+    return np.packbits(m.astype(bool), axis=None)
+
+
+def _rasterize_parallel(geoms, d: float, shape, transform, nproc: int | None = None) -> np.ndarray:
+    """Centre-sampled mask of the polygons buffered by d, built in forked chunks: buffering 474k building footprints
+    took 136 s and burning them 40 s in one process (23 Oct 2026); returns a bool raster."""
+    import shapely
+    n = len(geoms)
+    if n == 0:
+        return np.zeros(shape, bool)
+    nproc = max(1, min(nproc or (os.cpu_count() or 1) - 2, 10, n // 2000 + 1))
+    chunks = np.array_split(np.asarray(geoms), nproc)
+    jobs = [(shapely.to_wkb(c), float(d), shape, transform) for c in chunks]
+    if nproc == 1:
+        parts = [_rasterize_chunk(jobs[0])]
+    else:
+        import multiprocessing
+        from concurrent.futures import ProcessPoolExecutor
+        with ProcessPoolExecutor(nproc, mp_context=multiprocessing.get_context("fork")) as ex:
+            parts = list(ex.map(_rasterize_chunk, jobs))
+    packed = np.bitwise_or.reduce(np.stack(parts), axis=0)
+    return np.unpackbits(packed, axis=None)[: shape[0] * shape[1]].reshape(shape).astype(bool)
+
+
 class _Rasterizer:
     """Caches per-(layer, classes) feature masks and distance transforms."""
 
@@ -333,6 +373,7 @@ class _Rasterizer:
         self.shape = (frame.height, frame.width)
         self._mask: dict = {}
         self._dist: dict = {}
+        self._dist_exact: dict = {}
         self._angle: dict = {}
         self._frame_geoms: dict = {}
         self._fp: dict = {}
@@ -551,6 +592,36 @@ class _Rasterizer:
             if self.cache is not None and self.subset(layer, classes) is not None:
                 self.cache.put_dist(self.fingerprint(layer, classes), sq)
         return self._dist[key]
+
+    def within_exact(self, layer, classes, d: float) -> np.ndarray | None:
+        """Cells whose CENTRE lies within d of a feature: the features buffered by d and rasterised with centre
+        sampling (23 Oct 2026). The plain path (all-touched feature cells + cell-to-cell distance) grows a 24 m² hut to
+        1-4 cells and closes 40-80 m round it; this one is exact to half a cell, and the solver re-checks tower sites
+        exactly. ~10 s per call on 485k buildings against 140 s for a nearest-feature distance field."""
+        key = (layer, tuple(classes or ()), round(float(d), 2))
+        if key in self._dist_exact:
+            return self._dist_exact[key]
+        g = self.subset(layer, classes)
+        if g is None:
+            self._dist_exact[key] = None
+            return None
+        fp = f"{self.fingerprint(layer, classes)}-exact{round(float(d), 2)}" if self.cache is not None else None
+        if fp is not None:
+            m, found = self.cache.get_mask(fp, self.shape)
+            if found:
+                self._dist_exact[key] = m if m is not None else np.zeros(self.shape, bool)
+                return self._dist_exact[key]
+        import shapely
+        t0 = time.time()
+        utm = g.geometry.to_crs(self.frame.epsg)
+        geoms = np.asarray(utm.values)
+        geoms = geoms[[x is not None and not x.is_empty for x in geoms]]
+        m = _rasterize_parallel(geoms, float(d), self.shape, self.frame.transform)
+        log.info("exact within-%.1f m mask %s/%s: %d features, %d cells, %.0fs", d, layer, classes, len(geoms), int(m.sum()), time.time() - t0)
+        if fp is not None:
+            self.cache.put_mask(fp, m if m.any() else None)
+        self._dist_exact[key] = m
+        return m
 
     def angle_nearest(self, layer, classes, within_m: float) -> np.ndarray | None:
         """Direction (deg in [0,180)) of the nearest line segment, for cells within `within_m`.
@@ -859,7 +930,7 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
                   angle_tower_rules: tuple[str, ...] = (), relaxed: bool = False,
                   chw_ref_m: float | None = None, rasterizer=None, raster_cache=None,
                   terminal_yard_radius_m: float | None = None, precedent_towers=None,
-                  tower_cost_rs: dict | None = None) -> Compiled:
+                  tower_cost_rs: dict | None = None, exact_rules: tuple[str, ...] = ()) -> Compiled:
     # Terminal yards: the substation(s) the line starts / ends in. They are carved out of the
     # substation rule; the yard (+ gantry buffer) and the go-zone disc are clear for the conductor,
     # and no tower may stand inside the yard other than the dead-end towers at A and B.
@@ -886,6 +957,20 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
     shape = R.shape
     tower_forbidden = np.zeros(shape, bool)
     tower_nonriver = np.zeros(shape, bool)        # vj copy, 22 Oct 2026: river tower zones (see below)
+    # exact rules (23 Oct 2026): rules whose rasters come from exact feature distances (no all-touched inflation);
+    # their tower cells are re-checked exactly at every lattice site inside exact_band (solver.site_costs);
+    # tower_other = the tower No-Go of every other rule, which that check never reopens
+    exact_rules = tuple(x for x in (exact_rules or ()) if x)
+    tower_other = np.zeros(shape, bool)
+    exact_band = np.zeros(shape, bool)
+    EXACT_BAND_M = 15.0
+
+    def within_for(r_: ResolvedRule, layer, classes, d_: float):
+        """Cells closed by a rule's buffer of d_: exact (centre within d_ of the feature itself) for the rules in
+        exact_rules, the padded cell-to-cell field otherwise."""
+        if r_.id in exact_rules:
+            return R.within_exact(layer, classes, float(d_))
+        return _within(R.dist(layer, classes), d_)
     _zone_layers = {l["key"]: l["tower_zone_near_towers_m"] for l in load_layers()["layers"] if l.get("tower_zone_near_towers_m")}
     _RIVER_RULES = {"river", "small_river"} if _zone_layers else set()
     angle_forbidden = np.zeros(shape, bool)
@@ -913,6 +998,8 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
             _rec("tower" if target is tower_forbidden else "angle" if target is angle_forbidden else "conductor", rule_id, mask_arr)
             if target is tower_forbidden and rule_id not in _RIVER_RULES:
                 np.logical_or(tower_nonriver, mask_arr, out=tower_nonriver)   # the tower No-Go without the river rules (river tower zones)
+            if target is tower_forbidden and rule_id not in exact_rules:
+                np.logical_or(tower_other, mask_arr, out=tower_other)
 
     def vec(lst, rule_id, layer, classes, d):
         fg = R.frame_geoms(layer, classes)
@@ -1073,7 +1160,7 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
             # (765 kV D/C ~15 m — Vivek, 7 Oct 2026). Earlier: + increment + corridor half-width
             # (49 m at 765 kV), which closed every farm lane.
             d = float(p["horizontal_m"]) + float(p.get("outer_phase_m", hw))
-            add(_within(R.dist(r.layer, r.classes), d), conductor_forbidden, r.id)
+            add(within_for(r, r.layer, r.classes, d), conductor_forbidden, r.id)
             vec(cond_geoms, r.id, r.layer, r.classes, d)
         elif m == "airport_prohibition":
             applies = p.get("applies_to", "EHT and HT")
@@ -1132,6 +1219,11 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
                 continue
             td = float(p.get("tower_setback_m", 0))
             dist = R.dist(r.layer, r.classes)
+            if r.id in exact_rules and dist is not None:
+                # exact rule: its buffers are cut by within_exact below; the lattice sites within td + EXACT_BAND_M of its
+                # features are re-checked against the vector features in the search
+                if td > 0:
+                    exact_band |= R.within_exact(r.layer, r.classes, td + EXACT_BAND_M)
             if r.also_layers and r.id not in ("buildings", "dams", "creek"):
                 # same buffers on further layers, read whole (e.g. plotted land under the
                 # built-up cluster rule — Vivek, 6 Oct 2026)
@@ -1149,14 +1241,14 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
                 continue
             if r.id == "buildings":
                 cb = cond_buffer(r)
-                add(_within(dist, cb), conductor_forbidden, r.id)
+                add(within_for(r, r.layer, r.classes, cb), conductor_forbidden, r.id)
                 vec(cond_geoms, r.id, r.layer, r.classes, cb)
                 target, glist = (angle_forbidden, angle_geoms) if p.get("applies_to") == "Angular towers" \
                     else (tower_forbidden, tower_geoms)
-                add(_within(dist, td), target, r.id)
+                add(within_for(r, r.layer, r.classes, td), target, r.id)
                 vec(glist, r.id, r.layer, r.classes, td)
                 continue
-            add(_within(dist, td), tower_forbidden, r.id)
+            add(within_for(r, r.layer, r.classes, td), tower_forbidden, r.id)
             vec(tower_geoms, r.id, r.layer, r.classes, td)
             if r.id == "dams":
                 if p.get("crossing") == "Prohibited":
@@ -1169,7 +1261,7 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
                 pass                    # tower setback only; spans cross freely (nalla — Vivek, 7 Oct 2026)
             else:
                 cd = float(p.get("conductor_buffer_m", 0))
-                add(_within(dist, cd), conductor_forbidden, r.id)
+                add(within_for(r, r.layer, r.classes, cd), conductor_forbidden, r.id)
                 vec(cond_geoms, r.id, r.layer, r.classes, cd)
         elif m == "landclass":
             if p.get("treatment") not in ("No-Go", "Last resort"):
@@ -1396,6 +1488,7 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
                                          out_shape=shape, transform=frame.transform, fill=0,
                                          all_touched=False, dtype="uint8").astype(bool)
                 tower_forbidden |= mp
+                tower_other |= mp
                 _rec("tower", f"open_water:{lyr}", mp)
                 if lyr not in _zone_layers:
                     tower_nonriver |= mp
@@ -1429,6 +1522,7 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
         zmask = rfeatures.rasterize([(_frame_to_utm(frame, river_zone), 1)], out_shape=shape, transform=frame.transform,
                                     fill=0, dtype="uint8").astype(bool)
         tower_forbidden = np.where(zmask, tower_nonriver, tower_forbidden)
+        tower_other = np.where(zmask, tower_other & tower_nonriver, tower_other)
         for (kd, rid), m in rule_masks.items():
             if kd == "tower" and (rid in _RIVER_RULES or rid in {f"open_water:{z}" for z in _zone_layers}):
                 m[zmask] = False
@@ -1552,6 +1646,7 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
         tower_forbidden[zm] = False
         angle_forbidden[zm] = False
         conductor_forbidden[zm] = False
+        tower_other[zm] = False
         for m in rule_masks.values():
             m[zm] = False
         keep = zm & ~ybm
@@ -1577,6 +1672,7 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
             ym = rfeatures.rasterize([(_frame_to_utm(frame, yards), 1)], out_shape=shape,
                                      transform=frame.transform, fill=0, dtype="uint8").astype(bool)
             tower_forbidden |= ym
+            tower_other |= ym
             _rec("tower", "substations", ym)
             # the conductor keeps the corridor half-width from the terminal substations too (Vivek, 13 Oct
             # 2026); the gantry span is exempt (gantry_seeds / Checker.conductor_ok)
@@ -1611,6 +1707,7 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
             om = rfeatures.rasterize([(x, 1) for x in utm_g], out_shape=shape, transform=frame.transform,
                                      fill=0, all_touched=True, dtype="uint8").astype(bool)
             tower_forbidden |= om & zm
+            tower_other |= om & zm
             _rec("tower", "substations", om & zm)
             fired[rid] = fired.get(rid, 0) + int((om & zm).sum())
 
@@ -1649,7 +1746,9 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
                     breach_band=breach["band"], breach_rs=breach["rs"], breach_normal_m=breach["normal"],
                     breach_geoms=breach["geoms"], breach_bands=breach_bands, small_ponds=small_ponds, small_pond_warn_m=small_pond_warn["m"],
                     bld_soft_normal_m=bsoft["normal"], bld_soft_a_rs=bsoft["a"], bld_soft_rate_rs_per_m=bsoft["rate"],
-                    bld_soft_deficit=bsoft["deficit"], bld_soft_geoms=bsoft["geoms"], rule_masks=rule_masks)
+                    bld_soft_deficit=bsoft["deficit"], bld_soft_geoms=bsoft["geoms"], rule_masks=rule_masks,
+                    exact_tower_rules=exact_rules, tower_other=tower_other if exact_rules else None,
+                    exact_tower_band=exact_band if exact_rules else None)
 
 
 def _airport_zone(R: "_Rasterizer", frame: Frame, layer: str, classes, d: float, funnel_m: float):
