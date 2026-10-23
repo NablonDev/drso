@@ -144,6 +144,16 @@ def _extract_one(run, k, lay, mode, src, band, img, rules, progress, rep):
             meta.update(source=f"Derived from buildings at {p.get('max_spacing_m', 50)} m / {p.get('min_area_m2', 9000)} m²",
                         model="cluster-derive", model_version="1.0", confidence=lay.get("default_confidence"),
                         image_source=(bmeta or {}).get("image_source"), image_date=(bmeta or {}).get("image_date"))
+        elif lay["producer"] == "osm" and reference.current_version(k):
+            # a delivered transmission product in the reference store wins over the OSM extract for this layer
+            # (Gujarat_transmission, Vivek 23 Oct 2026): towers and lines with voltage_kv, same vocabulary
+            gdf, m = reference.read_clip(k, band)
+            auto_gdf, auto_cov = gdf, reference.coverage_of(m)
+            meta.update(source=(m or {}).get("source") or lay.get("desc"), image_source=(m or {}).get("image_source"),
+                        image_date=(m or {}).get("source_date"), model=(m or {}).get("model"),
+                        confidence=(m or {}).get("confidence") or lay.get("default_confidence"), model_version=(m or {}).get("version"))
+            if _refresh_requested(rep):
+                meta["refresh"] = {"note": f"reference version {reference.current_version(k)} in use; the OSM refresh was not run"}
         elif lay["producer"] == "osm":
             kvs = tuple(lay.get("voltages") or osm_power.VOLTAGES)     # power: HT, power_lt: LT
             if _refresh_requested(rep):
