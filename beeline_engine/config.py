@@ -128,7 +128,7 @@ def resolve_rules(spec: LineSpec, overrides: dict | None = None) -> dict[str, Re
             out[r["id"]] = ResolvedRule(
                 id=r["id"], group=g["key"], name=r["name"], mechanism=r["mechanism"],
                 layer=r.get("layer"), classes=r.get("classes"), params=params,
-                enabled=ov.get("enabled", True), statutory=bool(g.get("statutory")),
+                enabled=ov.get("enabled", r.get("enabled", True)), statutory=bool(g.get("statutory")),
                 crossing_cost=r.get("crossing_cost"), cost_class=r.get("cost_class"),
                 also_lulc_classes=r.get("also_lulc_classes"), also_layers=r.get("also_layers"),
                 overridden=changed,

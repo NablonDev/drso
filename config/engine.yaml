@@ -79,6 +79,9 @@ forest_cap:
   # spots). The x3/x10/x30/x100 ladder (mode: ladder) spotted every pass, 15 min each, and landed far under
   # the cap at x100 (rev 38: 1.96 ha of a 5 ha cap, back over the km 52-54 hill).
   mode: bisection
+  # vj copy (22 Oct 2026): start the bisection near the multiplier the previous solve / parent met the cap with
+  warm_start: false
+  warm_bracket: 1.5
   max_mult: 1000
   grid_margin_ha: 1.0
   search_passes: 7
@@ -96,6 +99,9 @@ spotting:
   # vj copy (21 Oct 2026): build the grid route and the string-pulled route in two forked processes (same result,
   # less wall time); off until checked against a one-process run
   parallel: false
+  # vj copy (22 Oct 2026): power-line crossings re-optimised in this many forked processes (groups of crossings more
+  # than 16 towers apart are independent); 0 = sequential
+  parallel_crossings: 12
   # Ground-clearance check on the Copernicus GLO-30 DEM (30 m — coarser than the 10 m the
   # research doc asks for; the report says so).
   # TSD Table-4 + note G (150 mm sag error), all voltages (8 Oct 2026)

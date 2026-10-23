@@ -81,6 +81,8 @@ class SpotParams:
     proximity_tower_discount: float = 0.0   # the same on towers standing near them (Vivek, 13 Oct 2026)
     angle_point_rs: float = 0.0             # search-only surcharge on every tower that is not an A (what-if, 15 Oct 2026)
     parallel: bool = False                  # grid + pulled routes built in two processes (engine.yaml spotting.parallel)
+    batched_checks: bool = True             # exact rule checks batched per distance band (_MergedRules); False = per rule
+    parallel_crossings: int = 0             # processes for _refine_crossings (0/1 = sequential); engine.yaml spotting.parallel_crossings
     hilly_surcharge_rs_per_m: float = 0.0   # search-only hill avoidance (Vivek, 14 Oct 2026), string pulling too
     hilly_tower_surcharge_rs: float = 0.0
     extension_pct: float = 9.4              # body extension price, % of the tower per +18 m
@@ -142,6 +144,40 @@ def _excess_rs(sp: SpotParams, L: float) -> float:
 
 
 # ----------------------------------------------------------------------------------------
+class _MergedRules:
+    """Batched exact rule checks (vj copy, 22 Oct 2026): every un-zoned VecRule's raw features in one STRtree per
+    distance band, with each feature's own rule distance; hits(g) = one tree query per band at the band's largest
+    distance, then one vectorised dwithin against each candidate's own distance. Exactly any(r.hits(g)) for those
+    rules (no buffers built). Rules clipped to an approach zone keep their own per-rule check."""
+
+    BANDS = (50.0, 150.0, 500.0, float("inf"))
+
+    def __init__(self, rules):
+        import shapely
+        from shapely import STRtree
+        self.zoned = [r for r in rules if r.inside is not None or r.outside is not None]
+        plain = [r for r in rules if r.inside is None and r.outside is None]
+        self.bands = []
+        lo = -1.0
+        for hi in self.BANDS:
+            sel = [r for r in plain if lo < r.d <= hi]
+            lo = hi
+            geoms = [g for r in sel for g in r.geoms]
+            if not geoms:
+                continue
+            d = np.concatenate([np.full(len(r.geoms), r.d) for r in sel])
+            arr = np.asarray(geoms, dtype=object)
+            self.bands.append((STRtree(arr), arr, d, float(d.max())))
+        self._dwithin = shapely.dwithin
+
+    def hits(self, g) -> bool:
+        for tree, arr, d, dmax in self.bands:
+            idx = tree.query(g, predicate="dwithin", distance=dmax) if dmax > 0 else tree.query(g, predicate="intersects")
+            if len(idx) and bool(self._dwithin(arr[idx], g, d[idx]).any()):
+                return True
+        return any(r.hits(g) for r in self.zoned)
+
+
 class Checker:
     """Exact and raster checks in frame coordinates."""
 
@@ -181,6 +217,11 @@ class Checker:
             self._any_par = m
         self._tower_memo: dict = {}
         self._cond_memo: dict = {}
+        self._merged = bool(getattr(sp, "batched_checks", True))
+        if self._merged:
+            self._m_tower = _MergedRules(list(self.tower_rules))
+            self._m_angle = _MergedRules(list(self.angle_rules))
+            self._m_cond = _MergedRules(list(self.cond_rules))
         self._hilly_memo: dict = {}
         # (A combined shortlist STRtree over every rule's buffered features was tried on 11 Oct 2026 and
         # dropped: ~900 k buffers took 500 s to build per compile and the line queries were slower than
@@ -277,7 +318,10 @@ class Checker:
         clear = self.sp.raster_prefilter and bool(self._clear[row, col]) and (not angle_tower or bool(self._clear_angle[row, col]))
         if clear and not self._verify:
             return True
-        ok = not any(r.hits(p) for r in self.tower_rules) and not (angle_tower and any(r.hits(p) for r in self.angle_rules))
+        if self._merged:
+            ok = not self._m_tower.hits(p) and not (angle_tower and self._m_angle.hits(p))
+        else:
+            ok = not any(r.hits(p) for r in self.tower_rules) and not (angle_tower and any(r.hits(p) for r in self.angle_rules))
         if clear and not ok:
             log.warning("prefilter disagreement at (%.0f, %.0f): raster clear, vector hit", x, y)
         return ok
@@ -321,6 +365,8 @@ class Checker:
             line = line.difference(self.go)
             if line.is_empty:
                 return True
+        if self._merged:
+            return not self._m_cond.hits(line)
         return not any(r.hits(line) for r in self.cond_rules)
 
     def _sample_idx(self, p, q, step=None):
@@ -644,19 +690,20 @@ def _leg_model(chk: Checker, p, q, sp: SpotParams, design: float, hilly_leg: boo
     steps_a = _ext_steps(sp, "A")
     f = chk.c.frame
     _site: dict = {}
-    # village-cluster breach band along the leg (Vivek, 18 Oct 2026): a candidate span pays the breach charge
-    # when any 10 m sample between its towers lies in the band (prefix counts make each span O(1))
-    br_rs = float(getattr(chk.c, "breach_rs", 0.0) or 0.0)
-    br_pref = None
-    if br_rs > 0 and getattr(chk.c, "breach_band", None) is not None:
+    # priced breach bands along the leg (clusters, Vivek 18 Oct 2026; any No-Go rule, 22 Oct 2026): a candidate span
+    # pays a rule's charge when any 10 m sample between its towers lies in its band (prefix counts: O(1) per span)
+    br_pref = []
+    bands_ = [b for b in (getattr(chk.c, "breach_bands", None) or []) if b.get("band") is not None and float(b.get("rs", 0) or 0) > 0]
+    if bands_:
         nb = max(2, int(d // 10.0) + 2)
         tb = np.linspace(0.0, d, nb)
         bx = p[0] + (q[0] - p[0]) * tb / d
         by = p[1] + (q[1] - p[1]) * tb / d
         bc = np.clip(((bx - f.x0) / f.res_m).astype(int), 0, f.width - 1)
         brw = np.clip(((f.y_top - by) / f.res_m).astype(int), 0, f.height - 1)
-        hitb = chk.c.breach_band[brw, bc].astype(np.int32)
-        br_pref = (tb, np.concatenate([[0], np.cumsum(hitb)]))
+        for b in bands_:
+            hitb = b["band"][brw, bc].astype(np.int32)
+            br_pref.append((tb, np.concatenate([[0], np.cumsum(hitb)]), float(b["rs"])))
     # buildings soft zone along the leg (Vivek, 19 Oct 2026): (position along the leg, perpendicular distance)
     # of each building near it; a candidate span is charged for the buildings whose foot point lies on it
     bs_x = []
@@ -701,11 +748,10 @@ def _leg_model(chk: Checker, p, q, sp: SpotParams, design: float, hilly_leg: boo
                     dd_ = g_.distance(seg_)
                     if dd_ < chk.c.bld_soft_normal_m - 1e-6:
                         c += chk.c.bld_soft_a_rs + chk.c.bld_soft_rate_rs_per_m * (chk.c.bld_soft_normal_m - dd_)
-        if br_pref is not None:
-            tb_, cs_ = br_pref
+        for tb_, cs_, rs_ in br_pref:
             ia = int(np.searchsorted(tb_, pos[i], side="left")); ib = int(np.searchsorted(tb_, pos[j], side="right"))
             if cs_[ib] - cs_[ia] > 0:
-                c += br_rs
+                c += rs_
         if z is not None:
             hilly_span = sp.hilly_rise_m is not None and abs(z[j] - z[i]) > sp.hilly_rise_m
             if hilly_leg and L > _plain_max(sp) + 1e-3 and not hilly_span:
@@ -960,11 +1006,10 @@ def _bld_soft_rs(comp: Compiled, hits: dict) -> float:
 
 
 def _breach_rs(comp: Compiled, a, b) -> float:
-    """Village-cluster breach charge of one span (Vivek, 18 Oct 2026): the span's centre line sampled on the band
-    raster, as the search does; search price only."""
-    band = getattr(comp, "breach_band", None)
-    rs = float(getattr(comp, "breach_rs", 0.0) or 0.0)
-    if band is None or rs <= 0:
+    """Breach charges of one span (clusters, Vivek 18 Oct 2026; any No-Go rule with a breach band, 22 Oct 2026): the
+    span's centre line sampled on each band raster, as the search does; search price only."""
+    bands = [x for x in (getattr(comp, "breach_bands", None) or []) if x.get("band") is not None and float(x.get("rs", 0) or 0) > 0]
+    if not bands:
         return 0.0
     f = comp.frame
     L = math.hypot(b[0] - a[0], b[1] - a[1])
@@ -972,7 +1017,7 @@ def _breach_rs(comp: Compiled, a, b) -> float:
     t = np.linspace(0, 1, n)
     col = np.clip(((a[0] + t * (b[0] - a[0]) - f.x0) / f.res_m).astype(int), 0, f.width - 1)
     row = np.clip(((f.y_top - (a[1] + t * (b[1] - a[1]))) / f.res_m).astype(int), 0, f.height - 1)
-    return rs if bool(band[row, col].any()) else 0.0
+    return sum(float(x["rs"]) for x in bands if bool(x["band"][row, col].any()))
 
 
 def _band_index(comp: Compiled):
@@ -1233,22 +1278,26 @@ def _assemble(chk: Checker, comp, pts, added, sp: SpotParams, polish, angle_set,
                 off = abs((math.degrees(math.atan2(d_[1] - g[1], d_[0] - g[0])) - face + 180.0) % 360.0 - 180.0)
                 if off > sp.gantry_square_tol_deg + 0.5:
                     towers[de].violations.append(f"gantry_angle:{off:.0f}deg")
-    # village clusters inside the normal distance (Vivek, 18 Oct 2026): a warning with the exact distance
-    bg = getattr(comp, "breach_geoms", None)
-    breaches = 0
-    if bg and getattr(comp, "breach_normal_m", 0) > 0:
+    # inside a rule's normal distance (clusters, Vivek 18 Oct 2026; any No-Go rule, 22 Oct 2026): a warning with
+    # the exact distance, e.g. cluster_breach:<id> 143m, reservoir_breach:<id> 120m
+    breach_counts: dict = {}
+    for bi, b in enumerate(getattr(comp, "breach_bands", None) or []):
+        bg = b.get("geoms") or []
+        if not bg or float(b.get("normal", 0) or 0) <= 0:
+            continue
         from shapely import STRtree
-        btree = comp.__dict__.get("_breach_tree")
+        trees = comp.__dict__.setdefault("_breach_trees", {})
+        btree = trees.get(bi)
         if btree is None:
-            btree = comp.__dict__["_breach_tree"] = STRtree([g for g, _ in bg])
-        lim = float(comp.breach_normal_m)
+            btree = trees[bi] = STRtree([g for g, _ in bg])
+        lim = float(b["normal"])
         for i in range(1, n - 2):
             seg = LineString([pts[i], pts[i + 1]])
             for j in btree.query(seg.buffer(lim)):
                 dd = bg[j][0].distance(seg)
                 if dd < lim - 1e-6:
-                    towers[i].warnings.append(f"cluster_breach:{bg[j][1]} {dd:.0f}m")
-                    breaches += 1
+                    towers[i].warnings.append(f"{b['label']}_breach:{bg[j][1]} {dd:.0f}m")
+                    breach_counts[b["label"]] = breach_counts.get(b["label"], 0) + 1
     # buildings inside the soft zone (Vivek, 19 Oct 2026): a warning with the exact distance, each building once
     bsh = {}
     if _bld_soft_tree(comp) is not None:
@@ -1364,8 +1413,8 @@ def _assemble(chk: Checker, comp, pts, added, sp: SpotParams, polish, angle_set,
     if sp.tsd:
         _tsd_checks(towers, spans, sp)
     cost, stats = route_cost(comp, towers, spans, sp)
-    if bg:
-        stats["cluster_breach_spans"] = breaches
+    for lbl, cnt in breach_counts.items():
+        stats[f"{lbl}_breach_spans"] = cnt           # cluster_breach_spans, reservoir_breach_spans, ...
     if _bld_soft_tree(comp) is not None:
         # search-only charge, reported apart from the cost (Vivek, 19 Oct 2026)
         stats["building_soft_count"] = len(bsh)
@@ -2351,6 +2400,16 @@ def _wires(chk: Checker):
     return out
 
 
+def _refine_group(k):
+    """Forked worker: the sequential crossing loop over one group's stretch -> (first original index, new points)."""
+    pts, jobs, run, n0 = _FORK["refine"]
+    lo, hi = jobs[k]
+    out = run(list(pts), lo, stop=lambda cur, _hi=hi: _hi + (len(cur) - n0))
+    a_ = max(0, lo - 2)
+    tail = n0 - (hi + 6)                 # untouched original points after the stretch
+    return a_, out[a_:len(out) - tail] if tail > 0 else out[a_:]
+
+
 def _refine_crossings(chk: Checker, pts, sp: SpotParams):
     """Each power-line crossing re-optimised on a fine grid: the crossing point slides along the existing wire
     within the allowed band (refine_step_m), the line's angle to it varies over the allowed window, the two
@@ -2378,14 +2437,13 @@ def _refine_crossings(chk: Checker, pts, sp: SpotParams):
                 return cr_
         return crs_all[rid][0]
     wires = _wires(chk)
-    i = 3
-    while i < len(pts) - 4:
+    def _one(pts, i):
+        """One step of the crossing loop at index i -> (points, next index); unchanged logic (22 Oct 2026 split)."""
         p0, q0 = pts[i], pts[i + 1]
         seg = _LS([p0, q0])
         hit = [(rid, ln, pos) for rid, ln, pos in wires if rid in crs and ln.intersects(seg)]
         if len(hit) != 1:
-            i += 1
-            continue
+            return pts, i + 1
         rid, ln, pos = hit[0]
         X0 = ln.intersection(seg)
         X0 = X0 if X0.geom_type == "Point" else X0.centroid
@@ -2519,13 +2577,59 @@ def _refine_crossings(chk: Checker, pts, sp: SpotParams):
             cur_cost = cost_of(cur, s0, it0[0]["angle_deg"], it0[0]["side_a_m"], it0[0]["side_b_m"]) if it0 else float("inf")
             log.debug("refine %d-%d: coarse %.0f (legal %s), best %.0f", i, i + 1, cur_cost, cur_ok, best[0])
             if not cur_ok or best[0] < cur_cost - 1.0:
-                pts = best[1]
-                i = best[2] + 2
-                continue
+                return best[1], best[2] + 2
         else:
             log.info("crossing %d-%d (%s): no legal layout within the refinement reach", i, i + 1, rid)
-        i += 1
-    return pts
+        return pts, i + 1
+
+    def _is_crossing(pts, i):
+        seg = _LS([pts[i], pts[i + 1]])
+        return len([1 for rid, ln, pos in wires if rid in crs and ln.intersects(seg)]) == 1
+
+    def _run(pts, i, stop=None):
+        while i < len(pts) - 4 and (stop is None or i <= stop(pts)):
+            pts, i = _one(pts, i)
+        return pts
+
+    nproc = int(getattr(sp, "parallel_crossings", 0) or 0)
+    if nproc <= 1 or len(pts) < 40:
+        return _run(pts, 3)
+    # parallel (vj copy, 22 Oct 2026): a step at i reads points i-3 .. i+4 and replaces i-2 .. i+3, so crossings more than
+    # GAP points apart cannot see each other's changes; each group of nearby crossings runs the same sequential loop on
+    # its own stretch in a forked process, and the stretches are stitched back in route order
+    GAP = 16
+    cand = [i for i in range(3, len(pts) - 4) if _is_crossing(pts, i)]
+    if len(cand) < 2:
+        return _run(pts, 3)
+    groups, cur = [], [cand[0]]
+    for i in cand[1:]:
+        if i - cur[-1] >= GAP:
+            groups.append(cur); cur = [i]
+        else:
+            cur.append(i)
+    groups.append(cur)
+    n0 = len(pts)
+    jobs = []
+    for g in groups:
+        lo, hi = g[0], g[-1]
+        # stop after the group's last crossing (index shifted by the group's own length change)
+        jobs.append((lo, hi))
+    _FORK["refine"] = (pts, jobs, _run, n0)
+    import multiprocessing as mp
+    from concurrent.futures import ProcessPoolExecutor
+    try:
+        with ProcessPoolExecutor(max_workers=min(nproc, len(jobs)), mp_context=mp.get_context("fork")) as ex:
+            outs = list(ex.map(_refine_group, range(len(jobs))))
+    finally:
+        _FORK.pop("refine", None)
+    # stitch: group k changed only points (lo-2 .. hi+5) of the original list; between groups the original points stay
+    res, prev_end = [], 0
+    for (lo, hi), (a_, mid) in zip(jobs, outs):
+        res.extend(pts[prev_end:a_])
+        res.extend(mid)
+        prev_end = hi + 6
+    res.extend(pts[prev_end:])
+    return res
 
 
 def _wind_span_fix(chk: Checker, pts, sp: SpotParams):

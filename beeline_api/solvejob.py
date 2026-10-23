@@ -81,6 +81,24 @@ def build_manifest(run: dict, rls: list[dict], solve_result: dict | None) -> dic
     }
 
 
+def _forest_cap_hint(run: dict) -> dict:
+    """Route id -> the forest multiplier the run's latest solve (else its parent's) met the cap with (warm start)."""
+    for rid in (run["id"], run.get("parent_id")):
+        if not rid:
+            continue
+        s = db.one("select result from solves where run_id=%s and feasible order by id desc limit 1", (rid,))
+        if not s or not s["result"]:
+            continue
+        hint = {}
+        for r in s["result"].get("routes", []):
+            spotted = [c for c in ((r.get("timings") or {}).get("cap_passes") or []) if c.get("spotted") and c.get("mult")]
+            if spotted:
+                hint[int(r["id"])] = float(spotted[-1]["mult"])
+        if hint:
+            return hint
+    return {}
+
+
 def run_solve_job(job: dict, rep: Reporter):
     run = db.one("select * from runs where id=%s", (job["run_id"],))
     db.exec_("update runs set status='solving', updated_at=now() where id=%s", (run["id"],))
@@ -107,7 +125,7 @@ def run_solve_job(job: dict, rep: Reporter):
                      route_ids=[int(x) for x in (run.get("routes_selected") or [])] or None,
                      rule_overrides={k: {kk: vv for kk, vv in v.items()} for k, v in (run["rule_overrides"] or {}).items()},
                      cost_overrides=run["cost_overrides"] or {}, dem_dir=settings.DEM_DIR,
-                     cache_dir=settings.DATA / "cache" / "rasters")
+                     cache_dir=settings.DATA / "cache" / "rasters", forest_cap_hint=_forest_cap_hint(run))
     want_exports = bool((job.get("detail") or {}).get("exports", True))
     load_layers_s = round(time.time() - t_load, 2)
 

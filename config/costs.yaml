@@ -52,6 +52,8 @@ categories:
       - {key: black_cotton, label: "Black cotton", unit: "× base", value: 1.55}
       - {key: hard_rock, label: "Rock", unit: "× base", value: 1.2}
       - {key: wet_submerged, label: "Soft / creek / flooded (piles)", unit: "× base", value: 1.85}
+      # vj copy (22 Oct 2026, Vivek): towers standing in rivers on piles — provisional, 5 × the normal foundation
+      - {key: river_pile, label: "River bed (piles)", unit: "× base", value: 5.0}
 
   - key: buildings
     title: "Buildings"

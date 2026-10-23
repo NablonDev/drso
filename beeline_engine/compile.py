@@ -32,6 +32,54 @@ from .frame import Frame
 
 log = logging.getLogger(__name__)
 
+
+# compile memo (vj copy, 22 Oct 2026): results of pure, input-keyed compile steps kept in the process and on disk, so
+# a re-solve, a revision or a rule change does not redo them (span pieces 70 s → 12 s → ~0, hill area ~49 s → ~0).
+# Keyed by a hash of the exact inputs; a changed layer, frame, DEM or parameter is a new key. BEELINE_COMPILE_MEMO=0
+# turns the disk part off.
+_MEMO: dict = {}
+
+
+def _memo_dir():
+    from pathlib import Path
+    if os.environ.get("BEELINE_COMPILE_MEMO", "1") == "0":
+        return None
+    base = os.environ.get("BEELINE_DATA") or str(Path(__file__).resolve().parent.parent / "data" / "bucket")
+    d = Path(base) / "cache" / "compile_memo"
+    try:
+        d.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return None
+    return d
+
+
+def _memo(kind: str, key: str, compute):
+    import pickle
+    k = f"{kind}-{key}"
+    if k in _MEMO:
+        return _MEMO[k]
+    d = _memo_dir()
+    fp = d / f"{k}.pkl" if d is not None else None
+    if fp is not None and fp.exists():
+        try:
+            with open(fp, "rb") as fh:
+                val = pickle.load(fh)
+            _MEMO[k] = val
+            return val
+        except Exception:
+            pass
+    val = compute()
+    _MEMO[k] = val
+    if fp is not None:
+        try:
+            tmp = fp.with_suffix(".tmp")
+            with open(tmp, "wb") as fh:
+                pickle.dump(val, fh, protocol=pickle.HIGHEST_PROTOCOL)
+            tmp.replace(fp)
+        except Exception:
+            pass
+    return val
+
 RS_PER_CR = 1e7
 RS_PER_L = 1e5
 M2_PER_HA = 1e4
@@ -79,6 +127,12 @@ class ParallelRaster:
     rule_id: str
     angle: np.ndarray            # nearest feature angle where within setback, NaN elsewhere
     crossing_exempt: bool = False   # a span that crosses the feature is not a parallel run (canal, 9 Oct 2026)
+
+
+# Blockage diagnosis (vj copy, 22 Oct 2026): when True, compile_rules keeps every rule's own contribution to the
+# tower / angle / conductor rasters in Compiled.rule_masks[(kind, rule_id)] (bool, raster shape), so a diagnosis can
+# open one rule's cells exactly instead of guessing them back from geometry. Off in production: ~5 MB per rule.
+RECORD_RULE_MASKS = False
 
 
 class VecRule:
@@ -156,6 +210,7 @@ class Compiled:
     angle_nogo: list[VecRule] = field(default_factory=list)
     conductor_nogo: list[VecRule] = field(default_factory=list)
     rules_fired: dict[str, int] = field(default_factory=dict)
+    rule_masks: dict = field(default_factory=dict)      # (kind, rule_id) -> bool raster, only with RECORD_RULE_MASKS
     costs: dict = field(default_factory=dict)
     terminal_zone: object = None     # frame coords: go-zone discs + terminal yards (+ gantry buffer)
     terminal_yards: object = None
@@ -175,6 +230,11 @@ class Compiled:
     breach_rs: float = 0.0                      # ₹ search cost per breached span
     breach_normal_m: float = 0.0
     breach_geoms: list = field(default_factory=list)   # [(frame geometry, label)] of the clusters
+    # priced breach for any No-Go rule (Vivek, 22 Oct 2026, built like the cluster one): rules.yaml params
+    # breach_min_m + breach_cost_cr_per_span on a nogo rule make its hard buffer the breach distance and price every
+    # span inside the normal distance. One entry per rule: {"rule_id", "label", "band", "rs", "normal", "geoms"};
+    # the cluster fields above stay as the clusters entry's view
+    breach_bands: list = field(default_factory=list)
     # buildings soft zone (Vivek, 19 Oct 2026): hard buffer at soft_min_m; between it and the normal distance a
     # building costs the search A + rate x (normal - distance), each building once (spotting) / the deepest per span
     # (search raster); flagged with its distance. bld_soft_deficit: raster of (normal - distance) inside the band
@@ -231,6 +291,13 @@ def attach_hill_area(comp: "Compiled", relief_m: float, radius_m: float, mean_sl
         return
     res = comp.frame.res_m
     zf = np.where(np.isfinite(z), z, np.nanmean(z)).astype(np.float32)
+    import hashlib
+    key = hashlib.sha1(zf.tobytes() + np.isfinite(z).tobytes() + repr((zf.shape, res, relief_m, radius_m, mean_slope_deg,
+                                                                         slope_window_m, min_area_ha)).encode()).hexdigest()
+    comp.hill_area = _memo("hill", key, lambda: _hill_area_compute(z, zf, res, relief_m, radius_m, mean_slope_deg, slope_window_m, min_area_ha))
+
+
+def _hill_area_compute(z, zf, res, relief_m, radius_m, mean_slope_deg, slope_window_m, min_area_ha):
     r = max(1, int(round(radius_m / res)))
     yy, xx = np.mgrid[-r:r + 1, -r:r + 1]
     fp = np.hypot(yy, xx) <= r
@@ -246,7 +313,7 @@ def attach_hill_area(comp: "Compiled", relief_m: float, radius_m: float, mean_sl
         keep = np.zeros(n + 1, bool)
         keep[1:] = sizes >= min_area_ha
         m = keep[lab]
-    comp.hill_area = m
+    return m
 
 
 # ----------------------------------------------------------------------------------------
@@ -600,9 +667,6 @@ def _span_mid_pieces(lines, towers, epsg: int, half_frac: float) -> list:
     return out
 
 
-_SPAN_PIECES_MEMO: dict = {}
-
-
 def _span_offset_pieces(lines, towers, epsg: int, step_frac: float = 0.025) -> list:
     """(piece, offset) along every mapped span of the existing line: the span cut into step_frac pieces, each
     with |position − 0.5| of the span at its middle (UTM). For the graded null-point penalty (Vivek, 13 Oct 2026).
@@ -620,9 +684,15 @@ def _span_offset_pieces(lines, towers, epsg: int, step_frac: float = 0.025) -> l
     h = hashlib.sha1()
     for gg in list(lines.geometry) + list(towers.geometry):
         h.update(b"" if gg is None else shapely.to_wkb(gg))
-    key = (h.hexdigest(), int(epsg), float(step_frac))
-    if key in _SPAN_PIECES_MEMO:
-        return _SPAN_PIECES_MEMO[key]
+    key = f"{h.hexdigest()}-{int(epsg)}-{float(step_frac)}"
+    return _memo("spanpieces", key, lambda: _span_offset_pieces_compute(lines, towers, epsg, step_frac))
+
+
+def _span_offset_pieces_compute(lines, towers, epsg, step_frac):
+    import numpy as np
+    import shapely
+    from shapely import STRtree
+    from shapely.ops import substring
     parts = []
     for g in lines.geometry.to_crs(epsg):
         if g is None or g.is_empty:
@@ -661,7 +731,6 @@ def _span_offset_pieces(lines, towers, epsg: int, step_frac: float = 0.025) -> l
                     q0, q1 = xy[si, k], xy[si, k + 1]
                     if q0[0] != q1[0] or q0[1] != q1[1]:
                         out.append((shapely.LineString([q0, q1]), float(offs[k])))
-    _SPAN_PIECES_MEMO[key] = out
     return out
 
 
@@ -758,7 +827,7 @@ LULC_COST_CLASS = {
     "water_body": "water",
 }
 COST_CLASS_CODES = {"nonagri": 0, "agriculture": 1, "orchard": 2, "social_forest": 3, "forest": 4, "water": 5}
-SOIL_KEYS = ("normal_dry", "wet_submerged", "black_cotton", "hard_rock")
+SOIL_KEYS = ("normal_dry", "wet_submerged", "black_cotton", "hard_rock", "river_pile")
 
 
 def class_density_rs_m2(costs: dict, sensitive_mult: float = 1.0) -> dict[str, float]:
@@ -816,9 +885,20 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
     R = rasterizer if rasterizer is not None else _Rasterizer(frame, layers, cache=raster_cache)
     shape = R.shape
     tower_forbidden = np.zeros(shape, bool)
+    tower_nonriver = np.zeros(shape, bool)        # vj copy, 22 Oct 2026: river tower zones (see below)
+    _zone_layers = {l["key"]: l["tower_zone_near_towers_m"] for l in load_layers()["layers"] if l.get("tower_zone_near_towers_m")}
+    _RIVER_RULES = {"river", "small_river"} if _zone_layers else set()
     angle_forbidden = np.zeros(shape, bool)
     conductor_forbidden = np.zeros(shape, bool)
     fired: dict[str, int] = {}
+    rule_masks: dict = {}
+
+    def _rec(kind, rule_id, m):
+        if RECORD_RULE_MASKS and m is not None and m.any():
+            if (kind, rule_id) in rule_masks:
+                rule_masks[(kind, rule_id)] |= m
+            else:
+                rule_masks[(kind, rule_id)] = m.copy()
     precedent_items: dict = {}                                 # layer -> eased polygons (learn from existing lines)
     go_hv_near = np.zeros((frame.height, frame.width), bool)   # cells next to a >= 220 kV line
     go_hv_bans: list = []                                      # UTM pieces of those lines near their towers
@@ -830,6 +910,9 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
         if mask_arr is not None and mask_arr.any():
             target |= mask_arr
             fired[rule_id] = fired.get(rule_id, 0) + 1
+            _rec("tower" if target is tower_forbidden else "angle" if target is angle_forbidden else "conductor", rule_id, mask_arr)
+            if target is tower_forbidden and rule_id not in _RIVER_RULES:
+                np.logical_or(tower_nonriver, mask_arr, out=tower_nonriver)   # the tower No-Go without the river rules (river tower zones)
 
     def vec(lst, rule_id, layer, classes, d):
         fg = R.frame_geoms(layer, classes)
@@ -869,6 +952,7 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
     crossings: list[CrossingRaster] = []
     parallels: list[ParallelRaster] = []
     breach: dict = {"band": None, "rs": 0.0, "normal": 0.0, "geoms": []}
+    breach_bands: list = []
     bsoft: dict = {"deficit": None, "normal": 0.0, "a": 0.0, "rate": 0.0, "geoms": []}
     small_ponds: list = []
     small_pond_warn: dict = {"m": 0.0}
@@ -917,23 +1001,25 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
                 from dataclasses import replace as _replace
                 p = {**p, "tower_setback_m": smin, "conductor_buffer": "Fixed", "conductor_buffer_m": smin}
                 r = _replace(r, params=p)
-        if r.id == "clusters" and p.get("breach_min_m") is not None:
-            # village clusters (Vivek, 18 Oct 2026): hard buffer at the breach distance, the band up to the normal
-            # distance priced per span in the search and flagged in the result
+        if r.mechanism == "nogo" and p.get("breach_min_m") is not None and p.get("treatment") != "Allowed":
+            # priced breach (village clusters, Vivek 18 Oct 2026; any No-Go rule, 22 Oct 2026): hard buffer at the
+            # breach distance, the band up to the normal distance priced per span in the search and flagged in the result
             normal = max(float(p.get("tower_setback_m", 0) or 0), float(p.get("conductor_buffer_m", 0) or 0))
             bmin = float(p["breach_min_m"])
             if 0.0 <= bmin < normal - 1e-6:
                 cl_dist = R.dist(r.layer, r.classes)
                 if cl_dist is not None:
-                    breach["band"] = _within(cl_dist, normal)
-                    breach["rs"] = float(p.get("breach_cost_cr_per_span", 0) or 0) * 1e7
-                    breach["normal"] = normal
+                    entry = {"rule_id": r.id, "label": "cluster" if r.id == "clusters" else r.id, "band": _within(cl_dist, normal),
+                             "rs": float(p.get("breach_cost_cr_per_span", 0) or 0) * 1e7, "normal": normal, "geoms": []}
                     fg = R.frame_geoms(r.layer, r.classes)
                     sub_ = R.subset(r.layer, r.classes)
                     if fg is not None and sub_ is not None:
                         for g_, (_, row_) in zip(fg, sub_.iterrows()):
                             if g_ is not None and not g_.is_empty:
-                                breach["geoms"].append((g_, str(row_.get("src_id") or row_.get("name") or "cluster")))
+                                entry["geoms"].append((g_, str(row_.get("src_id") or row_.get("name") or entry["label"])))
+                    breach_bands.append(entry)
+                    if r.id == "clusters":
+                        breach.update(band=entry["band"], rs=entry["rs"], normal=normal, geoms=entry["geoms"])
                 p = {**p, "tower_setback_m": min(float(p.get("tower_setback_m", 0) or 0), bmin),
                      "conductor_buffer_m": min(float(p.get("conductor_buffer_m", 0) or 0), bmin)}
         if p.get("_width_part"):
@@ -1310,7 +1396,48 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
                                          out_shape=shape, transform=frame.transform, fill=0,
                                          all_touched=False, dtype="uint8").astype(bool)
                 tower_forbidden |= mp
+                _rec("tower", f"open_water:{lyr}", mp)
+                if lyr not in _zone_layers:
+                    tower_nonriver |= mp
                 tower_geoms.append(VecRule("open_water", lyr, list(_to_frame(frame, poly)), 0.0))
+
+    # River tower zones (vj copy, 22 Oct 2026, Vivek): a tower may stand in a river only within tower_zone_near_towers_m of an
+    # existing tower that already stands in that river polygon. Inside those discs the river rules (bank setback, crossing
+    # window / span) and the open-water ban of the river layer are lifted; every other rule still holds there.
+    river_zone = None
+    for zl in _zone_layers:
+        zd = float(_zone_layers[zl])
+        rp = R.frame_geoms(zl, None)
+        tws = []
+        for tl in ("power", "power_lt"):
+            g = R.frame_geoms(tl, ["power_tower"])
+            if g is not None:
+                tws.extend(x for x in g if x is not None and not x.is_empty)
+        if rp is None or not len(rp) or not tws:
+            continue
+        from shapely import STRtree
+        polys = [x for x in rp if x is not None and not x.is_empty and x.geom_type in ("Polygon", "MultiPolygon")]
+        if not polys:
+            continue
+        tr_ = STRtree(polys)
+        inside = [t for t in tws if len(tr_.query(t, predicate="within"))]
+        if inside:
+            z = unary_union([t.buffer(zd, 16) for t in inside])
+            river_zone = z if river_zone is None else river_zone.union(z)
+            log.info("river tower zones: %d existing towers stand in %s polygons -> %.1f km² within %g m", len(inside), zl, z.area / 1e6, zd)
+    if river_zone is not None and not river_zone.is_empty:
+        zmask = rfeatures.rasterize([(_frame_to_utm(frame, river_zone), 1)], out_shape=shape, transform=frame.transform,
+                                    fill=0, dtype="uint8").astype(bool)
+        tower_forbidden = np.where(zmask, tower_nonriver, tower_forbidden)
+        for (kd, rid), m in rule_masks.items():
+            if kd == "tower" and (rid in _RIVER_RULES or rid in {f"open_water:{z}" for z in _zone_layers}):
+                m[zmask] = False
+        for vr in tower_geoms:
+            if vr.rule_id in _RIVER_RULES or (vr.rule_id == "open_water" and vr.layer in _zone_layers):
+                vr.outside = river_zone if vr.outside is None else vr.outside.union(river_zone)
+        for cr in crossings:
+            if cr.rule_id in _RIVER_RULES:
+                cr.angle = cr.angle.copy(); cr.angle[zmask] = np.nan
 
     # ---- cost rasters -------------------------------------------------------------------
     dens = class_density_rs_m2(costs)
@@ -1425,6 +1552,8 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
         tower_forbidden[zm] = False
         angle_forbidden[zm] = False
         conductor_forbidden[zm] = False
+        for m in rule_masks.values():
+            m[zm] = False
         keep = zm & ~ybm
         # Vivek, 14 Oct 2026 (Shivlaka end): inside the go zone a crossing of a >= GO_ZONE_CROSSING_KV line keeps
         # only its angle window (and the vertical clearance) — no crossing-tower window, null-point band or 45°
@@ -1448,12 +1577,14 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
             ym = rfeatures.rasterize([(_frame_to_utm(frame, yards), 1)], out_shape=shape,
                                      transform=frame.transform, fill=0, dtype="uint8").astype(bool)
             tower_forbidden |= ym
+            _rec("tower", "substations", ym)
             # the conductor keeps the corridor half-width from the terminal substations too (Vivek, 13 Oct
             # 2026); the gantry span is exempt (gantry_seeds / Checker.conductor_ok)
             tchw = yards.buffer(half_width_m)
             terminal_cond = rfeatures.rasterize([(_frame_to_utm(frame, tchw), 1)], out_shape=shape,
                                                 transform=frame.transform, fill=0, all_touched=True, dtype="uint8").astype(bool)
             conductor_forbidden |= terminal_cond
+            _rec("conductor", "substations", terminal_cond)
             go_conductor.append(VecRule("terminal_substation", "substations", list(getattr(yards, "geoms", [yards])), half_width_m))
             tower_geoms.append(VecRule("terminal_yard", "substations", list(getattr(yards, "geoms", [yards])), 0.0))
         # go zone (Vivek, 9 Oct 2026): the only check left is that a tower base does not overlap a
@@ -1480,6 +1611,7 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
             om = rfeatures.rasterize([(x, 1) for x in utm_g], out_shape=shape, transform=frame.transform,
                                      fill=0, all_touched=True, dtype="uint8").astype(bool)
             tower_forbidden |= om & zm
+            _rec("tower", "substations", om & zm)
             fired[rid] = fired.get(rid, 0) + int((om & zm).sum())
 
     # bridges inherit the road they carry (Vivek, 17 Oct 2026): the NH / SH crossing rules come from the road line
@@ -1515,9 +1647,9 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
                     precedent_items=list(precedent_items.values()), near_existing=near_existing,
                     unclassified_structures=unclassified,
                     breach_band=breach["band"], breach_rs=breach["rs"], breach_normal_m=breach["normal"],
-                    breach_geoms=breach["geoms"], small_ponds=small_ponds, small_pond_warn_m=small_pond_warn["m"],
+                    breach_geoms=breach["geoms"], breach_bands=breach_bands, small_ponds=small_ponds, small_pond_warn_m=small_pond_warn["m"],
                     bld_soft_normal_m=bsoft["normal"], bld_soft_a_rs=bsoft["a"], bld_soft_rate_rs_per_m=bsoft["rate"],
-                    bld_soft_deficit=bsoft["deficit"], bld_soft_geoms=bsoft["geoms"])
+                    bld_soft_deficit=bsoft["deficit"], bld_soft_geoms=bsoft["geoms"], rule_masks=rule_masks)
 
 
 def _airport_zone(R: "_Rasterizer", frame: Frame, layer: str, classes, d: float, funnel_m: float):

@@ -223,8 +223,12 @@ groups:
         layer: reservoir
         mechanism: nogo
         params:
-          - {key: tower_setback_m, label: "Tower buffer", type: num, unit: m, value: 200}
-          - {key: conductor_buffer_m, label: "Conductor buffer", type: num, unit: m, value: 200}
+          - {key: tower_setback_m, label: "Tower buffer (normal)", type: num, unit: m, value: 200}
+          - {key: conductor_buffer_m, label: "Conductor buffer (normal)", type: num, unit: m, value: 200}
+          # priced breach (Vivek, 22 Oct 2026, as the village cluster): towers and conductor may come down to the
+          # breach distance; every span inside the normal distance costs the search the charge and is warned
+          - {key: breach_min_m, label: "Breach: closest allowed, tower and conductor (= the normal value: no breach)", type: num, unit: m, value: 100}
+          - {key: breach_cost_cr_per_span, label: "Breach: search cost per span inside the normal distance", type: num, unit: "₹ Cr", value: 0.5}
           - {key: treatment, label: "Treatment", type: sel, value: "Last resort", options: ["No-Go", "Last resort", "Allowed"]}
           - {key: last_resort_towers_inside, label: "Last resort: towers inside (piles)", type: sel, value: "No", options: ["Yes", "No"]}
           - {key: approval_months, label: "Approval time if crossed", type: num, unit: months, value: 6}

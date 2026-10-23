@@ -63,6 +63,9 @@ class SolveInput:
     cost_overrides: dict = field(default_factory=dict)
     dem_dir: Path | None = None
     cache_dir: Path | None = None      # on-disk raster cache (masks / distance fields), None = off
+    # forest-cap warm start (vj copy, 22 Oct 2026): route id -> the forest price multiplier the run's previous solve or its
+    # parent's met the cap with; the bisection starts in a bracket round it (engine.yaml forest_cap.warm_start)
+    forest_cap_hint: dict | None = None
 
 
 # ----------------------------------------------------------------------------------------
@@ -536,7 +539,7 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
                         gantry_face_a=face_a, gantry_face_b=face_b, gantry_rule_ends=rule_ends,
                         ext_zero_tol_m=ext_zero_tol, ext_round_tol_m=ext_round_tol,
                         crossing_dev_max_deg=_crossing_dev_cap(rules))
-    sp = SpotParams(design_span_m=design, span_max_m=smax_search, parallel=bool((eng.get("spotting") or {}).get("parallel", False)), plain_span_max_m=smax, excess_span_rs_per_m=excess_rs_m,
+    sp = SpotParams(design_span_m=design, span_max_m=smax_search, parallel=bool((eng.get("spotting") or {}).get("parallel", False)), parallel_crossings=int((eng.get("spotting") or {}).get("parallel_crossings", 0) or 0), plain_span_max_m=smax, excess_span_rs_per_m=excess_rs_m,
                     raster_prefilter=bool(eng["grid"].get("raster_prefilter", True)), gantry_min_span_m=gantry_min,
                     dead_end_a=de_a, dead_end_b=de_b, gantry_max_span_m=gantry_max, gantry_square_tol_deg=sq_tol,
                     gantry_face_a=face_a, gantry_face_b=face_b, gantry_rule_ends=rule_ends,
@@ -771,10 +774,24 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
 
                 lo_m, spots = 1.0, 0
                 target = forest_cap - margin
+                hint = (inp.forest_cap_hint or {}).get(var["id"]) if cap_cfg.get("warm_start") else None
+                if hint:
+                    # warm start: a lower bound just under the earlier multiplier, if it still misses the cap
+                    lo_try = max(1.0, float(hint) / float(cap_cfg.get("warm_bracket", 1.5)))
+                    if lo_try > 1.0:
+                        _, out_lo, rec_lo = search_at(lo_try)
+                        if not out_lo.feasible or rec_lo.get("grid_ha", 1e9) > target:
+                            lo_m = lo_try
                 while spots < max_spots and not met:
                     # upper bound: a multiplier whose search line is under the target
                     hi_m = max(hi_mult if lo_m < 10 else lo_m * 10, lo_m * 2)
+                    if hint and spots == 0:
+                        hi_m = max(lo_m * 1.2, float(hint) * float(cap_cfg.get("warm_bracket", 1.5)))
                     cvp, out2, rec = search_at(hi_m)
+                    if (not out2.feasible or rec.get("grid_ha", 1e9) > target) and hint and spots == 0 and hi_m < hi_mult:
+                        lo_m, hint = hi_m, None                # the warm bracket missed: the normal ceiling next
+                        hi_m = max(hi_mult if lo_m < 10 else lo_m * 10, lo_m * 2)
+                        cvp, out2, rec = search_at(hi_m)
                     if not out2.feasible or rec.get("grid_ha", 1e9) > target:
                         break                                  # even the ceiling does not meet the cap
                     hi_res = (cvp, out2, rec)

@@ -142,6 +142,7 @@ class SolveOutcome:
     partial_sites: list | None = None
     partial_heads: list | None = None
     partial_cost_rs: float | None = None
+    state: dict | None = None             # checkpoints for an incremental re-solve (solve(keep_state=...)); GPU tensors
 
 
 def make_grid(compiled: Compiled, p: SolverParams) -> Grid:
@@ -220,10 +221,10 @@ class _Rasters:
                        None if getattr(cr, "null_offset_wide", None) is None else t(np.nan_to_num(cr.null_offset_wide, nan=-1.0)))
                       for cr in compiled.crossings]
         self.par = [t(np.nan_to_num(pr.angle, nan=-1.0)) for pr in compiled.parallels]
-        # village-cluster breach band (Vivek, 18 Oct 2026): a span sampled inside it costs breach_rs
-        self.breach = t(compiled.breach_band, torch.bool) if getattr(compiled, "breach_band", None) is not None and \
-            getattr(compiled, "breach_rs", 0.0) > 0 else None
-        self.breach_rs = float(getattr(compiled, "breach_rs", 0.0) or 0.0)
+        # priced breach bands (village clusters, Vivek 18 Oct 2026; any No-Go rule, 22 Oct 2026): a span sampled
+        # inside a band costs that rule's charge
+        self.breach = [(t(b["band"], torch.bool), float(b["rs"])) for b in getattr(compiled, "breach_bands", []) or []
+                       if b.get("band") is not None and float(b.get("rs", 0) or 0) > 0]
         # buildings soft zone (Vivek, 19 Oct 2026): (normal - distance) along a span; the deepest sample is charged
         bdf = getattr(compiled, "bld_soft_deficit", None)
         self.bsoft = t(bdf) if bdf is not None and (getattr(compiled, "bld_soft_a_rs", 0.0) > 0 or
@@ -417,10 +418,10 @@ def _edge_geom(compiled: Compiled, grid: Grid, p: SolverParams, rasters: "_Raste
             ok_any |= fits
         invalid |= ~ok_any
         E = E + 2 * ext_used * p.long_ext_cost_rs_per_m
-    if rasters.breach is not None:
-        # village cluster within the normal distance (Vivek, 18 Oct 2026): search cost per breached span
-        hit_b = rasters.breach[row, col].any(dim=-1)
-        E = E + torch.where(hit_b, torch.full_like(E, rasters.breach_rs), torch.zeros_like(E))
+    for band_t, band_rs in rasters.breach:
+        # inside a rule's normal distance (cluster 18 Oct 2026, any No-Go rule 22 Oct 2026): search cost per breached span
+        hit_b = band_t[row, col].any(dim=-1)
+        E = E + torch.where(hit_b, torch.full_like(E, band_rs), torch.zeros_like(E))
     if getattr(rasters, "bsoft", None) is not None:
         # buildings soft zone (Vivek, 19 Oct 2026): search cost A + rate x depth of the deepest building on the span
         dep = rasters.bsoft[row, col].amax(dim=-1)
@@ -736,7 +737,8 @@ def gantry_seeds(compiled: Compiled, grid: Grid, p: SolverParams, S_np: np.ndarr
     return seeds
 
 
-def solve(compiled: Compiled, p: SolverParams, cancel_check=None, progress=None, corridor=None) -> SolveOutcome:
+def solve(compiled: Compiled, p: SolverParams, cancel_check=None, progress=None, corridor=None,
+          keep_state: int = 0, resume: tuple | None = None, stop_m: float | None = None) -> SolveOutcome:
     """A and B are gantries. The route is gantry A -> dead-end tower -> ... -> dead-end tower -> gantry B.
     corridor = (line, half_width_m): the search is confined to the sites within half_width_m of the
     frame-coordinate line (the targeted refinement pass on a finer lattice, 14 Oct 2026)."""
@@ -832,7 +834,32 @@ def solve(compiled: Compiled, p: SolverParams, cancel_check=None, progress=None,
     if cache is not None and (nc + 1) * R * K * 8 > p.edge_cache_limit_bytes:
         cache = None
     E_chunk, E_start = None, -1
-    for c in range(nc + 1):
+    # incremental re-solve (vj copy, 22 Oct 2026): keep_state = save a checkpoint every keep_state columns (full-band
+    # searches only); resume = (an earlier outcome with checkpoints, chainage m) restarts at the last checkpoint at or
+    # before that chainage, reusing every column upstream. Exact when nothing upstream of the checkpoint changed — the
+    # caller picks a chainage at least one longest span before the first change.
+    snaps: dict = {}
+    c_first = 0
+    if resume is not None and win is None:
+        prev, from_m = resume
+        st = getattr(prev, "state", None)
+        if st is not None and st["shape"] == (nc + 1, R, K):
+            cands = [cc for cc in st["snaps"] if cc * grid.sx <= from_m]
+            if cands:
+                c_first = max(cands)
+                sn = st["snaps"][c_first]
+                Wring.copy_(sn["W"]); Xring.copy_(sn["X"]); Uring.copy_(sn["U"])
+                last_M.copy_(sn["last_M"]); last_c.copy_(sn["last_c"])
+                arg[:c_first] = st["arg"][:c_first]
+                reach[:c_first] = st["reach"][:c_first]; reach_map[:c_first] = st["reach_map"][:c_first]
+                end_tot[:c_first] = st["end_tot"][:c_first]; end_k[:c_first] = st["end_k"][:c_first]
+                snaps = {cc: v for cc, v in st["snaps"].items() if cc <= c_first}
+                log.info("resume from column %d (km %.2f) of %d", c_first, c_first * grid.sx / 1000, nc)
+    for c in range(c_first, nc + 1):
+        if stop_m is not None and c * grid.sx > stop_m:      # diagnosis (22 Oct 2026): the reach up to here is enough
+            break
+        if keep_state and win is None and c % keep_state == 0 and c not in snaps:
+            snaps[c] = {"W": Wring.clone(), "X": Xring.clone(), "U": Uring.clone(), "last_M": last_M.clone(), "last_c": last_c.clone()}
         if cancel_check and c % 64 == 0:
             cancel_check()
         # arrivals at column c
@@ -936,6 +963,8 @@ def solve(compiled: Compiled, p: SolverParams, cancel_check=None, progress=None,
         cols = np.nonzero(rm.any(axis=1))[0]
         reach_m = float(cols.max() * grid.sx) if len(cols) else 0.0
         out_ = SolveOutcome(False, INF, [], [], grid, reach_m, time.time() - t0, rm)
+        if keep_state and win is None:
+            out_.state = {"shape": (nc + 1, R, K), "arg": arg, "snaps": snaps, "reach": reach, "reach_map": reach_map, "end_tot": end_tot, "end_k": end_k}
         if win is None and bool(torch.isfinite(last_M).any()):
             try:
                 out_.partial_sites, out_.partial_heads, out_.partial_cost_rs = _trace_partial(arg, grid, int(last_c.item()), last_M)
@@ -966,7 +995,10 @@ def solve(compiled: Compiled, p: SolverParams, cancel_check=None, progress=None,
         c, r, k = pc, pr, k_prev
     sites.reverse()
     heads.reverse()
-    return SolveOutcome(True, best, sites, heads, grid, compiled.frame.length_m, time.time() - t0)
+    out_ = SolveOutcome(True, best, sites, heads, grid, compiled.frame.length_m, time.time() - t0)
+    if keep_state and win is None:
+        out_.state = {"shape": (nc + 1, R, K), "arg": arg, "snaps": snaps, "reach": reach, "reach_map": reach_map, "end_tot": end_tot, "end_k": end_k}
+    return out_
 
 
 def _trace_partial(arg, grid: Grid, c: int, M: torch.Tensor):

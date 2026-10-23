@@ -77,6 +77,10 @@ layers:
     minutes_per_km2: 0.002
     default_confidence: 0.85
     classes: [river]
+    # vj copy (22 Oct 2026, Vivek): towers may stand in a river only within tower_zone_near_towers_m of an existing tower that
+    # already stands in it (the river rules and the open-water ban are lifted there); such towers pay river-bed piles
+    tower_zone_near_towers_m: 500
+    foundation_class: river_pile
 
   - key: lake
     name: "Lake"
