@@ -212,7 +212,7 @@ def forced_min_type(code: str | None) -> str:
     if not code:
         return "A"
     first = code.split("/")[0].strip().upper()
-    return {"A": "A", "B": "B1", "C": "C1", "D": "D45"}.get(first, "A")
+    return {"A": "A", "B": "B1", "C": "C1", "D": "D45", "D45": "D45", "D60": "D60"}.get(first, "A")   # D60: railway (Vivek, 23 Oct 2026)
 
 
 def max_type(a: str, b: str) -> str:

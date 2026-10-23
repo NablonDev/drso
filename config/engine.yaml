@@ -55,7 +55,8 @@ crossings:
   # the cheapest type that also covers the deflection there, heavier only where a rule asks (railway D,
   # major river D) (Vivek, 6 Oct 2026). Roads: national highways only.
   # River dropped 8 Oct 2026: Rule_Table 38 allows A, B or C at minor river crossings.
-  angle_tower_rules: [railway, national_highway]
+  # Vivek, 23 Oct 2026: every crossing has an angle tower (at least B) on both sides — all crossing rules listed.
+  angle_tower_rules: [railway, national_highway, state_highway, river, power_line, power_line_lt, pipeline_crossing]
 
 routes:
   # Each route is the same solver re-run with one extra internal penalty. The reported ₹ cost

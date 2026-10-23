@@ -470,6 +470,9 @@ class Checker:
             if cr.max_span_m is not None and L > cr.max_span_m + 1e-3:
                 ok = False
                 item["violation"] = "span"
+            if getattr(cr, "min_span_m", None) is not None and L < cr.min_span_m - 1e-3:
+                ok = False
+                item["violation"] = "span"                       # under the rule's minimum crossing span (railway 250 m)
             band = getattr(cr, "span_band", None)
             if band is not None:
                 # SH (Vivek, 16 Oct 2026): a crossing span outside the band is allowed with an approval record

@@ -95,6 +95,7 @@ class CrossingRaster:
     max_span_m: float | None
     min_type: str
     cost_rs: float
+    min_span_m: float | None = None      # hard minimum crossing span (railway 250 m, Vivek 23 Oct 2026); None = the global minimum
     width_raster: np.ndarray | None = None  # 1 inside polygon features (river width measure)
     major_threshold_m: float | None = None
     major_type: str | None = None
@@ -1392,6 +1393,7 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
                           window, base_type, 0.0),
                          (R.class_subset(r.layer, ["flyover"]), window, base_type, ext)]
             max_span = p.get("max_span_m")
+            min_span = p.get("min_span_m")
             if p.get("pct_design_span") is not None:
                 pct_span = float(p["pct_design_span"]) / 100.0 * design_span_m
                 max_span = pct_span if max_span is None else min(float(max_span), pct_span)
@@ -1403,6 +1405,7 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
                     continue
                 built.append(CrossingRaster(rule_id=r.id, name=r.name, angle=ang, window=win,
                                             max_span_m=None if max_span is None else float(max_span),
+                                            min_span_m=None if min_span is None else float(min_span),
                                             min_type=mt, cost_rs=cost, extension_m=ext))
             if not built:
                 continue

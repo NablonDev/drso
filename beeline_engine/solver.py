@@ -445,6 +445,8 @@ def _edge_geom(compiled: Compiled, grid: Grid, p: SolverParams, rasters: "_Raste
             bad |= acute < cr.window[0] - 1e-3
         if cr.max_span_m is not None:
             bad |= length > cr.max_span_m + p.crossing_span_slack_m + 1e-3
+        if getattr(cr, "min_span_m", None) is not None:        # hard minimum crossing span (railway 250 m, 23 Oct 2026)
+            bad |= length < cr.min_span_m - p.crossing_span_slack_m - 1e-3
         if cr.side_m is not None:
             # crossing towers this far from the crossed wire, each side (Vivek, 13 Oct 2026); the wire sits at
             # the middle of the hit samples; the lattice gets the crossing-span slack, the spotting is exact

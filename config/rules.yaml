@@ -386,9 +386,11 @@ groups:
           # crossing, crossing at 90 ± 10° on a span of at most 300 m
           - {key: tower_setback_m, label: "Tower setback from the track centreline", type: num, unit: m, value: 86}
           - {key: parallel_setback_m, label: "Conductor buffer, parallel run (corridor half-width)", type: num, unit: m, value: {765: 33.5, 400: 23, 220: 17.5, 132: 13.5}}
-          - {key: angle_deg, label: "Allowed crossing angle", type: rng, unit: "°", value: [80, 100]}
-          - {key: max_span_m, label: "Max crossing span", type: num, unit: m, value: 300}   # Vivek, 14 Oct 2026: back to 300 (13 Oct: 600)
-          - {key: tower_type, label: "Crossing tower type", type: sel, value: "D", options: ["B", "C", "D", "B/C/D"]}
+          # Vivek, 23 Oct 2026: crossed at 85-90° only, on D60 towers, with a span of 250-265 m; no relaxation
+          - {key: angle_deg, label: "Allowed crossing angle", type: rng, unit: "°", value: [85, 95]}
+          - {key: min_span_m, label: "Min crossing span", type: num, unit: m, value: 250}
+          - {key: max_span_m, label: "Max crossing span", type: num, unit: m, value: 265}
+          - {key: tower_type, label: "Crossing tower type", type: sel, value: "D60", options: ["B", "C", "D", "D60", "B/C/D"]}
           - {key: preferred_angle_deg, label: "Preferred crossing angle", type: num, unit: "°", value: 90}
           - {key: preferred_angle_tol_deg, label: "… tolerance", type: num, unit: "°", value: 5}
           - {key: max_dev_adjacent_deg, label: "Max deviation at the two crossing towers", type: num, unit: "°", value: 45}
@@ -406,7 +408,7 @@ groups:
           - {key: tower_type, label: "Crossing tower type", type: sel, value: "B/C/D", options: ["B", "C", "D", "B/C/D"]}
           - {key: preferred_angle_deg, label: "Preferred crossing angle", type: num, unit: "°", value: 90}
           - {key: preferred_angle_tol_deg, label: "… tolerance", type: num, unit: "°", value: 5}
-          - {key: max_dev_adjacent_deg, label: "Max deviation at the two crossing towers", type: num, unit: "°", value: 45}
+          - {key: max_dev_adjacent_deg, label: "Max deviation at the two crossing towers", type: num, unit: "°", value: 60}   # Vivek, 23 Oct 2026: 60 (was 45); span ≤ 250 m, no relaxation
 
       - id: state_highway
         name: "State highway"
@@ -417,13 +419,13 @@ groups:
         params:
           - {key: tower_setback_m, label: "Tower setback from the centreline", type: num, unit: m, value: 87}
           - {key: angle_deg, label: "Allowed crossing angle", type: rng, unit: "°", value: [60, 120]}
-          - {key: max_span_m, label: "Max crossing span", type: num, unit: m, value: 400}
-          - {key: span_band_m, label: "Crossing span without approval (min-max)", type: rng, unit: m, value: [240, 260]}
-          - {key: span_band_penalty_pct, label: "Outside the band: search cost, % of the crossing tower's price (approval record)", type: num, unit: "%", value: 20}
-          - {key: tower_type, label: "Crossing tower type", type: sel, value: "A/B/C/D", options: ["A/B/C/D", "B/C/D", "D"]}
+          # Vivek, 23 Oct 2026: crossing span ≤ 250 m, no relaxation (the 240-260 m approval band is gone); crossing
+          # towers at least B; deviation at them up to 60°
+          - {key: max_span_m, label: "Max crossing span", type: num, unit: m, value: 250}
+          - {key: tower_type, label: "Crossing tower type", type: sel, value: "B/C/D", options: ["A/B/C/D", "B/C/D", "D"]}
           - {key: preferred_angle_deg, label: "Preferred crossing angle", type: num, unit: "°", value: 90}
           - {key: preferred_angle_tol_deg, label: "… tolerance", type: num, unit: "°", value: 5}
-          - {key: max_dev_adjacent_deg, label: "Max deviation at the two crossing towers", type: num, unit: "°", value: 45}
+          - {key: max_dev_adjacent_deg, label: "Max deviation at the two crossing towers", type: num, unit: "°", value: 60}
 
       - id: bridges
         name: "Bridges and flyovers"
