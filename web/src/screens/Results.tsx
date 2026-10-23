@@ -33,6 +33,7 @@ import RouteProfile from "../components/RouteProfile";
 import TowerMoveTool from "../components/map/TowerMoveTool";
 import MapTools, { mapToolState } from "../components/map/MapTools";
 import { CeilingNote, ScaleBar, useCeiling, ZoomBar } from "../components/map/ZoomBar";
+import { CoordSearch } from "../components/map/CoordSearch";
 import { ErrorNote, Head, Kpi, Loading, Note } from "../components/ui";
 import { crore, int, num } from "../lib/format";
 import { endpoints, linesGeoJSON, routesGeoJSON, tradeOff } from "../lib/solve";
@@ -457,6 +458,7 @@ function Body({ s }: { s: Solve }) {
               Previous revision
             </button>
             <ZoomBar map={map} ceiling={ceiling} />
+            <CoordSearch map={map} />
             <button aria-pressed={maxed} onClick={() => setMaxed((x) => !x)} data-testid="map-maximise" title="Fill the screen with the map (Esc to return)">
               Maximise map
             </button>

@@ -26,6 +26,7 @@ import { useFitBounds, useMapLibre, useRunTiles, type Bounds } from "../componen
 import TerrainControl from "../components/map/TerrainControl";
 import MapTools, { mapToolState } from "../components/map/MapTools";
 import { CeilingNote, ScaleBar, useCeiling, ZoomBar } from "../components/map/ZoomBar";
+import { CoordSearch } from "../components/map/CoordSearch";
 import { Btn, ConfPill, ErrorNote, Head, Loading, Note, SourcePill } from "../components/ui";
 import { date, elapsedMin, hm, int, num, when } from "../lib/format";
 import { useStartSolve } from "./Solve";
@@ -365,6 +366,7 @@ function Body({ L }: { L: LayersResponse }) {
           <div className="m8bar">
             <span className="pill p-acc">Corridor · {int(L.band_km2)} km²</span>
             <ZoomBar map={map} ceiling={ceiling} />
+            <CoordSearch map={map} />
             <button className="mini" aria-pressed={imagery} onClick={() => setImagery((x) => !x)}>Imagery</button>
             {gap ? (
               <button className="mini" onClick={() => {
