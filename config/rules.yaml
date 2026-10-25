@@ -183,6 +183,10 @@ groups:
           - {key: b_joins_existing_tower, label: "End B joins an existing tower (its line's clearances lifted near B)", type: sel, value: "No", options: ["No", "Yes"]}
           - {key: join_snap_m, label: "… the joined tower: the existing tower within this of B", type: num, unit: m, value: 30}
           - {key: join_radius_m, label: "… that line's towers and wire lifted within this of B", type: num, unit: m, value: 400}
+          # 23 Oct 2026: the existing line terminating in the start substation is lifted the same way at A (its last tower
+          # within join_snap_m of A, its wire within join_radius_m), so the gantry span can leave the yard
+          - {key: a_lifts_existing_line, label: "At A: lift the existing line ending in the substation", type: sel, value: "Yes", options: ["Yes", "No"]}
+          - {key: a_lift_near_m, label: "… a wire within this of A counts as ending there", type: num, unit: m, value: 100}
 
       - id: dams
         name: "Dams"

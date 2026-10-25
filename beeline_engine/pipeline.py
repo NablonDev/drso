@@ -254,6 +254,38 @@ def _join_existing_tower(gdfs: dict, frame: Frame, b_lonlat, snap_m: float, radi
                   "tower_lonlat": [round(float(tll.x), 7), round(float(tll.y), 7)]}
 
 
+def _lift_existing_lines_at(gdfs: dict, frame: Frame, pt_lonlat, near_m: float, radius_m: float):
+    """An existing line that runs into the start substation (23 Oct 2026: the Gujarat_transmission product has the
+    Lakadia-Ahmedabad 765 kV wire 16 m from Halvad's A, its last tower 390 m out). Every power / power_lt wire within
+    near_m of the point is cut out of the radius_m circle and its towers inside that circle (within 30 m of the wire)
+    are dropped, so the gantry span can leave the yard. Returns (gdfs, info)."""
+    pt = gpd.GeoSeries([Point(*pt_lonlat)], crs=4326).to_crs(frame.epsg).iloc[0]
+    zone = pt.buffer(radius_m)
+    info = {"lifted": False, "lines": [], "towers_lifted": 0, "radius_m": radius_m}
+    gdfs = dict(gdfs)
+    for k in ("power", "power_lt"):
+        g = gdfs.get(k)
+        if g is None or not len(g) or "class" not in g.columns:
+            continue
+        g = g.reset_index(drop=True)
+        gu = g.to_crs(frame.epsg)
+        lines = gu[(gu["class"] == "power_line") & (gu.geometry.distance(pt) <= near_m)]
+        if not len(lines):
+            continue
+        wire = unary_union(list(lines.geometry)).buffer(30.0)
+        towers = gu[(gu["class"] == "power_tower") & gu.geometry.within(zone) & gu.geometry.within(wire)]
+        geoms = gu.geometry.copy()
+        for li in lines.index:
+            geoms.loc[li] = gu.geometry.loc[li].difference(zone)
+        out = gu.set_geometry(geoms).drop(index=sorted(towers.index))
+        out = out[~out.geometry.is_empty].explode(index_parts=False).reset_index(drop=True).to_crs(g.crs)
+        gdfs[k] = out
+        info["lifted"] = True
+        info["lines"] += sorted({str(n) for n in lines["name"] if isinstance(n, str)}) if "name" in lines.columns else [k]
+        info["towers_lifted"] += int(len(towers))
+    return gdfs, info
+
+
 def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
     t_start = time.time()
     timings = {}
@@ -304,6 +336,14 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
         gdfs, join_info = _join_existing_tower(gdfs, frame, tuple(inp.b), float(_subp.get("join_snap_m", 30) or 30),
                                                float(_subp.get("join_radius_m", 400) or 400))
         log.info("end B joins an existing tower: %s", join_info)
+    # end A (23 Oct 2026): the existing line that terminates in the same substation is lifted the same way — its last
+    # tower within join_snap_m of A and its wire within join_radius_m — so the gantry span can leave the yard (the
+    # Gujarat_transmission product maps the existing 765 kV line into the Halvad substation, 16 m from A)
+    a_lift_info = None
+    if str(_subp.get("a_lifts_existing_line", "Yes") or "Yes") == "Yes":
+        gdfs, a_lift_info = _lift_existing_lines_at(gdfs, frame, tuple(inp.a), float(_subp.get("a_lift_near_m", 100) or 100),
+                                                    float(_subp.get("join_radius_m", 400) or 400))
+        log.info("end A: existing lines lifted: %s", a_lift_info)
     t = time.time()
     # approach section near each gantry (CEA Schedule VII; Vivek, 8 Oct 2026)
     ap_rule = rules.get("approach_section")
@@ -514,6 +554,7 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
                         parallel_angle_deg=eng["crossings"]["parallel_angle_deg"],
                         river_max_span_m=float(eng["spans"].get("river_crossing_max_span_m", 0)),
                         crossing_span_slack_m=float(eng["spans"].get("crossing_span_slack_m", eng["grid"]["site_spacing_m"] / 2)),
+                        crossing_angle_slack_deg=float(eng["spans"].get("crossing_angle_slack_deg", 0) or 0),
                         site_tolerance_m=float(eng["grid"].get("site_tolerance_m", 0) or 0),
                         long_heading_limit_deg=float(eng["spans"].get("long_heading_limit_deg", 60)),
                         long_heading_step_deg=float(eng["spans"].get("long_heading_step_deg", 5)),

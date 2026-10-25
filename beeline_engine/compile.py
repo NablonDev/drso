@@ -15,6 +15,7 @@ about ±14 m; spotting re-checks every tower against the exact vector buffers.
 """
 from __future__ import annotations
 
+import copy
 import logging
 import math
 import os
@@ -1454,6 +1455,30 @@ def compile_rules(frame: Frame, layers: dict[str, gpd.GeoDataFrame], rules: dict
                     bp = float(p.get("span_band_penalty_pct", 0) or 0) / 100.0
                     if bp > 0 and tower_cost_rs:
                         x.band_penalty_rs = bp * float(tower_cost_rs.get(x.min_type) or tower_cost_rs.get("D45") or 0.0)
+            # 24 Oct 2026 (Vivek: simulation on the Vadodara approach): `chainage_relax` = zones along the route,
+            # [{from_km, to_km, lift: [window | side_m | max_span_m | max_dev_deg | min_span_m]}], inside which the named
+            # parameters of this crossing rule are lifted. Each raster is split into the part outside every zone (as
+            # compiled) and one part per zone with the lifted parameters; the search and spotting read them as separate
+            # rasters of the same rule, so everything else (angle towers, setbacks, preferences) stays as is.
+            zones = p.get("chainage_relax") or []
+            if zones:
+                split = []
+                for x in built:
+                    outside = x
+                    for z in zones:
+                        c0 = max(0, int((float(z["from_km"]) * 1000.0 - frame.x0) / frame.res_m))
+                        c1 = min(outside.angle.shape[1], int((float(z["to_km"]) * 1000.0 - frame.x0) / frame.res_m) + 1)
+                        if c1 <= c0:
+                            continue
+                        inside = copy.copy(outside)
+                        inside.angle = np.full_like(outside.angle, np.nan); inside.angle[:, c0:c1] = outside.angle[:, c0:c1]
+                        for k in (z.get("lift") or []):
+                            setattr(inside, k, None)
+                        outside = copy.copy(outside); outside.angle = outside.angle.copy(); outside.angle[:, c0:c1] = np.nan
+                        split.append(inside)
+                    split.insert(0, outside) if x is built[0] else split.append(outside)
+                built = split
+                log.info("%s: chainage_relax %s -> %d rasters", r.id, zones, len(built))
             cr = built[0]
             for extra in built[1:]:
                 if r.id in angle_tower_rules:

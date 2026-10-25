@@ -47,6 +47,11 @@ class SolverParams:
                                              # this distance (the spotting snaps the tower to it)
     crossing_span_slack_m: float = 0.0       # search only: a crossing span may exceed its limit by this
                                              # much (half a site spacing); the spotting enforces the exact limit
+    crossing_angle_slack_deg: float = 0.0    # search only (25 Oct 2026): a crossing may fall this far below its angle
+                                             # window on the lattice; the spotting rotates the crossing span to the
+                                             # exact window. The 50 m lattice has span headings 5-16° apart, so a hard
+                                             # 85-95° window left the Viramgam-Surendranagar railway crossable at one
+                                             # piece near the existing line and pushed the route 8-15 km south.
     long_heading_limit_deg: float = 60.0
     long_heading_step_deg: float = 5.0
     long_length_step_m: float = 100.0
@@ -442,7 +447,7 @@ def _edge_geom(compiled: Compiled, grid: Grid, p: SolverParams, rasters: "_Raste
         acute = _acute(heading.squeeze(-1), fa)
         bad = torch.zeros_like(crossed)
         if cr.window is not None:
-            bad |= acute < cr.window[0] - 1e-3
+            bad |= acute < cr.window[0] - p.crossing_angle_slack_deg - 1e-3
         if cr.max_span_m is not None:
             bad |= length > cr.max_span_m + p.crossing_span_slack_m + 1e-3
         if getattr(cr, "min_span_m", None) is not None:        # hard minimum crossing span (railway 250 m, 23 Oct 2026)
@@ -594,31 +599,41 @@ def site_costs(compiled: Compiled, grid: Grid, p: SolverParams) -> tuple[np.ndar
     rids = tuple(getattr(compiled, "exact_tower_rules", ()) or ())
     other = getattr(compiled, "tower_other", None)
     if band is not None and rids and other is not None and band.any():
-        if p.site_tolerance_m > 0:
-            other = ndimage.binary_erosion(other, structure=(xx * xx + yy * yy) <= r * r, border_value=1)
-        sel = band[row, col] & ~other[row, col]
-        if sel.any():
-            import shapely
-            from shapely import STRtree
-            pts = shapely.points(fx[sel], fy[sel])
-            hit = np.zeros(len(pts), bool)
-            tol = float(p.site_tolerance_m or 0.0)
-            for vr in compiled.tower_nogo:
-                if vr.rule_id not in rids or len(vr.geoms) == 0:
-                    continue
-                dd = max(float(vr.d) - tol, 0.0)
-                if vr.inside is not None or vr.outside is not None:   # zoned rule: its own clipped check, site point only
-                    for i in np.flatnonzero(~hit):
-                        if vr.hits(pts[i]):
-                            hit[i] = True
-                    continue
-                tree = STRtree(np.asarray(vr.geoms, dtype=object))
-                q = tree.query(pts, predicate="dwithin", distance=dd) if dd > 0 else tree.query(pts, predicate="intersects")
-                if len(q[0]):
-                    hit[np.unique(q[0])] = True
-            S[sel] = np.where(hit, INF, S0[sel])
+        # the exact result depends only on the band, the other-rules raster, the lattice and the tolerance — not on the
+        # tower raster a diagnosis may edit — so it is kept on the compile and shared by its copies (23/24 Oct 2026:
+        # ~100 s per solve otherwise, and a band test re-solves ~100 times)
+        ckey = (id(band), id(other), grid.nc, grid.nr, float(grid.sx), float(grid.sy), float(p.site_tolerance_m or 0.0), tuple(rids))
+        cache = compiled.__dict__.setdefault("_exact_site_cache", {})
+        if ckey in cache:
+            sel, hit = cache[ckey]
+        else:
+            if p.site_tolerance_m > 0:
+                other = ndimage.binary_erosion(other, structure=(xx * xx + yy * yy) <= r * r, border_value=1)
+            sel = band[row, col] & ~other[row, col]
+            hit = np.zeros(int(sel.sum()), bool)
+            if sel.any():
+                import shapely
+                from shapely import STRtree
+                pts = shapely.points(fx[sel], fy[sel])
+                tol = float(p.site_tolerance_m or 0.0)
+                for vr in compiled.tower_nogo:
+                    if vr.rule_id not in rids or len(vr.geoms) == 0:
+                        continue
+                    dd = max(float(vr.d) - tol, 0.0)
+                    if vr.inside is not None or vr.outside is not None:   # zoned rule: its own clipped check, site point only
+                        for i in np.flatnonzero(~hit):
+                            if vr.hits(pts[i]):
+                                hit[i] = True
+                        continue
+                    tree = STRtree(np.asarray(vr.geoms, dtype=object))
+                    q = tree.query(pts, predicate="dwithin", distance=dd) if dd > 0 else tree.query(pts, predicate="intersects")
+                    if len(q[0]):
+                        hit[np.unique(q[0])] = True
+            cache.clear(); cache[ckey] = (sel, hit)
             log.info("exact tower check: %d sites in the band, %d closed exactly, %d reopened",
                      int(sel.sum()), int(hit.sum()), int((~hit & forbidden[row, col][sel]).sum()))
+        if sel.any():
+            S[sel] = np.where(hit, INF, S0[sel])
     return S.astype(np.float32), compiled.angle_forbidden[row, col]
 
 

@@ -2175,8 +2175,9 @@ def _crossing_span_fix(chk: Checker, pts, sp: SpotParams):
     two towers of such a span slide towards each other along it until the exact limit holds, each new
     position passing the tower, conductor, crossing, span-length and deviation checks."""
     pts = list(pts)
-    n = len(pts)
     pts = _crossing_side_fix(chk, pts, sp)
+    pts = _crossing_angle_fix(chk, pts, sp)
+    n = len(pts)                                   # the side fix may change the tower count (IndexError, 23 Oct 2026)
     for i in range(1, n - 2):                      # gantry spans are left alone
         p, q = pts[i], pts[i + 1]
         L = math.hypot(q[0] - p[0], q[1] - p[1])
@@ -2225,6 +2226,139 @@ def _crossing_span_fix(chk: Checker, pts, sp: SpotParams):
                 break
             if done:
                 break
+    pts = _crossing_angle_fix(chk, pts, sp)        # second chance once the span lengths are right (25 Oct 2026)
+    return pts
+
+
+def _crossing_angle_fix(chk: Checker, pts, sp: SpotParams):
+    """The search lets a crossing fall below its angle window by crossing_angle_slack_deg (25 Oct 2026); here such a
+    crossing (railway, highway, river, pipeline: power lines have _refine_crossings) is re-laid locally: the crossing
+    point may slide along the crossed feature, the crossing span takes an angle inside the window and a length inside
+    the rule's span window, and where the two neighbours then break a span or deviation limit they are moved a little
+    as well. Every candidate passes the tower, conductor, crossing, span and deviation checks; the first passing
+    candidate in order of smallest change is kept. Unfixable crossings stay flagged."""
+    pts = list(pts)
+    n = len(pts)
+    lo_by_rule, span_by_rule = {}, {}
+    for cr in chk.c.crossings:
+        if cr.rule_id in ("power_line", "power_line_lt"):
+            continue
+        if cr.window is not None:
+            lo_by_rule[cr.rule_id] = max(lo_by_rule.get(cr.rule_id, 0.0), float(cr.window[0]))
+        mn = getattr(cr, "min_span_m", None); mx = cr.max_span_m
+        if mn is not None or mx is not None:
+            a, b = span_by_rule.get(cr.rule_id, (None, None))
+            span_by_rule[cr.rule_id] = (mn if mn is not None else a, mx if mx is not None else b)
+    if not lo_by_rule:
+        return pts
+    feats = {}
+    for vr in getattr(chk, "tower_rules", []):
+        if vr.rule_id in lo_by_rule:
+            for g in getattr(vr, "geoms", []):
+                for x in getattr(g, "geoms", [g]):
+                    if x.geom_type == "LineString" and x.length > 0:
+                        feats.setdefault(vr.rule_id, []).append(x)
+
+    def checks(prev2, prev_, p2, q2, next_, next2, rule):
+        if not (chk.tower_ok(p2[0], p2[1], True) and chk.tower_ok(q2[0], q2[1], True)):
+            return "tower"
+        segs = [(prev_, p2), (p2, q2), (q2, next_)]
+        for a, b in segs:
+            Ls = math.hypot(b[0] - a[0], b[1] - a[1])
+            if not (sp.min_span_m - 1e-6 <= Ls <= sp.span_max_m + 1e-6):
+                return "len"
+        for a, b in segs:
+            ok, its = chk.span_crossings(a, b)
+            if not ok or not chk.conductor_ok(a, b):
+                return "span"
+        for a, b, c in ((prev2, prev_, p2), (prev_, p2, q2), (p2, q2, next_), (q2, next_, next2)):
+            if a is not None and c is not None and _deflection(a, b, c)[0] > _dev_cap(chk, sp, a, b, c):
+                return "dev"
+        return None
+
+    def neighbour_moves(fixed, cur, other):
+        """Candidate positions for a neighbour between a fixed outer tower and the moved crossing tower."""
+        out = [cur]
+        dx, dy = other[0] - fixed[0], other[1] - fixed[1]; Ld = math.hypot(dx, dy) or 1.0
+        ux_, uy_ = dx / Ld, dy / Ld
+        for t in (0.5, 0.4, 0.6, 0.35, 0.65):
+            for off in (0.0, 30.0, -30.0, 60.0, -60.0, 90.0, -90.0):
+                out.append((fixed[0] + ux_ * Ld * t - uy_ * off, fixed[1] + uy_ * Ld * t + ux_ * off))
+        return out
+
+    for i in range(1, n - 2):                      # gantry spans are left alone
+        p, q = pts[i], pts[i + 1]
+        items = chk.span_crossings(p, q)[1]
+        bad = [it for it in items if it.get("violation") in ("angle", "span") and it.get("rule") in lo_by_rule]
+        if not bad:
+            continue
+        it = min(bad, key=lambda t: float(t.get("angle_deg", 0.0)))
+        rule = it["rule"]; lo = lo_by_rule[rule]
+        L = math.hypot(q[0] - p[0], q[1] - p[1])
+        if L < 1e-6 or rule not in feats:
+            continue
+        ux, uy = (q[0] - p[0]) / L, (q[1] - p[1]) / L
+        along = min(max(float(it.get("along_a_m", L / 2.0)), 0.0), L)
+        X0 = Point(p[0] + ux * along, p[1] + uy * along)
+        ln = min(feats[rule], key=lambda g: g.distance(X0))
+        if ln.distance(X0) > 60.0:
+            continue
+        s0 = ln.project(X0)
+        mn, mx = span_by_rule.get(rule, (None, None))
+        Lc = L
+        if mn is not None and Lc < mn: Lc = mn + 0.5
+        if mx is not None and Lc > mx: Lc = mx - 0.5
+        lengths = []
+        for Lv in (Lc, (mx - 0.5) if mx is not None else None, (mn + 0.5) if mn is not None else None):
+            if Lv is not None:
+                Lv = min(max(Lv, sp.min_span_m), sp.span_max_m)
+                if all(abs(Lv - w) > 0.1 for w in lengths):
+                    lengths.append(Lv)
+        prev2 = pts[i - 2] if i >= 2 else None; next2 = pts[i + 3] if i + 3 < n else None
+        prev_, next_ = pts[i - 1], pts[i + 2]
+        cur = float(it.get("angle_deg", 0.0))
+        found = None
+        for ds in (0.0, 25.0, -25.0, 50.0, -50.0, 100.0, -100.0, 150.0, -150.0, 200.0, -200.0, 300.0, -300.0):
+            sX = s0 + ds
+            if sX < 0.0 or sX > ln.length:
+                continue
+            X = ln.interpolate(sX)
+            t0 = ln.interpolate(max(0.0, sX - 2.0)); t1 = ln.interpolate(min(ln.length, sX + 2.0))
+            tx, ty = t1.x - t0.x, t1.y - t0.y; tn = math.hypot(tx, ty) or 1.0; tx, ty = tx / tn, ty / tn
+            for ang in (lo + 1.0, lo + 3.0, min(90.0, lo + 6.0), 90.0):
+                for sgn in (1.0, -1.0):
+                    th = math.radians(sgn * ang)
+                    vx, vy = tx * math.cos(th) - ty * math.sin(th), tx * math.sin(th) + ty * math.cos(th)
+                    if vx * ux + vy * uy <= 0.3:            # keep the route's sense of travel
+                        continue
+                    for Lv in lengths:
+                        for ratio in (along / L, 0.5):
+                            p2 = (X.x - vx * Lv * ratio, X.y - vy * Lv * ratio)
+                            q2 = (X.x + vx * Lv * (1.0 - ratio), X.y + vy * Lv * (1.0 - ratio))
+                            why = checks(prev2, prev_, p2, q2, next_, next2, rule)
+                            if why is None:
+                                found = (p2, q2, prev_, next_, ds, ang, Lv); break
+                            if why in ("len", "dev"):      # the neighbours give way a little
+                                for nb_p in neighbour_moves(prev2, prev_, p2) if prev2 is not None else [prev_]:
+                                    if chk.tower_ok(nb_p[0], nb_p[1], True) is False:
+                                        continue
+                                    for nb_q in neighbour_moves(next2, next_, q2) if next2 is not None else [next_]:
+                                        if nb_q is not next_ and not chk.tower_ok(nb_q[0], nb_q[1], True):
+                                            continue
+                                        if checks(prev2, nb_p, p2, q2, nb_q, next2, rule) is None:
+                                            found = (p2, q2, nb_p, nb_q, ds, ang, Lv); break
+                                    if found: break
+                            if found: break
+                        if found: break
+                    if found: break
+                if found: break
+            if found: break
+        if found:
+            p2, q2, nb_p, nb_q, ds, ang, Lv = found
+            pts[i - 1], pts[i], pts[i + 1], pts[i + 2] = nb_p, p2, q2, nb_q
+            log.info("crossing %d-%d (%s): %.1f° / %.0f m -> %.0f° / %.0f m, crossing point moved %+.0f m along the feature", i, i + 1, rule, cur, L, ang, Lv, ds)
+        else:
+            log.info("crossing %d-%d (%s): %.1f° / %.0f m, no legal re-lay found (window %.0f°)", i, i + 1, rule, cur, L, lo)
     return pts
 
 
@@ -2424,9 +2558,10 @@ def _refine_crossings(chk: Checker, pts, sp: SpotParams):
     pts = list(pts)
     crs_all: dict = {}
     for cr_ in chk.c.crossings:
-        if getattr(cr_, "side_m", None) is not None:
-            crs_all.setdefault(cr_.rule_id, []).append(cr_)
-    crs = {rid: lst[0] for rid, lst in crs_all.items()}
+        crs_all.setdefault(cr_.rule_id, []).append(cr_)
+    # rules with a side window somewhere; a raster part without one (a chainage_relax zone, 24 Oct 2026) is
+    # resolved per crossing by raster_at and skipped there
+    crs = {rid: lst[0] for rid, lst in crs_all.items() if any(getattr(c_, "side_m", None) is not None for c_ in lst)}
     if not crs:
         return pts
     fr_ = chk.c.frame
@@ -2451,6 +2586,8 @@ def _refine_crossings(chk: Checker, pts, sp: SpotParams):
         X0 = ln.intersection(seg)
         X0 = X0 if X0.geom_type == "Point" else X0.centroid
         cr = raster_at(rid, X0)                      # audit, 14 Oct 2026: was the last part by rule id
+        if getattr(cr, "side_m", None) is None:      # no side window here (chainage_relax zone): nothing to refine
+            return pts, i + 1
         lo, hi = cr.side_m
         s0 = ln.project(X0)
         a_ = max([v for v in pos if v <= s0], default=None)

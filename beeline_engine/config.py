@@ -125,6 +125,12 @@ def resolve_rules(spec: LineSpec, overrides: dict | None = None) -> dict[str, Re
                         changed.append(p["key"])
                     v = nv
                 params[p["key"]] = v
+            # 24 Oct 2026: a run override may carry keys the rule table does not declare (e.g. `chainage_relax`,
+            # zones along the route where a crossing rule's parameters are lifted); they pass through unchanged
+            for k, nv in (ov.get("params") or {}).items():
+                if k not in params:
+                    params[k] = nv
+                    changed.append(k)
             out[r["id"]] = ResolvedRule(
                 id=r["id"], group=g["key"], name=r["name"], mechanism=r["mechanism"],
                 layer=r.get("layer"), classes=r.get("classes"), params=params,

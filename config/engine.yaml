@@ -44,6 +44,12 @@ spans:
   # the search; it may now exceed the limit by half a site spacing, and the tower spotting slides the two
   # crossing towers along the span until the exact limit holds
   crossing_span_slack_m: 25
+  # 25 Oct 2026 (Vivek): the same for the crossing angle. The 50 m lattice offers span headings 5-16° apart, so a hard
+  # window (railway 85-95°) is met only where a feature happens to lie perpendicular to one of them: the Viramgam-
+  # Surendranagar railway was crossable at a single piece near the existing 765 kV line and the search went 8-15 km
+  # south for 80 km. The search now accepts a crossing this many degrees below the window; the tower spotting rotates
+  # the crossing span (its crossing refine tries the exact window) and flags an angle violation if it cannot.
+  crossing_angle_slack_deg: 10
   long_heading_limit_deg: 60
   long_heading_step_deg: 5
   long_length_step_m: 50          # 9 Oct 2026: with the 400 m span cap, 100 m steps (500/600/700 m) skipped every crossing length that fits the wind span
