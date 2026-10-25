@@ -114,6 +114,11 @@ class SolverParams:
     gantry_face_b: float | None = None
     gantry_rule_ends: tuple[bool, bool] = (True, True)   # (A, B): where the gantry rules apply (20 Oct 2026; all four 21 Oct)
     proximity_tower_discount: float = 0.0      # search-only discount on towers near existing lines (Vivek, 13 Oct 2026)
+    # free search (Vivek, 25 Oct 2026): spans in every direction, the lattice extended past both ends, alternating
+    # forward / backward label-correcting passes seeded by the forward pass and pruned by its bound (solve_free)
+    allow_backward: bool = False
+    lattice_extension_m: float = 0.0           # lattice columns before A and after B (room to turn round a yard)
+    free_max_passes: int = 6
 
 
 @dataclass
@@ -127,9 +132,12 @@ class Grid:
     heading_deg: np.ndarray  # (K,)
     length_m: np.ndarray     # (K,)
     is_long: np.ndarray      # (K,) bool: river-only long span
+    x_origin: float = 0.0    # frame x of column 0 (negative with a lattice extension before A)
+    cA: int = 0              # column of A
+    cB: int = 0              # column of B (= nc without an extension)
 
     def site_xy(self, c, r):
-        return np.asarray(c) * self.sx, (np.asarray(r) - self.r0) * self.sy
+        return np.asarray(c) * self.sx + self.x_origin, (np.asarray(r) - self.r0) * self.sy
 
 
 @dataclass
@@ -161,7 +169,8 @@ def make_grid(compiled: Compiled, p: SolverParams) -> Grid:
     dcmax = int(math.ceil(p.span_max_m / sx))
     drmax = int(math.ceil(p.span_max_m / sy))
     offs = []
-    for dc in range(1, dcmax + 1):
+    dc_lo = -dcmax if p.allow_backward else 1
+    for dc in range(dc_lo, dcmax + 1):
         for dr in range(-drmax, drmax + 1):
             L = math.hypot(dc * sx, dr * sy)
             if p.span_min_m - 1e-6 <= L <= p.span_max_m + 1e-6:
@@ -191,8 +200,9 @@ def make_grid(compiled: Compiled, p: SolverParams) -> Grid:
     length = np.hypot(offs[:, 0] * sx, offs[:, 1] * sy)
     is_long = np.zeros(len(offs), bool)
     is_long[n_short:] = True
-    return Grid(nc=nc, nr=nr, r0=r0, sx=sx, sy=sy, offsets=offs, heading_deg=head, length_m=length,
-                is_long=is_long)
+    n_ext = int(math.ceil(p.lattice_extension_m / sx)) if p.lattice_extension_m > 0 else 0
+    return Grid(nc=nc + 2 * n_ext, nr=nr, r0=r0, sx=sx, sy=sy, offsets=offs, heading_deg=head, length_m=length,
+                is_long=is_long, x_origin=-n_ext * sx, cA=n_ext, cB=n_ext + nc)
 
 
 def _device():
@@ -256,7 +266,7 @@ class _Rasters:
             has |= ~np.isnan(cr.angle).all(axis=0)
         xs = f.x0 + (np.nonzero(has)[0] + 0.5) * f.res_m
         cols = np.zeros(grid.nc + 1, bool)
-        cx = np.arange(grid.nc + 1) * grid.sx
+        cx = np.arange(grid.nc + 1) * grid.sx + grid.x_origin
         for x in xs:
             cols |= (cx <= x + f.res_m) & (cx >= x - p.river_max_span_m)
         self.river_cols = cols
@@ -280,7 +290,7 @@ def _edge_index(grid: Grid, rasters: "_Rasters", c_from: int, c_to: int, kidx: n
     offs = grid.offsets[kidx]
     cs = torch.arange(c_from, c_to, device=dev, dtype=torch.float32)
     rs = torch.arange(rlo, rhi, device=dev, dtype=torch.float32)
-    x0 = (cs * grid.sx).view(C, 1, 1, 1)
+    x0 = (cs * grid.sx + grid.x_origin).view(C, 1, 1, 1)
     y0 = ((rs - grid.r0) * grid.sy).view(1, R, 1, 1)
     dx = torch.as_tensor(offs[:, 0] * grid.sx, device=dev, dtype=torch.float32).view(1, 1, K, 1)
     dy = torch.as_tensor(offs[:, 1] * grid.sy, device=dev, dtype=torch.float32).view(1, 1, K, 1)
@@ -343,7 +353,7 @@ def _edge_geom(compiled: Compiled, grid: Grid, p: SolverParams, rasters: "_Raste
     offs = grid.offsets[kidx]
     cs = torch.arange(c_from, c_to, device=dev, dtype=torch.float32)
     rs = torch.arange(rlo, rhi, device=dev, dtype=torch.float32)
-    x0 = (cs * grid.sx).view(C, 1, 1, 1)
+    x0 = (cs * grid.sx + grid.x_origin).view(C, 1, 1, 1)
     y0 = ((rs - grid.r0) * grid.sy).view(1, R, 1, 1)
     dx = torch.as_tensor(offs[:, 0] * grid.sx, device=dev, dtype=torch.float32).view(1, 1, K, 1)
     dy = torch.as_tensor(offs[:, 1] * grid.sy, device=dev, dtype=torch.float32).view(1, 1, K, 1)
@@ -677,7 +687,7 @@ def fit_type_for_spans(table: dict, t: str, d: float, L1: float, L2: float, frac
 def transition_matrix(grid: Grid, p: SolverParams) -> tuple[np.ndarray, np.ndarray]:
     """T[k, k'] ₹ tower cost by deflection type; TA: same but only type A allowed."""
     h = grid.heading_deg
-    defl = np.abs(h[:, None] - h[None, :])
+    defl = np.abs((h[:, None] - h[None, :] + 180.0) % 360.0 - 180.0)
     K = len(h)
     step = np.degrees(np.arctan(grid.sy / np.maximum(grid.length_m, 1.0)))     # heading step per vector
     if p.heading_slack == "adjacent":
@@ -744,7 +754,7 @@ def gantry_seeds(compiled: Compiled, grid: Grid, p: SolverParams, S_np: np.ndarr
     sq_tol = p.gantry_square_tol_deg if (face is not None and rules_here) else 0.0
     seeds = np.full(S_np.shape, INF, np.float32)
     cs = np.arange(grid.nc + 1)
-    xs = cs * grid.sx
+    xs = cs * grid.sx + grid.x_origin
     col_sel = np.nonzero(np.abs(xs - ex) <= reach)[0]
     rs = np.arange(grid.nr)
     ys = (rs - grid.r0) * grid.sy
@@ -793,6 +803,8 @@ def solve(compiled: Compiled, p: SolverParams, cancel_check=None, progress=None,
     """A and B are gantries. The route is gantry A -> dead-end tower -> ... -> dead-end tower -> gantry B.
     corridor = (line, half_width_m): the search is confined to the sites within half_width_m of the
     frame-coordinate line (the targeted refinement pass on a finer lattice, 14 Oct 2026)."""
+    if p.allow_backward and resume is None and stop_m is None:
+        return solve_free(compiled, p, cancel_check=cancel_check, progress=progress, corridor=corridor)
     t0 = time.time()
     dev = _device()
     grid = make_grid(compiled, p)
@@ -895,7 +907,7 @@ def solve(compiled: Compiled, p: SolverParams, cancel_check=None, progress=None,
         prev, from_m = resume
         st = getattr(prev, "state", None)
         if st is not None and st["shape"] == (nc + 1, R, K):
-            cands = [cc for cc in st["snaps"] if cc * grid.sx <= from_m]
+            cands = [cc for cc in st["snaps"] if cc * grid.sx + grid.x_origin <= from_m]
             if cands:
                 c_first = max(cands)
                 sn = st["snaps"][c_first]
@@ -907,7 +919,7 @@ def solve(compiled: Compiled, p: SolverParams, cancel_check=None, progress=None,
                 snaps = {cc: v for cc, v in st["snaps"].items() if cc <= c_first}
                 log.info("resume from column %d (km %.2f) of %d", c_first, c_first * grid.sx / 1000, nc)
     for c in range(c_first, nc + 1):
-        if stop_m is not None and c * grid.sx > stop_m:      # diagnosis (22 Oct 2026): the reach up to here is enough
+        if stop_m is not None and c * grid.sx + grid.x_origin > stop_m:      # diagnosis (22 Oct 2026): the reach up to here is enough
             break
         if keep_state and win is None and c % keep_state == 0 and c not in snaps:
             snaps[c] = {"W": Wring.clone(), "X": Xring.clone(), "U": Uring.clone(), "last_M": last_M.clone(), "last_c": last_c.clone()}
@@ -935,8 +947,8 @@ def solve(compiled: Compiled, p: SolverParams, cancel_check=None, progress=None,
                 if p.dead_end_b is not None:      # the gantry span runs square to the substation face (19 Oct 2026)
                     hs = torch.full((R, 1), math.degrees(math.atan2(-p.dead_end_b[1], compiled.frame.length_m - p.dead_end_b[0])), device=ys_t.device, dtype=ys_t.dtype)
                 else:
-                    hs = torch.rad2deg(torch.atan2(-ys_t, torch.full_like(ys_t, max(compiled.frame.length_m - c * grid.sx, 1.0)))).view(R, 1)
-                dev_ok = (head_t.view(1, K) - hs).abs() <= de_lim_b + 1e-6
+                    hs = torch.rad2deg(torch.atan2(-ys_t, torch.full_like(ys_t, max(compiled.frame.length_m - (c * grid.sx + grid.x_origin), 1.0)))).view(R, 1)
+                dev_ok = torch.remainder(head_t.view(1, K) - hs + 180.0, 360.0).sub(180.0).abs() <= de_lim_b + 1e-6
                 Vend = torch.where(dev_ok, V, torch.full_like(V, INF))
             else:
                 Vend = V
@@ -981,8 +993,8 @@ def solve(compiled: Compiled, p: SolverParams, cancel_check=None, progress=None,
             if p.dead_end_a is not None:          # the gantry span runs square to the substation face (19 Oct 2026)
                 hs = torch.full((Rw, 1), math.degrees(math.atan2(p.dead_end_a[1], p.dead_end_a[0])), device=ys_t.device, dtype=ys_t.dtype)
             else:
-                hs = torch.rad2deg(torch.atan2(ys_t[rw], torch.full_like(ys_t[rw], max(c * grid.sx, 1.0)))).view(Rw, 1)
-            dev_ok = (head_t.view(1, K) - hs).abs() <= de_lim_a + 1e-6
+                hs = torch.rad2deg(torch.atan2(ys_t[rw], torch.full_like(ys_t[rw], max(c * grid.sx + grid.x_origin, 1.0)))).view(Rw, 1)
+            dev_ok = torch.remainder(head_t.view(1, K) - hs + 180.0, 360.0).sub(180.0).abs() <= de_lim_a + 1e-6
             seed = torch.where(dev_ok, seed, torch.full_like(seed, INF))
         use_seed = seed < Mw
         Mw = torch.where(use_seed, seed, Mw)
@@ -1012,7 +1024,7 @@ def solve(compiled: Compiled, p: SolverParams, cancel_check=None, progress=None,
     if not math.isfinite(best):
         rm = reach_map.cpu().numpy()
         cols = np.nonzero(rm.any(axis=1))[0]
-        reach_m = float(cols.max() * grid.sx) if len(cols) else 0.0
+        reach_m = float(cols.max() * grid.sx + grid.x_origin) if len(cols) else 0.0
         out_ = SolveOutcome(False, INF, [], [], grid, reach_m, time.time() - t0, rm)
         if keep_state and win is None:
             out_.state = {"shape": (nc + 1, R, K), "arg": arg, "snaps": snaps, "reach": reach, "reach_map": reach_map, "end_tot": end_tot, "end_k": end_k}
@@ -1052,6 +1064,233 @@ def solve(compiled: Compiled, p: SolverParams, cancel_check=None, progress=None,
     return out_
 
 
+def _corridor_windows(grid: Grid, line, half: float):
+    """(nc+1, 2) row window per column round a route polyline that may turn back: every column the polyline passes
+    (any number of times) gets the rows within `half` of its y there; columns it never reaches stay closed."""
+    R = grid.nr
+    lo = np.full(grid.nc + 1, R, int); hi = np.zeros(grid.nc + 1, int)
+    pts = np.asarray(line.coords)
+    for (x0, y0), (x1, y1) in zip(pts[:-1], pts[1:]):
+        n = max(2, int(abs(x1 - x0) / grid.sx) + 2)
+        xs = np.linspace(x0, x1, n); ys = np.linspace(y0, y1, n)
+        cs = np.clip(np.round((xs - grid.x_origin) / grid.sx).astype(int), 0, grid.nc)
+        rl = np.clip(np.floor((ys - half) / grid.sy).astype(int) + grid.r0, 0, R - 1)
+        rh = np.clip(np.ceil((ys + half) / grid.sy).astype(int) + grid.r0 + 1, 1, R)
+        np.minimum.at(lo, cs, rl); np.maximum.at(hi, cs, rh)
+    closed = lo >= hi
+    lo[closed] = 0; hi[closed] = 0
+    return np.stack([lo, hi], axis=1)
+
+
+def solve_free(compiled: Compiled, p: SolverParams, cancel_check=None, progress=None, corridor=None) -> SolveOutcome:
+    """Free search (Vivek, 25 Oct 2026): the route may turn back on the chainage. Same lattice, states, rules and
+    costs as solve(); spans in every direction (make_grid with allow_backward), the lattice extended before A and
+    after B (lattice_extension_m). A label-correcting search: pass 0 is the forward sweep (= solve(), the optimum over
+    forward-only routes and an upper bound), then alternating backward / forward passes relax every edge from the
+    current state costs until nothing improves; states dearer than the best complete route are pruned after each
+    pass. Edge and tower costs are positive, so the passes converge to the optimum over all routes.
+    The outcome carries `monotone_cost_rs` (pass 0) next to cost_rs: equal = turning back buys nothing."""
+    t0 = time.time()
+    dev = _device()
+    grid = make_grid(compiled, p)
+    R, K = grid.nr, len(grid.offsets)
+    nc = grid.nc
+    S_np, angle_only_np = site_costs(compiled, grid, p)
+    T_np, TA_np = transition_matrix(grid, p)
+    T45_np = TA45_np = None
+    if p.crossing_dev_max_deg is not None and p.crossing_dev_max_deg < p.max_dev_deg - 1e-9:
+        from dataclasses import replace as _replace
+        T45_np, TA45_np = transition_matrix(grid, _replace(p, max_dev_deg=float(p.crossing_dev_max_deg)))
+    strip_np = prepare_strip(compiled, p)
+    dead_end = p.tower_cost_rs["D60"]
+    seedA = gantry_seeds(compiled, grid, p, S_np, strip_np, at_end=False, dead_end_rs=dead_end)
+    seedB = gantry_seeds(compiled, grid, p, S_np, strip_np, at_end=True, dead_end_rs=dead_end)
+    if not np.isfinite(seedA).any() or not np.isfinite(seedB).any():
+        side = 0.0 if not np.isfinite(seedA).any() else compiled.frame.length_m
+        return SolveOutcome(False, INF, [], [], grid, side, time.time() - t0)
+    S = torch.as_tensor(S_np, device=dev)
+    tfac = None
+    if p.proximity_tower_discount > 0 and getattr(compiled, "near_existing", None) is not None:
+        f_ = compiled.frame
+        cc_, rr_ = np.meshgrid(np.arange(nc + 1), np.arange(R), indexing="ij")
+        fx_, fy_ = grid.site_xy(cc_, rr_)
+        px_, py_ = f_.frame_to_pixel(fx_, fy_)
+        nr_ = compiled.near_existing[np.clip(py_.astype(int), 0, f_.height - 1), np.clip(px_.astype(int), 0, f_.width - 1)]
+        tfac = torch.as_tensor(1.0 - p.proximity_tower_discount * nr_.astype(np.float32), device=dev)
+    angle_only = torch.as_tensor(angle_only_np, device=dev)
+    T = torch.as_tensor(T_np, device=dev); TA = torch.as_tensor(TA_np, device=dev)
+    T45 = torch.as_tensor(T45_np, device=dev) if T45_np is not None else None
+    TA45 = torch.as_tensor(TA45_np, device=dev) if TA45_np is not None else None
+    SA = torch.as_tensor(seedA, device=dev); SB = torch.as_tensor(seedB, device=dev)
+    rasters = _Rasters(compiled, p, dev, strip_np)
+    rasters.set_river_cols(compiled, grid, p)
+    n_samples = int(math.ceil(p.span_max_m / (compiled.frame.res_m / 2))) + 1
+    dcs = torch.as_tensor(grid.offsets[:, 0], device=dev)
+    drs = torch.as_tensor(grid.offsets[:, 1], device=dev)
+    tA_f = float(p.tower_cost_rs["A"])
+    W = torch.full((nc + 1, R, K), INF, device=dev)                      # cost at (c, r) with the edge out along k paid
+    Xf = torch.zeros((nc + 1, R, K), dtype=torch.bool, device=dev)
+    Uf = torch.zeros((nc + 1, R, K), device=dev)
+    arg = torch.zeros((nc + 1, R, K), dtype=torch.int16, device=dev)
+    rows = torch.arange(R, device=dev).view(R, 1)
+    src_rows = rows - drs.view(1, K)
+    row_ok = (src_rows >= 0) & (src_rows < R)
+    src_rows_c = src_rows.clamp(0, R - 1)
+    kidx = torch.arange(K, device=dev).view(1, K).expand(R, K)
+    reach_map = torch.zeros((nc + 1, R), dtype=torch.bool, device=dev)
+    end_tot = torch.full((nc + 1, R), INF, device=dev)
+    end_k = torch.zeros((nc + 1, R), dtype=torch.int64, device=dev)
+    end_cols = set(np.nonzero(np.isfinite(seedB).any(axis=1))[0].tolist())
+    start_marker = torch.tensor(-1, dtype=torch.int16, device=dev)
+    ys_t = torch.as_tensor((np.arange(R) - grid.r0) * grid.sy, device=dev, dtype=torch.float32)
+    head_t = torch.as_tensor(grid.heading_deg, device=dev, dtype=torch.float32)
+    budget = 1.25e8 if rasters.z is not None else 2.5e8
+    chunk = max(1, min(32, int(budget // max(1, R * K * n_samples))))
+    cache = getattr(compiled, "edge_cache", None)
+    if cache is not None and (nc + 1) * R * K * 8 > p.edge_cache_limit_bytes:
+        cache = None
+    hs_a = None if p.dead_end_a is None else math.degrees(math.atan2(p.dead_end_a[1], p.dead_end_a[0]))
+    hs_b = None if p.dead_end_b is None else math.degrees(math.atan2(-p.dead_end_b[1], compiled.frame.length_m - p.dead_end_b[0]))
+    de_lim_a = p.dead_end_max_dev_deg if p.gantry_rule_ends[0] else p.max_dev_deg
+    de_lim_b = p.dead_end_max_dev_deg if p.gantry_rule_ends[1] else p.max_dev_deg
+    win_t = None
+    if corridor is not None:
+        line, half = corridor
+        win = _corridor_windows(grid, line, float(half))
+        win_t = torch.zeros((nc + 1, R), dtype=torch.bool, device=dev)
+        for c_ in range(nc + 1):
+            if win[c_, 1] > win[c_, 0]:
+                win_t[c_, win[c_, 0]:win[c_, 1]] = True
+        log.info("free search: corridor refinement, %d of %d columns open", int((win[:, 1] > win[:, 0]).sum()), nc + 1)
+    monotone_cost = INF
+    best = INF
+    passes_run = 0
+    stale = 0                                                       # passes in a row without a better complete route
+    log.info("free search: %d columns x %d rows x %d spans (%d backward), extension %.0f m", nc + 1, R, K, int((grid.offsets[:, 0] <= 0).sum()), p.lattice_extension_m)
+    for pas in range(max(1, int(p.free_max_passes))):
+        forward = pas % 2 == 0
+        order = range(0, nc + 1) if forward else range(nc, -1, -1)
+        t_p = time.time()
+        E_chunk = X_chunk = U_chunk = None; E_lo = E_hi = -1
+        changed = torch.zeros((), dtype=torch.bool, device=dev)
+        for c in order:
+            if cancel_check and c % 64 == 0:
+                cancel_check()
+            x_c = c * grid.sx + grid.x_origin
+            src_c = c - dcs
+            ok_c = (src_c >= 0) & (src_c <= nc)
+            src_cc = src_c.clamp(0, nc).view(1, K).expand(R, K)
+            valid_in = row_ok & ok_c.view(1, K)
+            V = torch.where(valid_in, W[src_cc, src_rows_c, kidx], torch.full((R, K), INF, device=dev))
+            cross_in = Xf[src_cc, src_rows_c, kidx] & valid_in
+            up_in = torch.where(valid_in, Uf[src_cc, src_rows_c, kidx], torch.zeros((R, K), device=dev))
+            if c in end_cols:
+                if de_lim_b is not None:
+                    if hs_b is not None:
+                        hs = torch.full((R, 1), hs_b, device=dev, dtype=ys_t.dtype)
+                    else:
+                        hs = torch.rad2deg(torch.atan2(-ys_t, torch.full_like(ys_t, max(compiled.frame.length_m - x_c, 1.0)))).view(R, 1)
+                    dev_ok = torch.remainder(head_t.view(1, K) - hs + 180.0, 360.0).sub(180.0).abs() <= de_lim_b + 1e-6
+                    Vend = torch.where(dev_ok, V, torch.full_like(V, INF))
+                else:
+                    Vend = V
+                vmin, vk = Vend.min(dim=1)
+                end_tot[c] = vmin + SB[c]
+                end_k[c] = vk
+            if c >= nc:
+                reach_map[c] = torch.isfinite(V).any(dim=1)
+                continue                                         # the last column has no edge out
+            if E_chunk is None or not (E_lo <= c < E_hi):
+                if forward:
+                    E_lo, E_hi = c, min(nc, c + chunk)
+                else:
+                    E_lo, E_hi = max(0, c - chunk + 1), c + 1
+                E_chunk, X_chunk, U_chunk = edge_costs(compiled, grid, p, rasters, E_lo, E_hi, n_samples, cache, None)
+            cross_out = X_chunk[c - E_lo]; up_out = U_chunk[c - E_lo]; E = E_chunk[c - E_lo]
+            sc = tfac[c].view(R, 1, 1) if tfac is not None else 1.0
+            forced = tA_f + torch.maximum(up_in.unsqueeze(2), up_out.unsqueeze(1))
+            tot = V.unsqueeze(2) + torch.maximum(T.unsqueeze(0), forced) * sc
+            totA = V.unsqueeze(2) + torch.maximum(TA.unsqueeze(0), forced) * sc
+            if T45 is not None:
+                capped = cross_in.unsqueeze(2) | cross_out.unsqueeze(1)
+                tot = torch.where(capped, V.unsqueeze(2) + torch.maximum(T45.unsqueeze(0), forced) * sc, tot)
+                totA = torch.where(capped, V.unsqueeze(2) + torch.maximum(TA45.unsqueeze(0), forced) * sc, totA)
+            del forced
+            tot = torch.where(angle_only[c].view(R, 1, 1), totA, tot)
+            mval, am = tot.min(dim=1)
+            M = mval + S[c].view(R, 1)
+            am = am.to(torch.int16)
+            del tot, totA
+            seed = SA[c].view(R, 1).expand(R, K)
+            if de_lim_a is not None:
+                if hs_a is not None:
+                    hs = torch.full((R, 1), hs_a, device=dev, dtype=ys_t.dtype)
+                else:
+                    hs = torch.rad2deg(torch.atan2(ys_t, torch.full_like(ys_t, max(x_c, 1.0)))).view(R, 1)
+                dev_ok = torch.remainder(head_t.view(1, K) - hs + 180.0, 360.0).sub(180.0).abs() <= de_lim_a + 1e-6
+                seed = torch.where(dev_ok, seed, torch.full_like(seed, INF))
+            use_seed = seed < M
+            M = torch.where(use_seed, seed, M)
+            am = torch.where(use_seed, start_marker, am)
+            if win_t is not None:
+                M = torch.where(win_t[c].view(R, 1), M, torch.full_like(M, INF))
+            W_new = M + E
+            old = W[c]
+            better = (W_new < old - 1.0) | (torch.isfinite(W_new) & ~torch.isfinite(old))
+            changed = changed | better.any()
+            W[c] = W_new
+            Xf[c] = cross_out; Uf[c] = up_out; arg[c] = am
+            reach_map[c] = torch.isfinite(M).any(dim=1)
+            if progress and c % 100 == 0:
+                progress(min(0.99, (pas + (c / nc if forward else 1 - c / nc)) / max(1, int(p.free_max_passes))))
+        passes_run = pas + 1
+        prev_best = best
+        best = float(end_tot.min().item())
+        if pas == 0:
+            monotone_cost = best
+        ch = bool(changed.item())
+        log.info("free search pass %d (%s): best ₹%s, %s, %.0f s", pas, "forward" if forward else "backward",
+                 f"{best/1e7:.2f} Cr" if math.isfinite(best) else "none", "improved" if ch else "no change", time.time() - t_p)
+        if math.isfinite(best):
+            W[W > best] = INF                                   # no route through a dearer state can beat the best
+        stale = 0 if (pas == 0 or best < prev_best - 1.0) else stale + 1
+        prev_best = best
+        # stop when nothing changed, or when a forward and a backward pass in a row found no better complete route
+        # (states far from the optimum keep settling long after the route itself has; the pruning above removes them)
+        if pas > 0 and (not ch or (math.isfinite(best) and stale >= 2)):
+            break
+    if not math.isfinite(best):
+        rm = reach_map.cpu().numpy()
+        cols = np.nonzero(rm.any(axis=1))[0]
+        reach_m = float(cols.max() * grid.sx + grid.x_origin) if len(cols) else 0.0
+        out_ = SolveOutcome(False, INF, [], [], grid, reach_m, time.time() - t0, rm)
+        out_.monotone_cost_rs = monotone_cost; out_.free_passes = passes_run
+        return out_
+    flat = int(end_tot.argmin().item())
+    c, r = divmod(flat, R)
+    k = int(end_k[c, r].item())
+    sites = [(c, r)]; heads = []; seen = {(c, r, k)}
+    while True:
+        heads.append(k)
+        dc, dr = grid.offsets[k]
+        pc, pr = c - int(dc), r - int(dr)
+        sites.append((pc, pr))
+        k_prev = int(arg[pc, pr, k].item())
+        if k_prev == -1:
+            break
+        if (pc, pr, k_prev) in seen or len(sites) > 100000:
+            raise RuntimeError("free search backtrack cycled")
+        seen.add((pc, pr, k_prev))
+        c, r, k = pc, pr, k_prev
+    sites.reverse(); heads.reverse()
+    out_ = SolveOutcome(True, best, sites, heads, grid, compiled.frame.length_m, time.time() - t0)
+    out_.monotone_cost_rs = monotone_cost; out_.free_passes = passes_run
+    n_back = sum(1 for a, b in zip(sites[:-1], sites[1:]) if b[0] <= a[0])
+    log.info("free search: %d passes, forward-only optimum ₹%s, free optimum ₹%.2f Cr, %d of %d spans turn back",
+             passes_run, f"{monotone_cost/1e7:.2f} Cr" if math.isfinite(monotone_cost) else "none", best / 1e7, n_back, len(sites) - 1)
+    return out_
+
+
 def _trace_partial(arg, grid: Grid, c: int, M: torch.Tensor):
     """Cheapest tower chain from A to site column c (its costs M: (R, K) per row and outgoing offset). arg[c, r, k]
     = the incoming offset of the best way into (c, r) leaving along k, -1 = a first dead-end tower."""
@@ -1087,8 +1326,26 @@ def refine(compiled: Compiled, p: SolverParams, out: SolveOutcome, spacing_m: fl
     if not out.feasible:
         return out
     line = _LS([out.grid.site_xy(c, r) for c, r in out.sites])
-    p2 = _replace(p, site_spacing_m=float(spacing_m), site_tolerance_m=float(spacing_m) / 2.0,
-                  crossing_span_slack_m=float(spacing_m) / 2.0, edge_cache_limit_bytes=0)
+    # the site tolerance stays at the coarse value (25 Oct 2026): halved to 12.5 m it closed the Vadodara approach at
+    # km 227 on every HAL-VAD-0244 solve while 25 m refined the same route to a cheaper one; spotting is exact anyway
+    # the crossing-span slack stays at the coarse value as well (diagnosis 25 Oct 2026: with both slacks kept and a
+    # 600 m corridor the fine search priced ₹1,217.5 Cr against ₹1,224.7 Cr; the spotting enforces the exact limits)
+    p2 = _replace(p, site_spacing_m=float(spacing_m), site_tolerance_m=max(float(spacing_m) / 2.0, float(p.site_tolerance_m)),
+                  crossing_span_slack_m=max(float(spacing_m) / 2.0, float(p.crossing_span_slack_m)), edge_cache_limit_bytes=0)
+    if p2.allow_backward:
+        # the free search keeps every column's states resident; on the fine lattice that may not fit the GPU. A
+        # monotone route then refines through the forward corridor search; a turning-back one keeps the coarse solution.
+        g2 = make_grid(compiled, p2)
+        need = (g2.nc + 1) * g2.nr * len(g2.offsets) * 11.0
+        free_b = torch.cuda.mem_get_info()[0] if torch.cuda.is_available() else 0.0
+        if need > 0.6 * free_b:
+            monotone = all(b[0] > a[0] for a, b in zip(out.sites[:-1], out.sites[1:]))
+            if monotone:
+                log.info("refine %gm: free lattice needs %.0f GB, %.0f GB free - refining the monotone route with the forward search", spacing_m, need / 1e9, free_b / 1e9)
+                p2 = _replace(p2, allow_backward=False, lattice_extension_m=0.0)
+            else:
+                log.info("refine %gm: free lattice needs %.0f GB, %.0f GB free; the route turns back - coarse solution kept", spacing_m, need / 1e9, free_b / 1e9)
+                return out
     out2 = solve(compiled, p2, cancel_check=cancel_check, progress=progress, corridor=(line, float(half_width_m)))
     if out2.feasible and out2.cost_rs <= out.cost_rs + 1e-6:
         log.info("refine %gm: ₹%.2f Cr -> ₹%.2f Cr (search prices), %d -> %d towers, %.0f s",

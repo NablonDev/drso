@@ -7,8 +7,15 @@ grid:
   # targeted finer lattice (Vivek, 14 Oct 2026): the search again at refine_spacing_m, confined to the sites
   # within refine_half_width_m of the 50 m solution (every cap pass too); 0 = off
   refine_spacing_m: 25
-  refine_half_width_m: 300
+  refine_half_width_m: 600    # 25 Oct 2026: 600 (was 300) - the wider corridor refined HAL-VAD-0244 ₹7 Cr cheaper still
   band_margin_m: 500          # extra length before A and after B in the chainage frame
+  # free search (Vivek, 25 Oct 2026): the route may turn back on the chainage - spans in every direction, the lattice
+  # extended lattice_extension_m before A and after B (room to turn round a yard whose bay faces away), alternating
+  # forward / backward label-correcting passes (at most free_search_passes) seeded by the forward sweep and pruned by
+  # its cost. The solve reports the forward-only optimum next to the free one. Off = the forward sweep as before.
+  free_search: true
+  lattice_extension_m: 3000
+  free_search_passes: 12
   raster_margin_m: 0          # padding on raster buffers; spotting repairs grid/exact disagreements
   nudge_radius_m: 30          # how far spotting may move a grid tower to satisfy the exact check
   # exact rules (vj copy, 23 Oct 2026): their rasters are cut from exact feature distances instead of the all-touched

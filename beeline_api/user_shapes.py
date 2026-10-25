@@ -26,7 +26,7 @@ from beeline_engine.config import LineSpec, load_layers, resolve_rules
 
 from . import db, layers
 from .derive import derive_clusters
-from .geo import band_polygon
+from .geo import band_polygon, run_margin_m
 
 SCHEMA = """
 create table if not exists user_shapes (
@@ -146,7 +146,7 @@ def delete(shape_id: int) -> dict | None:
 
 
 def _band(run: dict):
-    band, _ = band_polygon((run["a_lon"], run["a_lat"]), (run["b_lon"], run["b_lat"]), run["band_km"], margin_m=500)
+    band, _ = band_polygon((run["a_lon"], run["a_lat"]), (run["b_lon"], run["b_lat"]), run["band_km"], margin_m=run_margin_m())
     return band
 
 

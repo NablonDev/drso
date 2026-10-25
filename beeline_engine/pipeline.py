@@ -325,7 +325,26 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
     _ap = rules.get("approach_section")
     go_radius = float(_ap.params.get("go_zone_m") or yard_radius) if _ap is not None and _ap.enabled else yard_radius
 
-    frame = Frame(tuple(inp.a), tuple(inp.b), inp.band_km * 1000.0, eng["grid"]["band_margin_m"],
+    _free = bool(eng["grid"].get("free_search", False))
+    _ext = float(eng["grid"].get("lattice_extension_m", 0) or 0) if _free else 0.0
+    if _ext > 0:
+        # the lattice may only extend past a gantry as far as the obstacle layers were extracted (25 Oct 2026): the
+        # layer coverages are clipped to the run band plus the extraction margin, and ground beyond them is unmapped,
+        # not free. The usable extension is the smallest coverage reach beyond A and beyond B over the layers.
+        _f0 = Frame(tuple(inp.a), tuple(inp.b), inp.band_km * 1000.0, 0.0, 100.0)
+        reach_a, reach_b = [], []
+        for _k, _li in inp.layers.items():
+            if _li.gdf is None or _li.coverage is None or _li.coverage.is_empty:
+                continue
+            _c = np.asarray(_f0.geom_to_utm(_li.coverage).exterior.coords)
+            _x = (_c[:, 0] - _f0.A[0]) * _f0.u[0] + (_c[:, 1] - _f0.A[1]) * _f0.u[1]
+            reach_a.append(float(-_x.min())); reach_b.append(float(_x.max() - _f0.length_m))
+        if reach_a and reach_b:
+            _usable = max(0.0, min(min(reach_a), min(reach_b)))
+            if _usable < _ext:
+                log.warning("free search: lattice extension %.0f m clamped to %.0f m, the layers' coverage past the gantries", _ext, _usable)
+                _ext = _usable
+    frame = Frame(tuple(inp.a), tuple(inp.b), inp.band_km * 1000.0, max(float(eng["grid"]["band_margin_m"]), _ext + 500.0),
                   eng["grid"]["raster_res_m"])
     prog(0.02, "Compiling rules")
     gdfs = {k: li.gdf for k, li in inp.layers.items()}
@@ -555,6 +574,7 @@ def run_solve(inp: SolveInput, progress=None, cancel=None) -> dict:
                         river_max_span_m=float(eng["spans"].get("river_crossing_max_span_m", 0)),
                         crossing_span_slack_m=float(eng["spans"].get("crossing_span_slack_m", eng["grid"]["site_spacing_m"] / 2)),
                         crossing_angle_slack_deg=float(eng["spans"].get("crossing_angle_slack_deg", 0) or 0),
+                        allow_backward=_free, lattice_extension_m=_ext, free_max_passes=int(eng["grid"].get("free_search_passes", 6) or 6),
                         site_tolerance_m=float(eng["grid"].get("site_tolerance_m", 0) or 0),
                         long_heading_limit_deg=float(eng["spans"].get("long_heading_limit_deg", 60)),
                         long_heading_step_deg=float(eng["spans"].get("long_heading_step_deg", 5)),

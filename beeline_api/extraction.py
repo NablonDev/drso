@@ -26,7 +26,7 @@ from beeline_engine.config import LineSpec, load_layers, resolve_rules
 
 from . import aviation, cell_towers, db, imagery, imagery_store, layers, lulc_runner, models, osm_highways, osm_power, reference, settings, uploads, user_shapes
 from .derive import derive_clusters
-from .geo import band_polygon
+from .geo import band_polygon, run_margin_m
 from .jobs import Cancelled, Reporter
 
 log = logging.getLogger(__name__)
@@ -50,7 +50,7 @@ def layers_to_extract(run: dict, requested: list[str] | None = None) -> list[str
 def run_imagery_fetch(job: dict, rep: Reporter):
     """Licensed online acquisition into the imagery catalog (the only place imagery is fetched)."""
     run = db.one("select * from runs where id=%s", (job["run_id"],))
-    band, _ = band_polygon((run["a_lon"], run["a_lat"]), (run["b_lon"], run["b_lat"]), run["band_km"], margin_m=500)
+    band, _ = band_polygon((run["a_lon"], run["a_lat"]), (run["b_lon"], run["b_lat"]), run["band_km"], margin_m=run_margin_m())
     products = (job.get("detail") or {}).get("imagery_fetch") or []
     rep(0.01, "Fetching imagery under the operator licences", force=True)
     out = imagery_store.acquire(products, band, run["id"], progress=lambda f, msg: rep(0.02 + 0.96 * f, msg),
@@ -65,7 +65,7 @@ def run_extraction(job: dict, rep: Reporter):
         return run_imagery_fetch(job, rep)
     run = db.one("select * from runs where id=%s", (job["run_id"],))
     db.exec_("update runs set status='extracting', updated_at=now() where id=%s", (run["id"],))
-    band, frame = band_polygon((run["a_lon"], run["a_lat"]), (run["b_lon"], run["b_lat"]), run["band_km"], margin_m=500)
+    band, frame = band_polygon((run["a_lon"], run["a_lat"]), (run["b_lon"], run["b_lat"]), run["band_km"], margin_m=run_margin_m())
     reg = {l["key"]: l for l in load_layers()["layers"]}
     todo = layers_to_extract(run, (job.get("detail") or {}).get("requested"))
     area = frame.geom_to_utm(band).area / 1e6

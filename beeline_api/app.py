@@ -691,7 +691,7 @@ def imagery_catalog(run_id: str):
     """What imagery this machine holds for the run's band, per product (the models use only this)."""
     from . import imagery_store
     r = _run(run_id)
-    band, _ = geo.band_polygon((r["a_lon"], r["a_lat"]), (r["b_lon"], r["b_lat"]), r["band_km"], margin_m=500)
+    band, _ = geo.band_polygon((r["a_lon"], r["a_lat"]), (r["b_lon"], r["b_lat"]), r["band_km"], margin_m=geo.run_margin_m())
     cov = imagery_store.coverage(band)
     items = imagery_store.for_aoi(band)
     needs: dict[str, list[str]] = {}

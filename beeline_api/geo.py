@@ -99,9 +99,22 @@ def validate(a: tuple[float, float], b: tuple[float, float]) -> dict:
             "ok": ok_coords and bool(in_india) and dist is not None}
 
 
+def run_margin_m() -> float:
+    """How far the run band extends past the gantries (25 Oct 2026): the extraction margin (500 m) or, with the free
+    search on, its lattice extension plus 500 m — the layers must cover every column the search may use."""
+    try:
+        from beeline_engine.config import load_engine
+        g = load_engine().get("grid", {})
+        if g.get("free_search"):
+            return max(500.0, float(g.get("lattice_extension_m", 0) or 0) + 500.0)
+    except Exception:
+        pass
+    return 500.0
+
+
 def band_info(a, b, band_km: float) -> dict:
-    f = Frame(tuple(a), tuple(b), band_km * 1000.0, 0.0, 100.0)
-    band = f.band_polygon_lonlat()
+    f = Frame(tuple(a), tuple(b), band_km * 1000.0, run_margin_m(), 100.0)
+    band = f.band_polygon_lonlat(margin=True)
     area = f.geom_to_utm(band).area / 1e6
     mins = 0.0
     for l in load_layers()["layers"]:

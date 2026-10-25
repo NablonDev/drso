@@ -2325,7 +2325,9 @@ def _crossing_angle_fix(chk: Checker, pts, sp: SpotParams):
             X = ln.interpolate(sX)
             t0 = ln.interpolate(max(0.0, sX - 2.0)); t1 = ln.interpolate(min(ln.length, sX + 2.0))
             tx, ty = t1.x - t0.x, t1.y - t0.y; tn = math.hypot(tx, ty) or 1.0; tx, ty = tx / tn, ty / tn
-            for ang in (lo + 1.0, lo + 3.0, min(90.0, lo + 6.0), 90.0):
+            # an angle already inside the window is kept first (a span-only violation should not turn the crossing)
+            angs = ([cur] if cur >= lo + 1e-6 else []) + [lo + 1.0, lo + 3.0, min(90.0, lo + 6.0), 90.0]
+            for ang in angs:
                 for sgn in (1.0, -1.0):
                     th = math.radians(sgn * ang)
                     vx, vy = tx * math.cos(th) - ty * math.sin(th), tx * math.sin(th) + ty * math.cos(th)
